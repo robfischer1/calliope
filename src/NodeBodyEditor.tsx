@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { type JSX, useEffect, useRef, useState } from "react";
 import { EditorState } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { keymap } from "prosemirror-keymap";
 import { baseKeymap } from "prosemirror-commands";
 import { history, redo, undo } from "prosemirror-history";
 import type { BodyClient, Section } from "./types.js";
-import { docToTexts, schema, textsToDoc } from "./prosemirror.js";
+import { docToTexts, textsToDoc } from "./prosemirror.js";
 
 /** Props for {@link NodeBodyEditor}. */
 export interface NodeBodyEditorProps {

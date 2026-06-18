@@ -49,10 +49,10 @@ export class FixtureBodyClient implements BodyClient {
     sections: readonly SectionInput[],
   ): FixtureSection[] {
     const keys = sequence(sections.length);
-    return sections.map((s, i) => ({
+    return keys.map((orderKey, i) => ({
       id: `${nodeId}#${String(this.seq++)}`,
-      text: s.text,
-      orderKey: keys[i] as string,
+      text: sections[i]?.text ?? "",
+      orderKey,
     }));
   }
 }

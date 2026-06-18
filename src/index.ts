@@ -20,11 +20,7 @@ export {
   TEXT,
   ORDER_KEY,
 } from "./urania-client.js";
-export type {
-  UraniaCapture,
-  UraniaOp,
-  UraniaTriple,
-} from "./urania-client.js";
+export type { UraniaCapture, UraniaOp, UraniaTriple } from "./urania-client.js";
 
 // Editor internals, exported for render surfaces that embed Calliope's schema
 // (e.g. read-only previews) without driving the full component.

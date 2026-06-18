@@ -34,8 +34,9 @@ export function compareKeys(a: string, b: string): number {
  * always longer-or-equal and provably ordered.
  */
 export function between(a: string | null, b: string | null): string {
-  if (a === null && b === null) return MID;
-  if (a === null) return keyBelow(b as string);
+  if (a === null) {
+    return b === null ? MID : keyBelow(b);
+  }
   if (b === null) return keyAbove(a);
   if (compareKeys(a, b) >= 0) {
     throw new Error(`between(): keys not strictly ordered: ${a} >= ${b}`);

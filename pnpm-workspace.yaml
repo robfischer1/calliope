@@ -1,0 +1,5 @@
+# Single-package repo (no workspace globs). This file exists only to carry the
+# pnpm settings that moved out of package.json in pnpm 10+: approving the build
+# scripts pnpm blocks by default. esbuild powers vitest.
+allowBuilds:
+  esbuild: true

@@ -27,13 +27,23 @@ class FakeCapture implements UraniaCapture {
   capture(ops: UraniaOp[]): Promise<void> {
     for (const op of ops) {
       if (op.op === "createNode") {
-        this.triples.push({ from: op.id, predicate: "hasType", to: op.hasType });
+        this.triples.push({
+          from: op.id,
+          predicate: "hasType",
+          to: op.hasType,
+        });
       } else if (op.op === "addEdge") {
-        this.triples.push({ from: op.from, predicate: op.predicate, to: op.to });
+        this.triples.push({
+          from: op.from,
+          predicate: op.predicate,
+          to: op.to,
+        });
       } else {
         const i = this.triples.findIndex(
           (t) =>
-            t.from === op.from && t.predicate === op.predicate && t.to === op.to,
+            t.from === op.from &&
+            t.predicate === op.predicate &&
+            t.to === op.to,
         );
         if (i >= 0) this.triples.splice(i, 1);
       }
@@ -121,7 +131,8 @@ describe("UraniaBodyClient — body-model mapping (flag on)", () => {
   it("copy-on-write: changed prose mints a NEW section node, old stays", async () => {
     await client.saveBody("note1", [{ text: "original" }]);
     const before = await client.readBody("note1");
-    const oldId = before[0]?.id as string;
+    const oldId = before[0]?.id ?? "";
+    expect(oldId).not.toBe("");
 
     await client.saveBody("note1", [{ text: "edited" }]);
     const after = await client.readBody("note1");
@@ -144,7 +155,8 @@ describe("UraniaBodyClient — body-model mapping (flag on)", () => {
   it("unchanged prose reuses the node; only order_key moves on reorder", async () => {
     await client.saveBody("note1", [{ text: "a" }, { text: "b" }]);
     const before = await client.readBody("note1");
-    const idA = before.find((s) => s.text === "a")?.id as string;
+    const idA = before.find((s) => s.text === "a")?.id ?? "";
+    expect(idA).not.toBe("");
 
     // Reorder: b then a. "a" is byte-identical => same node, new order_key.
     await client.saveBody("note1", [{ text: "b" }, { text: "a" }]);
@@ -157,7 +169,8 @@ describe("UraniaBodyClient — body-model mapping (flag on)", () => {
   it("dropping a section unwires its hasPart but keeps the node", async () => {
     await client.saveBody("note1", [{ text: "keep" }, { text: "drop" }]);
     const before = await client.readBody("note1");
-    const dropId = before.find((s) => s.text === "drop")?.id as string;
+    const dropId = before.find((s) => s.text === "drop")?.id ?? "";
+    expect(dropId).not.toBe("");
 
     await client.saveBody("note1", [{ text: "keep" }]);
     const after = await client.readBody("note1");

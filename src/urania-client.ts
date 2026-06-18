@@ -147,12 +147,14 @@ export class UraniaBodyClient implements BodyClient {
     const used = new Set<string>();
     const keptHasPart = new Set<string>();
 
-    for (let i = 0; i < sections.length; i++) {
-      const next = sections[i] as SectionInput;
-      const orderKey = keys[i] as string;
-      const reuse = current.find(
-        (c) => c.text === next.text && !used.has(c.id),
-      );
+    // keys is sequence(sections.length) — parallel to sections — so zip them
+    // into placements and iterate that, keeping the loop assertion-free.
+    const placements = sections.map((section, i) => ({
+      text: section.text,
+      orderKey: keys[i] ?? "",
+    }));
+    for (const { text: nextText, orderKey } of placements) {
+      const reuse = current.find((c) => c.text === nextText && !used.has(c.id));
 
       if (reuse !== undefined) {
         used.add(reuse.id);
@@ -179,7 +181,7 @@ export class UraniaBodyClient implements BodyClient {
       const id = this.capture.mintSectionId(nodeId);
       keptHasPart.add(id);
       ops.push({ op: "createNode", id, hasType: SECTION_TYPE });
-      ops.push({ op: "addEdge", from: id, predicate: TEXT, to: next.text });
+      ops.push({ op: "addEdge", from: id, predicate: TEXT, to: nextText });
       ops.push({
         op: "addEdge",
         from: id,
