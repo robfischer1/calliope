@@ -59,4 +59,25 @@ export interface BodyClient {
    * versioning of changed prose + rewiring `hasPart`.
    */
   saveBody(nodeId: string, sections: SectionInput[]): Promise<void>;
+
+  /**
+   * Single-section copy-on-write edit: replace the prose of the section
+   * `sectionId` under `nodeId` with `text`, leaving every other section and the
+   * body order untouched. The section keeps its `order_key`; on the substrate
+   * the changed prose mints a fresh version node and `hasPart` is rewired to it
+   * (the old node stays as the prior version), exactly as a coarse save does for
+   * a changed section.
+   *
+   * Resolves to the (possibly new) section's resolved {@link Section}. Rejects if
+   * `sectionId` is not a current `hasPart` target of `nodeId`.
+   *
+   * Optional for backward compatibility: a {@link BodyClient} predating this
+   * method (e.g. a host's own adapter) need not implement it; the two clients
+   * shipped here ({@link FixtureBodyClient}, {@link UraniaBodyClient}) both do.
+   */
+  editSection?(
+    nodeId: string,
+    sectionId: string,
+    text: string,
+  ): Promise<Section>;
 }

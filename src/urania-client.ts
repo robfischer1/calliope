@@ -206,4 +206,40 @@ export class UraniaBodyClient implements BodyClient {
 
     await this.capture.capture(ops);
   }
+
+  /**
+   * Single-section copy-on-write edit. Resolve the current body, locate
+   * `sectionId`, and mint a fresh version node carrying the new `text` at the
+   * SAME `order_key`; rewire `note --hasPart-->` from the old section to the new
+   * (the old node is left in place as the prior version). Every other section is
+   * untouched — this is the fine-grained counterpart to {@link saveBody}, which
+   * reconciles the whole body.
+   *
+   * Rejects if `sectionId` is not a current `hasPart` target of `nodeId`.
+   */
+  async editSection(
+    nodeId: string,
+    sectionId: string,
+    text: string,
+  ): Promise<Section> {
+    const current = await this.readBody(nodeId);
+    const target = current.find((s) => s.id === sectionId);
+    if (target === undefined) {
+      throw new Error(
+        `editSection: section ${sectionId} is not part of node ${nodeId}.`,
+      );
+    }
+
+    const id = this.capture.mintSectionId(nodeId);
+    const ops: UraniaOp[] = [
+      { op: "createNode", id, hasType: SECTION_TYPE },
+      { op: "addEdge", from: id, predicate: TEXT, to: text },
+      { op: "addEdge", from: id, predicate: ORDER_KEY, to: target.orderKey },
+      { op: "addEdge", from: nodeId, predicate: HAS_PART, to: id },
+      { op: "removeEdge", from: nodeId, predicate: HAS_PART, to: target.id },
+    ];
+    await this.capture.capture(ops);
+
+    return { id, text, orderKey: target.orderKey };
+  }
 }
