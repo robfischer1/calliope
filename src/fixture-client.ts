@@ -44,6 +44,42 @@ export class FixtureBodyClient implements BodyClient {
     return Promise.resolve();
   }
 
+  /**
+   * Single-section edit. Finds the row by `sectionId`, rewrites its prose while
+   * keeping its `orderKey` (so body order is untouched), and mints a fresh
+   * placement id — mirroring the substrate's copy-on-write identity change.
+   * Rejects if `sectionId` is not a current section of `nodeId`.
+   */
+  editSection(
+    nodeId: string,
+    sectionId: string,
+    text: string,
+  ): Promise<Section> {
+    const rows = this.bodies.get(nodeId);
+    const target = rows?.find((r) => r.id === sectionId);
+    if (rows === undefined || target === undefined) {
+      return Promise.reject(
+        new Error(
+          `editSection: section ${sectionId} is not part of node ${nodeId}.`,
+        ),
+      );
+    }
+    const next: FixtureSection = {
+      id: `${nodeId}#${String(this.seq++)}`,
+      text,
+      orderKey: target.orderKey,
+    };
+    this.bodies.set(
+      nodeId,
+      rows.map((r) => (r.id === sectionId ? next : r)),
+    );
+    return Promise.resolve({
+      id: next.id,
+      text: next.text,
+      orderKey: next.orderKey,
+    });
+  }
+
   private materialize(
     nodeId: string,
     sections: readonly SectionInput[],
