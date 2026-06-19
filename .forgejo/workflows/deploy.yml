@@ -9,7 +9,7 @@
 # It reaches urania over mnemosyne-net (URANIA_URL, baked in compose.yaml).
 #
 # SECURITY GATE (#1471): the deploy gate also runs pnpm audit (blocking), opengrep
-# (vendored TS taint ruleset, informational), and a Trivy scan of the freshly
+# (vendored TS taint ruleset, a BLOCKING gate), and a Trivy scan of the freshly
 # built image (blocking, --ignore-unfixed) before publish.
 #
 # REQUIRED Forgejo Actions secret (repo -> Settings -> Actions -> Secrets):
@@ -67,11 +67,10 @@ jobs:
       - name: Dependency vuln scan (pnpm audit)
         run: pnpm audit --prod --audit-level=high
 
-      # opengrep runs the vendored TS taint ruleset (rules/sast), INFORMATIONAL
+      # opengrep runs the vendored TS taint ruleset (rules/sast), a BLOCKING gate
       # while tuned. LANG forces UTF-8: opengrep reads files under the C locale
       # otherwise and dies on any non-ASCII byte.
-      - name: SAST (opengrep, scoped taint rules) [informational]
-        continue-on-error: true
+      - name: SAST (opengrep, scoped taint rules)
         run: |
           curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash
           export PATH="$HOME/.opengrep/cli/latest:$PATH"
