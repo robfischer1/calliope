@@ -30,6 +30,11 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 # -- Stage 2: runtime ---------------------------------------------------------
 FROM node:22-bookworm-slim
 
+# The runtime runs on `node` alone — strip the bundled global npm (+ its
+# build-time deps) so image scans don't block on npm CVEs (e.g. picomatch ReDoS)
+# that never execute in production.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
 # Drop privileges: run as the stock unprivileged `node` user.
 WORKDIR /app
 
