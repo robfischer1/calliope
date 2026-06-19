@@ -58,6 +58,31 @@ class UraniaBodyClient implements BodyClient; // substrate-direct; live wire def
   **live transport is deferred**, guarded behind `CALLIOPE_URANIA_WIRED` and an
   injected `UraniaCapture`, exactly like Tantalus's current clotho swap-seam.
 
+## MCP server
+
+The prose facet is also an MCP server exposing four tools (`read_body`,
+`write_body`, `append_section`, `edit_section`) over the same backend selection
+(`UraniaBodyClient` live by default — `URANIA_URL`, internal-net
+`http://urania:8202`; `CALLIOPE_MCP_BACKEND=fixture` for a standalone server).
+Two transports, one shared tool set:
+
+- **stdio** — `calliope-mcp` bin (`dist/mcp/main.js`); for Tantalus + local use.
+- **streamable-HTTP** — `calliope-mcp-http` bin (`dist/mcp/http.js`,
+  `pnpm start:http`); serves `POST /mcp` on `$PORT` (else `$CALLIOPE_MCP_PORT`,
+  else 8204). This is the **constellation star** form: the Hades MCP gateway
+  fronts it east-west at `http://calliope-mcp:8204/mcp`. Stateless — a fresh
+  server+transport per request over a long-lived backend.
+
+## Deploy (nas01 star)
+
+`compose.yaml` + `Dockerfile` + `.forgejo/workflows/deploy.yml` ship the HTTP
+star to nas01: container/hostname `calliope-mcp` on the external `mnemosyne-net`,
+internal-only (no host port), reaching urania at `URANIA_URL=http://urania:8202`.
+Push to `main` runs the gate (format/lint/typecheck/test/build) then builds,
+pushes to the Forgejo registry, and recreates the container. Joining the
+constellation is one line in the gateway's `hades.toml` `[stars]` table
+(`calliope = "http://calliope-mcp:8204/mcp"`) + a Hades restart.
+
 ## Develop
 
 ```sh
