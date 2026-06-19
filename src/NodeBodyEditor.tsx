@@ -21,9 +21,9 @@ export interface NodeBodyEditorProps {
 
 /**
  * Calliope's node-body editor. Resolves a node's body via the injected
- * {@link BodyClient}, materializes it into a ProseMirror doc (paragraphs + h2
- * headings), edits in place, and coarse-saves the whole body back through the
- * client.
+ * {@link BodyClient}, materializes it into a ProseMirror doc (the body's
+ * markdown, rendered formatted), edits in place, and coarse-saves the whole
+ * body back through the client.
  *
  * Section identity, ordering, and copy-on-write versioning live in the client /
  * substrate — the editor only ever hands back ordered prose. Chunking
@@ -110,7 +110,7 @@ export function NodeBodyEditor(props: NodeBodyEditorProps): JSX.Element {
               ? "loading…"
               : saved
                 ? "saved"
-                : "paragraphs + ## headings · unsaved"}
+                : "markdown · unsaved"}
           </span>
           <button
             type="button"
