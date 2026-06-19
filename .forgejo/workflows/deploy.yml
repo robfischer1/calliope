@@ -8,6 +8,10 @@
 # builds from public npm deps; no private schema, no DB, no private-repo auth.
 # It reaches urania over mnemosyne-net (URANIA_URL, baked in compose.yaml).
 #
+# SECURITY GATE (#1471): the deploy gate also runs pnpm audit (blocking), opengrep
+# (vendored TS taint ruleset, informational), and a Trivy scan of the freshly
+# built image (blocking, --ignore-unfixed) before publish.
+#
 # REQUIRED Forgejo Actions secret (repo -> Settings -> Actions -> Secrets):
 #   REGISTRY_TOKEN  a Forgejo PAT (write:package) -- `docker login` + push the
 #                   built image to forgejo.notusmi.com/rob/calliope-mcp.
@@ -37,9 +41,8 @@ jobs:
     steps:
       - uses: https://github.com/actions/checkout@v4
 
-      # setup-node MUST precede pnpm/action-setup: the pnpm self-installer runs
-      # under whatever Node is active, and the runner default is too old for
-      # pnpm 11 (engines >=22.13).
+      # setup-node MUST precede pnpm/action-setup: pnpm 11's engines need Node
+      # >=22.13, and the runner default is older.
       - name: Set up Node
         uses: https://github.com/actions/setup-node@v4
         with:
@@ -48,9 +51,7 @@ jobs:
       - name: Install pnpm
         uses: https://github.com/pnpm/action-setup@v4
         with:
-          # JS actions execute on the runner's bundled Node, where pnpm 11's
-          # engines check fails. The standalone binary bundles its own runtime.
-          standalone: true
+          standalone: true   # bundles its own runtime; the runner's Node is too old
 
       # Gate: format / lint / type / test / build. Deploy only on green.
       - name: Gate — format / lint / typecheck / test / build
@@ -62,9 +63,40 @@ jobs:
           pnpm test
           pnpm build
 
-      # Build, publish the image to the Forgejo container registry, then deploy.
-      # `docker compose push` publishes forgejo.notusmi.com/rob/calliope-mcp:latest
-      # as the real artifact; `up -d` recreates the container from it.
+      # pnpm audit BLOCKS on a HIGH+ production dependency advisory.
+      - name: Dependency vuln scan (pnpm audit)
+        run: pnpm audit --prod --audit-level=high
+
+      # opengrep runs the vendored TS taint ruleset (rules/sast), INFORMATIONAL
+      # while tuned. LANG forces UTF-8: opengrep reads files under the C locale
+      # otherwise and dies on any non-ASCII byte.
+      - name: SAST (opengrep, scoped taint rules) [informational]
+        continue-on-error: true
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash
+          export PATH="$HOME/.opengrep/cli/latest:$PATH"
+          export LANG=C.UTF-8 LC_ALL=C.UTF-8
+          opengrep scan --config rules/sast --error .
+
+      # Build the image FRESH (--no-cache so Trivy scans a deterministic image
+      # from the current lockfile, never a stale cached layer), scan it, then
+      # publish + deploy. Trivy BLOCKS on a fixable HIGH/CRITICAL; --ignore-unfixed
+      # drops base-image CVEs with no released fix.
+      - name: Build image
+        run: docker compose build --no-cache
+
+      - name: Image CVE scan (Trivy)
+        run: |
+          IMG=$(docker compose config --images | head -1)
+          echo "scanning image: $IMG"
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
+            "$IMG"
+
+      # Publish the built image to the Forgejo container registry, then deploy.
+      # `docker compose push` publishes forgejo.notusmi.com/rob/calliope-mcp:latest.
       - name: Publish to Forgejo registry + deploy on nas01
         shell: bash   # the act runner defaults to dash (no pipefail)
         env:
@@ -72,7 +104,6 @@ jobs:
         run: |
           set -euo pipefail
           echo "${REGISTRY_TOKEN}" | docker login forgejo.notusmi.com -u rob --password-stdin
-          docker compose build
           docker compose push
           docker compose up -d
           docker logout forgejo.notusmi.com
