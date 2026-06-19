@@ -60,17 +60,16 @@ const MOIRAE_GRAPH = nameHash("moirae");
  */
 const NODE_PREDICATES = new Set<string>([HAS_PART]);
 
-/** Name-hash of each calliope predicate, for wire encoding + reverse lookup. */
+/** Name-hash of each calliope predicate, for wire encoding (the write path). */
 const PREDICATE_HASH: Record<string, string> = {
   [HAS_PART]: nameHash(HAS_PART),
   [TEXT]: nameHash(TEXT),
   [ORDER_KEY]: nameHash(ORDER_KEY),
   [HAS_TYPE]: nameHash(HAS_TYPE),
 };
-/** Reverse: predicate name-hash (hex) → calliope predicate string. */
-const PREDICATE_BY_HASH: Record<string, string> = Object.fromEntries(
-  Object.entries(PREDICATE_HASH).map(([k, v]) => [v, k]),
-);
+
+/** calliope's body-model predicates — the set resolve() keeps. */
+const BODY_PREDICATES = new Set<string>([HAS_PART, TEXT, ORDER_KEY, HAS_TYPE]);
 
 /** A urania wire op (hex `s/p/o/g`) or a scalar intern. */
 type WireOp =
@@ -83,9 +82,9 @@ type WireOp =
       g: string;
     };
 
-/** One materialized attr as urania returns it. */
-interface UraniaAttr {
-  p: string;
+/** One edge as urania's `materialize_edges` returns it (resolved name). */
+interface UraniaEdge {
+  predicate: string;
   value: string;
   is_node?: boolean;
 }
@@ -167,22 +166,23 @@ export class LiveUraniaCapture implements UraniaCapture {
   }
 
   /**
-   * Resolve one node's outbound facts to calliope triples. urania's
-   * `materialize(node)` returns `{id, attrs:[{p, value, is_node}]}`; reshape each
-   * attr to `{ from: subject, predicate, to }`, mapping the predicate hash back
-   * to its calliope string and using the node hex / scalar value as `to`.
-   * Predicates outside calliope's body model are dropped.
+   * Resolve one node's outbound edges to calliope triples. urania's
+   * `materialize_edges(node)` returns `{id, edges:[{predicate, value, is_node}]}`
+   * — the no-LWW, multi-valued read (a note's N `hasPart` edges all survive,
+   * where `materialize` would collapse them to one). The `predicate` is already
+   * the resolved B1 NAME, so it's read directly. Each edge becomes
+   * `{ from: subject, predicate, to }` (node hex / scalar value as `to`);
+   * predicates outside calliope's body model are dropped.
    */
   async resolve(subject: string): Promise<UraniaTriple[]> {
-    const mat = (await this.rpc("materialize", { node: subject })) as {
-      attrs?: UraniaAttr[];
+    const mat = (await this.rpc("materialize_edges", { node: subject })) as {
+      edges?: UraniaEdge[];
     } | null;
-    const attrs = mat?.attrs ?? [];
+    const edges = mat?.edges ?? [];
     const triples: UraniaTriple[] = [];
-    for (const attr of attrs) {
-      const predicate = PREDICATE_BY_HASH[attr.p];
-      if (predicate === undefined) continue;
-      triples.push({ from: subject, predicate, to: attr.value });
+    for (const edge of edges) {
+      if (!BODY_PREDICATES.has(edge.predicate)) continue;
+      triples.push({ from: subject, predicate: edge.predicate, to: edge.value });
     }
     return triples;
   }

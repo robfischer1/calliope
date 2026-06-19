@@ -4,6 +4,12 @@ import {
   contentHash,
   nameHash,
 } from "../src/mcp/live-capture.js";
+import {
+  HAS_PART,
+  ORDER_KEY,
+  TEXT,
+  UraniaBodyClient,
+} from "../src/urania-client.js";
 import type { UraniaOp } from "../src/urania-client.js";
 
 /**
@@ -199,27 +205,34 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
     expect(wire.some((o) => o.op === "intern")).toBe(false);
   });
 
-  it("resolve() reshapes materialize attrs to calliope triples", async () => {
-    // Override fetch to return a materialize-shaped result.
+  it("resolve() reshapes materialize_edges to calliope triples", async () => {
+    // resolve() now calls materialize_edges — the no-LWW read whose edges carry
+    // the RESOLVED predicate NAME (not a hash). Two hasPart edges both survive
+    // (where materialize would collapse them); an off-model predicate is dropped.
     stub.restore();
     const note = nameHash("calliope:note");
-    const sid = nameHash("calliope:s1");
-    const materializeResult = {
+    const s0 = nameHash("calliope:s0");
+    const s1 = nameHash("calliope:s1");
+    const calls: { verb: string; args: Record<string, unknown> }[] = [];
+    const edgesResult = {
       result: {
         structuredContent: {
           id: note,
-          attrs: [
-            { p: REF.name.hasPart, value: sid, is_node: true },
-            { p: REF.name.text, value: "body prose", is_node: false },
-            // an unknown predicate is dropped
-            { p: nameHash("unknown"), value: "x", is_node: false },
+          edges: [
+            { predicate: "hasPart", value: s0, is_node: true },
+            { predicate: "hasPart", value: s1, is_node: true },
+            { predicate: "text", value: "body prose", is_node: false },
+            // a predicate outside calliope's body model is dropped
+            { predicate: "servesObjective", value: "x", is_node: false },
           ],
         },
       },
     };
-    const fake: typeof fetch = () => {
+    const fake: typeof fetch = (_input, init) => {
+      const req = JSON.parse(bodyText(init)) as JsonRpcRequest;
+      calls.push({ verb: req.params.name, args: req.params.arguments });
       const response: Pick<Response, "json"> = {
-        json: () => Promise.resolve(materializeResult),
+        json: () => Promise.resolve(edgesResult),
       };
       return Promise.resolve(response as Response);
     };
@@ -227,17 +240,17 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
 
     const cap = new LiveUraniaCapture();
     const triples = await cap.resolve(note);
-    expect(triples).toContainEqual({
-      from: note,
-      predicate: "hasPart",
-      to: sid,
-    });
+    expect(calls[0]?.verb).toBe("materialize_edges"); // not materialize
+    expect(calls[0]?.args).toEqual({ node: note });
+    // both hasPart edges survive — no LWW collapse
+    expect(triples).toContainEqual({ from: note, predicate: "hasPart", to: s0 });
+    expect(triples).toContainEqual({ from: note, predicate: "hasPart", to: s1 });
     expect(triples).toContainEqual({
       from: note,
       predicate: "text",
       to: "body prose",
     });
-    expect(triples).toHaveLength(2); // unknown predicate dropped
+    expect(triples).toHaveLength(3); // off-model predicate dropped
   });
 
   it("dedups duplicate facts within one batch (urania PK is s,p,o,g,tx)", async () => {
@@ -261,5 +274,113 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
     const id = cap.mintSectionId();
     expect(id).toMatch(/^[0-9a-f]{64}$/);
     expect(cap.mintSectionId()).not.toBe(id);
+  });
+});
+
+/**
+ * A stateful fetch fake that emulates urania's substrate over the wire: it
+ * applies `capture` ops into a current-fact set (retraction-aware, like
+ * `current_facts`) and serves `materialize_edges` for a node — resolving scalar
+ * objects back to their interned values and flagging `is_node`. Drives the FULL
+ * body round-trip (UraniaBodyClient -> LiveUraniaCapture -> wire) without a
+ * network, proving the corrected resolve() reads a multi-section body back.
+ */
+function uraniaSubstrateFetch(): { restore: () => void } {
+  const original = globalThis.fetch;
+  // current facts keyed "s|p|o|g" -> {s,p,o}; scalars keyed content-hash -> value.
+  const facts = new Map<string, { s: string; p: string; o: string }>();
+  const scalars = new Map<string, string>();
+  // reverse predicate name-hash (hex) -> name, for the body-model predicates.
+  const predName = new Map<string, string>(
+    [HAS_PART, TEXT, ORDER_KEY, HAS_TYPE_TEST].map((n) => [nameHash(n), n]),
+  );
+
+  const apply = (ops: WireOp[]): void => {
+    for (const op of ops) {
+      if (op.op === "intern" && op.value !== undefined) {
+        scalars.set(contentHash(op.value), op.value);
+      } else if (op.op === "addEdge" || op.op === "removeEdge") {
+        const s = op.s ?? "";
+        const p = op.p ?? "";
+        const o = op.o ?? "";
+        const key = `${s}|${p}|${o}`;
+        if (op.op === "addEdge") {
+          facts.set(key, { s, p, o });
+        } else {
+          facts.delete(key);
+        }
+      }
+    }
+  };
+
+  const edgesFor = (node: string): UraniaEdgeWire[] => {
+    const out: UraniaEdgeWire[] = [];
+    for (const f of facts.values()) {
+      if (f.s !== node) continue;
+      const name = predName.get(f.p) ?? f.p;
+      if (scalars.has(f.o)) {
+        out.push({ predicate: name, value: scalars.get(f.o) ?? "", is_node: false });
+      } else {
+        out.push({ predicate: name, value: f.o, is_node: true });
+      }
+    }
+    return out;
+  };
+
+  const fake: typeof fetch = (_input, init) => {
+    const req = JSON.parse(bodyText(init)) as JsonRpcRequest;
+    let structured: Record<string, unknown> = { result: { ok: true } };
+    if (req.params.name === "capture") {
+      apply(req.params.arguments.ops as WireOp[]);
+    } else if (req.params.name === "materialize_edges") {
+      const node = req.params.arguments.node as string;
+      structured = { id: node, edges: edgesFor(node) };
+    }
+    const response: Pick<Response, "json"> = {
+      json: () => Promise.resolve({ result: { structuredContent: structured } }),
+    };
+    return Promise.resolve(response as Response);
+  };
+  globalThis.fetch = vi.fn(fake);
+  return {
+    restore: () => {
+      globalThis.fetch = original;
+    },
+  };
+}
+
+/** One edge as the substrate fake emits it (mirrors urania materialize_edges). */
+interface UraniaEdgeWire {
+  predicate: string;
+  value: string;
+  is_node: boolean;
+}
+
+const HAS_TYPE_TEST = "hasType";
+
+describe("body round-trip over materialize_edges (write 3 -> read 3 in order)", () => {
+  const prev = process.env.CALLIOPE_URANIA_WIRED;
+  let sub: ReturnType<typeof uraniaSubstrateFetch>;
+  beforeEach(() => {
+    process.env.CALLIOPE_URANIA_WIRED = "1";
+    sub = uraniaSubstrateFetch();
+  });
+  afterEach(() => {
+    sub.restore();
+    if (prev === undefined) delete process.env.CALLIOPE_URANIA_WIRED;
+    else process.env.CALLIOPE_URANIA_WIRED = prev;
+  });
+
+  it("saveBody of 3 sections then readBody returns 3 in order", async () => {
+    const client = new UraniaBodyClient(new LiveUraniaCapture());
+    const note = nameHash("calliope:note");
+    await client.saveBody(note, [
+      { text: "first" },
+      { text: "second" },
+      { text: "third" },
+    ]);
+    const body = await client.readBody(note);
+    expect(body.map((s) => s.text)).toEqual(["first", "second", "third"]);
+    expect(body).toHaveLength(3); // proves the multi-hasPart read (no LWW)
   });
 });
