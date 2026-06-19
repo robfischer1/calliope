@@ -19,7 +19,8 @@
     }
   },
   "bin": {
-    "calliope-mcp": "./dist/mcp/main.js"
+    "calliope-mcp": "./dist/mcp/main.js",
+    "calliope-mcp-http": "./dist/mcp/http.js"
   },
   "files": [
     "dist",
@@ -31,6 +32,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "prepare": "tsc -p tsconfig.build.json",
+    "start": "node dist/mcp/main.js",
+    "start:http": "node dist/mcp/http.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

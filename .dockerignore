@@ -1,0 +1,37 @@
+# .dockerignore for the calliope-mcp star image. Keep the build context lean and
+# keep host state / secrets out of the image. The image builds its own
+# node_modules + dist; never copy the host's in.
+
+# Version control / CI
+.git
+.github
+.forgejo
+
+# Host build artifacts (the image runs `pnpm install` + `pnpm build` itself)
+node_modules
+**/node_modules
+dist
+**/dist
+*.tsbuildinfo
+.turbo
+coverage
+
+# Tests / dev-only artifacts not needed at runtime
+__tests__
+
+# Secrets / local env
+.env
+.env.*
+*.pem
+
+# Editor / OS noise
+.idea
+.vscode
+.DS_Store
+
+# The AI governance layer (not part of the runtime image)
+.claude
+.gemini
+AGENTS.md
+CLAUDE.md
+GEMINI.md

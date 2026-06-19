@@ -1,0 +1,78 @@
+# Forgejo Actions: build + deploy calliope-mcp on push to main.
+# Runs on the nas01 self-hosted runner (label `nas01`) with the host docker
+# socket mounted, so `docker compose` targets nas01's own daemon and recreates
+# the container from source.
+#
+# calliope-mcp is the constellation's prose-facet star — a Node/pnpm MCP server
+# fronted east-west by the Hades gateway (http://calliope-mcp:8204/mcp). It
+# builds from public npm deps; no private schema, no DB, no private-repo auth.
+# It reaches urania over mnemosyne-net (URANIA_URL, baked in compose.yaml).
+#
+# REQUIRED Forgejo Actions secret (repo -> Settings -> Actions -> Secrets):
+#   REGISTRY_TOKEN  a Forgejo PAT (write:package) -- `docker login` + push the
+#                   built image to forgejo.notusmi.com/rob/calliope-mcp.
+#
+# Prereqs: Forgejo Actions enabled on this repo + a runner with the `nas01`
+# label (host-networked, /var/run/docker.sock allowed); the mnemosyne-net
+# external network present on the host. Adding calliope to the constellation is
+# one line in the gateway's hades.toml [stars] table + a Hades restart.
+
+name: deploy
+on:
+  push:
+    branches: [main]
+    # Docs-only pushes don't change the image — skip the rebuild + redeploy.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+
+jobs:
+  build-and-deploy:
+    runs-on: nas01
+    container:
+      image: catthehacker/ubuntu:act-22.04   # glibc + docker CLI + compose v2
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+
+      # setup-node MUST precede pnpm/action-setup: the pnpm self-installer runs
+      # under whatever Node is active, and the runner default is too old for
+      # pnpm 11 (engines >=22.13).
+      - name: Set up Node
+        uses: https://github.com/actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install pnpm
+        uses: https://github.com/pnpm/action-setup@v4
+        with:
+          # JS actions execute on the runner's bundled Node, where pnpm 11's
+          # engines check fails. The standalone binary bundles its own runtime.
+          standalone: true
+
+      # Gate: format / lint / type / test / build. Deploy only on green.
+      - name: Gate — format / lint / typecheck / test / build
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm format:check
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm build
+
+      # Build, publish the image to the Forgejo container registry, then deploy.
+      # `docker compose push` publishes forgejo.notusmi.com/rob/calliope-mcp:latest
+      # as the real artifact; `up -d` recreates the container from it.
+      - name: Publish to Forgejo registry + deploy on nas01
+        shell: bash   # the act runner defaults to dash (no pipefail)
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "${REGISTRY_TOKEN}" | docker login forgejo.notusmi.com -u rob --password-stdin
+          docker compose build
+          docker compose push
+          docker compose up -d
+          docker logout forgejo.notusmi.com
