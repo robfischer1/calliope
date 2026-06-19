@@ -243,8 +243,16 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
     expect(calls[0]?.verb).toBe("materialize_edges"); // not materialize
     expect(calls[0]?.args).toEqual({ node: note });
     // both hasPart edges survive — no LWW collapse
-    expect(triples).toContainEqual({ from: note, predicate: "hasPart", to: s0 });
-    expect(triples).toContainEqual({ from: note, predicate: "hasPart", to: s1 });
+    expect(triples).toContainEqual({
+      from: note,
+      predicate: "hasPart",
+      to: s0,
+    });
+    expect(triples).toContainEqual({
+      from: note,
+      predicate: "hasPart",
+      to: s1,
+    });
     expect(triples).toContainEqual({
       from: note,
       predicate: "text",
@@ -319,7 +327,11 @@ function uraniaSubstrateFetch(): { restore: () => void } {
       if (f.s !== node) continue;
       const name = predName.get(f.p) ?? f.p;
       if (scalars.has(f.o)) {
-        out.push({ predicate: name, value: scalars.get(f.o) ?? "", is_node: false });
+        out.push({
+          predicate: name,
+          value: scalars.get(f.o) ?? "",
+          is_node: false,
+        });
       } else {
         out.push({ predicate: name, value: f.o, is_node: true });
       }
@@ -337,7 +349,8 @@ function uraniaSubstrateFetch(): { restore: () => void } {
       structured = { id: node, edges: edgesFor(node) };
     }
     const response: Pick<Response, "json"> = {
-      json: () => Promise.resolve({ result: { structuredContent: structured } }),
+      json: () =>
+        Promise.resolve({ result: { structuredContent: structured } }),
     };
     return Promise.resolve(response as Response);
   };

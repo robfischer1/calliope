@@ -182,7 +182,11 @@ export class LiveUraniaCapture implements UraniaCapture {
     const triples: UraniaTriple[] = [];
     for (const edge of edges) {
       if (!BODY_PREDICATES.has(edge.predicate)) continue;
-      triples.push({ from: subject, predicate: edge.predicate, to: edge.value });
+      triples.push({
+        from: subject,
+        predicate: edge.predicate,
+        to: edge.value,
+      });
     }
     return triples;
   }
