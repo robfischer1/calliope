@@ -4,3 +4,10 @@ dist/
 .turbo/
 coverage/
 .DS_Store
+
+# furnace-provisioned (regenerable via `furnace pour`; do not commit)
+AGENTS.md
+CLAUDE.md
+.claude/
+.specify/
+.furnace/deployed.json
