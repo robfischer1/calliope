@@ -3,3 +3,6 @@
 # scripts pnpm blocks by default. esbuild powers vitest.
 allowBuilds:
   esbuild: true
+
+overrides:
+  kysely: ">=0.28.12"
