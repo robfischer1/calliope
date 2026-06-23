@@ -119,6 +119,7 @@ jobs:
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          DTRACK_API_KEY: ${{ secrets.DTRACK_API_KEY }}
         run: |
           set -euo pipefail
           curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
@@ -134,4 +135,14 @@ jobs:
           syft "$IMG" -o cyclonedx-json > /tmp/sbom.cdx.json
           cosign attest --key /tmp/cosign.key --type cyclonedx --predicate /tmp/sbom.cdx.json --yes "$DIGEST"
           cosign verify --key cosign.pub "$DIGEST"
+
+          # Upload the SBOM to Dependency-Track for continuous CVE tracking of
+          # shipped artifacts. DT binds 127.0.0.1 on the host, so reach it via a
+          # host-networked curl sidecar fed the payload over stdin. Non-fatal --
+          # DT is telemetry, not a deploy gate. autoCreate makes the project on
+          # first upload (the Containers-team key has PROJECT_CREATION_UPLOAD).
+          PROJ_NAME=${IMG##*/}; PROJ_NAME=${PROJ_NAME%%:*}
+          printf '{"projectName":"%s","projectVersion":"latest","autoCreate":true,"bom":"%s"}' "$PROJ_NAME" "$(base64 -w0 /tmp/sbom.cdx.json)" > /tmp/dt-bom.json
+          docker run --rm -i --network host curlimages/curl:latest -s -X PUT http://127.0.0.1:30181/api/v1/bom -H "Content-Type: application/json" -H "X-Api-Key: ${DTRACK_API_KEY}" --data-binary @- -o /dev/null -w 'DT upload HTTP %{http_code}\n' < /tmp/dt-bom.json || echo "DT upload failed (non-fatal)"
+
           docker logout forgejo.notusmi.com
