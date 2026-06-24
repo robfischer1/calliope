@@ -4,7 +4,12 @@ import { EditorView } from "prosemirror-view";
 import { keymap } from "prosemirror-keymap";
 import { baseKeymap } from "prosemirror-commands";
 import { history, redo, undo } from "prosemirror-history";
-import type { BlockOpEmitter, BodyClient, Section, SectionInput } from "./types.js";
+import type {
+  BlockOpEmitter,
+  BodyClient,
+  Section,
+  SectionInput,
+} from "./types.js";
 import { docToTexts, textsToDoc } from "./prosemirror.js";
 
 /** Props for {@link NodeBodyEditor}. */
@@ -105,9 +110,15 @@ class BlockOpDecoratedClient implements BodyClient {
     }
   }
 
-  editSection(nodeId: string, sectionId: string, text: string): Promise<Section> {
+  editSection(
+    nodeId: string,
+    sectionId: string,
+    text: string,
+  ): Promise<Section> {
     if (this.inner.editSection === undefined) {
-      return Promise.reject(new Error("editSection not supported by inner client"));
+      return Promise.reject(
+        new Error("editSection not supported by inner client"),
+      );
     }
     const emit = this.emitter;
     return this.inner.editSection(nodeId, sectionId, text).then(async (sec) => {

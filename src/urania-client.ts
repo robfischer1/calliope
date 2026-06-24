@@ -77,7 +77,7 @@ export interface UraniaCapture {
    */
   capture(ops: UraniaOp[], authoredBy?: AuthoredBy): Promise<void>;
   /** Mint a fresh, unique section placement id under `nodeId`. */
-  mintSectionId(nodeId: string): string;
+  mintSectionId(nodeId?: string): string;
 }
 
 /** Default guard: live transport is deferred unless explicitly enabled. */
@@ -105,8 +105,8 @@ class UnwiredCapture implements UraniaCapture {
       new Error("UraniaBodyClient: live substrate wiring not enabled."),
     );
   }
-  mintSectionId(nodeId: string): string {
-    return `${nodeId}#section/${crypto.randomUUID()}`;
+  mintSectionId(nodeId?: string): string {
+    return `${nodeId ?? ""}#section/${crypto.randomUUID()}`;
   }
 }
 

@@ -20,9 +20,10 @@ interface CapturedPost {
 }
 
 /** Stub fetch returning the given response shape for all POSTs. */
-function stubFetch(
-  responseFactory: (req: CharonBodyRequest) => object,
-): { calls: CapturedPost[]; restore: () => void } {
+function stubFetch(responseFactory: (req: CharonBodyRequest) => object): {
+  calls: CapturedPost[];
+  restore: () => void;
+} {
   const calls: CapturedPost[] = [];
   const original = globalThis.fetch;
   const fake: typeof fetch = (input, init) => {
@@ -41,7 +42,12 @@ function stubFetch(
     return Promise.resolve(response as Response);
   };
   globalThis.fetch = vi.fn(fake);
-  return { calls, restore: () => { globalThis.fetch = original; } };
+  return {
+    calls,
+    restore: () => {
+      globalThis.fetch = original;
+    },
+  };
 }
 
 describe("hadesEnabled / charonUrl", () => {
@@ -191,7 +197,11 @@ describe("HadesCapture — read_body / resolve", () => {
     expect(triples).toContainEqual({ from: s1, predicate: TEXT, to: "Second" });
     // order_key literals
     expect(triples).toContainEqual({ from: s0, predicate: ORDER_KEY, to: "N" });
-    expect(triples).toContainEqual({ from: s1, predicate: ORDER_KEY, to: "N:" });
+    expect(triples).toContainEqual({
+      from: s1,
+      predicate: ORDER_KEY,
+      to: "N:",
+    });
     expect(triples).toHaveLength(6); // 2 hasPart + 2 text + 2 order_key
 
     globalThis.fetch = original;

@@ -35,7 +35,10 @@ export function backendKind(env: NodeJS.ProcessEnv = process.env): BackendKind {
   if (explicit === "hades") return "hades";
   if (explicit === "urania") return "urania";
   // Auto-select hades when the env flag is set (CALLIOPE_WRITE_VIA_HADES or CHARON_URL).
-  if (hadesEnabled(env) || (env.CHARON_URL !== undefined && env.CHARON_URL !== ""))
+  if (
+    hadesEnabled(env) ||
+    (env.CHARON_URL !== undefined && env.CHARON_URL !== "")
+  )
     return "hades";
   return "urania";
 }

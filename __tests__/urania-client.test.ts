@@ -64,8 +64,8 @@ class FakeCapture implements UraniaCapture {
     return Promise.resolve();
   }
 
-  mintSectionId(nodeId: string): string {
-    return `${nodeId}#section/${String(this.minted++)}`;
+  mintSectionId(nodeId?: string): string {
+    return `${nodeId ?? ""}#section/${String(this.minted++)}`;
   }
 }
 
