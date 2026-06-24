@@ -1,5 +1,14 @@
-import type { BodyClient, Section, SectionInput } from "./types.js";
+import type {
+  BlockOp,
+  BlockOpEmitter,
+  BodyClient,
+  Section,
+  SectionInput,
+} from "./types.js";
 import { compareKeys, sequence } from "./order-key.js";
+
+/** No-op emitter used when no {@link BlockOpEmitter} is injected. */
+const NULL_EMITTER: BlockOpEmitter = { emit: () => undefined };
 
 /**
  * The substrate body model (the predicates this client reads/writes):
@@ -111,13 +120,25 @@ class UnwiredCapture implements UraniaCapture {
  */
 export class UraniaBodyClient implements BodyClient {
   private readonly capture: UraniaCapture;
+  private readonly blockOpEmitter: BlockOpEmitter;
 
-  constructor(capture?: UraniaCapture) {
+  constructor(capture?: UraniaCapture, blockOpEmitter?: BlockOpEmitter) {
     if (capture !== undefined && wiringEnabled()) {
       this.capture = capture;
     } else {
       this.capture = new UnwiredCapture();
     }
+    this.blockOpEmitter = blockOpEmitter ?? NULL_EMITTER;
+  }
+
+  /** Mint an ISO-8601 UTC timestamp for block-op records. */
+  private timestamp(): string {
+    return new Date().toISOString();
+  }
+
+  /** Emit a single block-op record to the side-channel log. */
+  private async emitBlockOp(op: BlockOp): Promise<void> {
+    await this.blockOpEmitter.emit(op);
   }
 
   /**
@@ -173,6 +194,10 @@ export class UraniaBodyClient implements BodyClient {
     const used = new Set<string>();
     const keptHasPart = new Set<string>();
 
+    // Collect semantic block-ops as we classify each section.
+    const blockOps: BlockOp[] = [];
+    const ts = this.timestamp();
+
     // keys is sequence(sections.length) — parallel to sections — so zip them
     // into placements and iterate that, keeping the loop assertion-free.
     const placements = sections.map((section, i) => ({
@@ -199,6 +224,16 @@ export class UraniaBodyClient implements BodyClient {
             predicate: ORDER_KEY,
             to: orderKey,
           });
+          // Semantic reorder: same prose, new position.
+          blockOps.push({
+            block_id: reuse.id,
+            op_type: "reorder",
+            content_delta: "",
+            order_key: orderKey,
+            timestamp: ts,
+            authored_by: authoredBy,
+            node_id: nodeId,
+          });
         }
         continue;
       }
@@ -215,6 +250,21 @@ export class UraniaBodyClient implements BodyClient {
         to: orderKey,
       });
       ops.push({ op: "addEdge", from: nodeId, predicate: HAS_PART, to: id });
+
+      // Determine semantic op: add (no prior section with this prose) or update
+      // (the prior body had a section that was superseded — same position, new prose).
+      // "update" applies when there was a prior section at this slot that had
+      // different prose; otherwise it's a net-new add.
+      const hadPriorAtSlot = current.some((c) => !used.has(c.id));
+      blockOps.push({
+        block_id: id,
+        op_type: hadPriorAtSlot ? "update" : "add",
+        content_delta: nextText,
+        order_key: orderKey,
+        timestamp: ts,
+        authored_by: authoredBy,
+        node_id: nodeId,
+      });
     }
 
     // Rewire: drop hasPart for every old section the new body dropped or
@@ -227,10 +277,32 @@ export class UraniaBodyClient implements BodyClient {
           predicate: HAS_PART,
           to: old.id,
         });
+        // Only emit a delete op for sections that weren't covered by an update op
+        // (update already supersedes the old id — the new node's block-op was
+        // emitted above as "update"; no separate "delete" for the old node).
+        const coveredByUpdate = blockOps.some(
+          (b) => b.op_type === "update" && !keptHasPart.has(old.id),
+        );
+        if (!coveredByUpdate) {
+          blockOps.push({
+            block_id: old.id,
+            op_type: "delete",
+            content_delta: "",
+            order_key: old.orderKey,
+            timestamp: ts,
+            authored_by: authoredBy,
+            node_id: nodeId,
+          });
+        }
       }
     }
 
     await this.capture.capture(ops, authoredBy);
+
+    // Emit block-ops as an append-only side-channel (after the substrate write).
+    for (const blockOp of blockOps) {
+      await this.emitBlockOp(blockOp);
+    }
   }
 
   /**
@@ -269,6 +341,17 @@ export class UraniaBodyClient implements BodyClient {
       { op: "removeEdge", from: nodeId, predicate: HAS_PART, to: target.id },
     ];
     await this.capture.capture(ops, authoredBy);
+
+    // Emit a semantic "update" block-op for the new section node.
+    await this.emitBlockOp({
+      block_id: id,
+      op_type: "update",
+      content_delta: text,
+      order_key: target.orderKey,
+      timestamp: this.timestamp(),
+      authored_by: authoredBy,
+      node_id: nodeId,
+    });
 
     return { id, text, orderKey: target.orderKey };
   }

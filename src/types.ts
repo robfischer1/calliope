@@ -36,6 +36,55 @@ export interface SectionInput {
 }
 
 /**
+ * The semantic op type emitted into the block-op transaction log (F3).
+ *
+ * Each editor transaction produces one or more `BlockOp` records that describe
+ * WHAT changed at the block level — `add`, `update`, `delete`, or `reorder` —
+ * independently of the low-level urania `UraniaOp` stream. These are emitted as
+ * an APPEND-ONLY side-channel to Mnemosyne via the clotho `capture` verb; they
+ * never replace the `hasPart`/section substrate writes.
+ *
+ * Field semantics:
+ * - `block_id`      — the section's placement id (urania node hex / fixture id).
+ * - `op_type`       — the semantic op: `add` (new section), `update` (prose
+ *                     changed), `delete` (section removed from body), `reorder`
+ *                     (same prose, new position).
+ * - `content_delta` — for `add`/`update`: the new prose; for `reorder`/`delete`:
+ *                     empty string (the prose itself did not change).
+ * - `order_key`     — the fractional sort key at the time of the op (the new
+ *                     key for `add`/`reorder`; the last known key for `delete`).
+ * - `timestamp`     — ISO-8601 UTC string minted at emission time.
+ * - `authored_by`   — provenance from the write path (`"human"` when the gateway
+ *                     auth seam enforces `SET ROLE human`; `"calliope"` otherwise).
+ * - `node_id`       — the owning note/node id (the subject of the `hasPart` edge).
+ */
+export interface BlockOp {
+  block_id: string;
+  op_type: "add" | "update" | "delete" | "reorder";
+  content_delta: string;
+  order_key: string;
+  timestamp: string;
+  authored_by: "human" | "calliope";
+  node_id: string;
+}
+
+/**
+ * Side-channel emitter for the block-op transaction log.
+ *
+ * The log is APPEND-ONLY: `emit` is called once per block-op and never receives
+ * a destructive update. The default no-op implementation is used when no emitter
+ * is injected; inject a real one (e.g. a Mnemosyne/clotho capture transport) to
+ * persist the log downstream.
+ */
+export interface BlockOpEmitter {
+  /**
+   * Emit one block-op record. Implementations may be synchronous or async; the
+   * caller awaits the result so back-pressure is respected.
+   */
+  emit(op: BlockOp): void | Promise<void>;
+}
+
+/**
  * The body transport. Two implementations ship:
  *
  * - {@link FixtureBodyClient} — in-memory, fully working; the default for

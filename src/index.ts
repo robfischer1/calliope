@@ -9,7 +9,7 @@
  * ({@link FixtureBodyClient} now, {@link UraniaBodyClient} substrate-direct,
  * live wire deferred).
  */
-export type { Section, SectionInput, BodyClient } from "./types.js";
+export type { Section, SectionInput, BodyClient, BlockOp, BlockOpEmitter } from "./types.js";
 export { NodeBodyEditor } from "./NodeBodyEditor.js";
 export type { NodeBodyEditorProps } from "./NodeBodyEditor.js";
 export { FixtureBodyClient } from "./fixture-client.js";
