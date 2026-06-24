@@ -29,6 +29,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import type {
+  AuthoredBy,
   UraniaCapture,
   UraniaOp,
   UraniaTriple,
@@ -191,8 +192,19 @@ export class LiveUraniaCapture implements UraniaCapture {
     return triples;
   }
 
-  /** Translate calliope ops to urania wire ops and apply them in one capture. */
-  async capture(ops: UraniaOp[]): Promise<void> {
+  /**
+   * Translate calliope ops to urania wire ops and apply them in one capture.
+   *
+   * @param ops - The ops to apply.
+   * @param authoredBy - Provenance identity forwarded as the `author` field to
+   *   the urania engine-service. Defaults to `"calliope"` (legacy / machine
+   *   author). Pass `"human"` to attribute the write to Rob — the gateway auth
+   *   seam (Charon → Hades) enforces `SET ROLE human` on those writes.
+   */
+  async capture(
+    ops: UraniaOp[],
+    authoredBy: AuthoredBy = "calliope",
+  ): Promise<void> {
     const wire: WireOp[] = [];
     for (const op of ops) {
       switch (op.op) {
@@ -213,7 +225,7 @@ export class LiveUraniaCapture implements UraniaCapture {
     if (deduped.length > 0) {
       await this.rpc("capture", {
         ops: deduped.map(hexOp),
-        author: "calliope",
+        author: authoredBy,
       });
     }
   }

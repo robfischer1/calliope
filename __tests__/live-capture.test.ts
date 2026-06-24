@@ -283,6 +283,23 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
     expect(id).toMatch(/^[0-9a-f]{64}$/);
     expect(cap.mintSectionId()).not.toBe(id);
   });
+
+  it("capture passes authoredBy='calliope' as author by default", async () => {
+    const cap = new LiveUraniaCapture("http://nas01:8202");
+    await cap.capture([
+      { op: "createNode", id: nameHash("calliope:s1"), hasType: "section" },
+    ]);
+    expect(stub.calls[0]?.args.author).toBe("calliope");
+  });
+
+  it("capture passes authoredBy='human' as author when specified", async () => {
+    const cap = new LiveUraniaCapture("http://nas01:8202");
+    await cap.capture(
+      [{ op: "createNode", id: nameHash("calliope:s2"), hasType: "section" }],
+      "human",
+    );
+    expect(stub.calls[0]?.args.author).toBe("human");
+  });
 });
 
 /**

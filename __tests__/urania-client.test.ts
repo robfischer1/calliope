@@ -7,10 +7,20 @@ import {
   UraniaBodyClient,
 } from "../src/urania-client.js";
 import type {
+  AuthoredBy,
   UraniaCapture,
   UraniaOp,
   UraniaTriple,
 } from "../src/urania-client.js";
+import type { BlockOp, BlockOpEmitter } from "../src/types.js";
+
+/** Collects emitted block-ops for test assertions. */
+class FakeBlockOpEmitter implements BlockOpEmitter {
+  readonly ops: BlockOp[] = [];
+  emit(op: BlockOp): void {
+    this.ops.push(op);
+  }
+}
 
 /**
  * An in-memory triple store standing in for urania-capture-via-Hades, so the
@@ -18,13 +28,16 @@ import type {
  */
 class FakeCapture implements UraniaCapture {
   readonly triples: UraniaTriple[] = [];
+  /** Records the `authoredBy` value passed on each `capture()` call. */
+  readonly capturedProvenance: AuthoredBy[] = [];
   private minted = 0;
 
   resolve(subject: string): Promise<UraniaTriple[]> {
     return Promise.resolve(this.triples.filter((t) => t.from === subject));
   }
 
-  capture(ops: UraniaOp[]): Promise<void> {
+  capture(ops: UraniaOp[], authoredBy: AuthoredBy = "human"): Promise<void> {
+    this.capturedProvenance.push(authoredBy);
     for (const op of ops) {
       if (op.op === "createNode") {
         this.triples.push({
@@ -51,8 +64,8 @@ class FakeCapture implements UraniaCapture {
     return Promise.resolve();
   }
 
-  mintSectionId(nodeId: string): string {
-    return `${nodeId}#section/${String(this.minted++)}`;
+  mintSectionId(nodeId?: string): string {
+    return `${nodeId ?? ""}#section/${String(this.minted++)}`;
   }
 }
 
@@ -182,5 +195,214 @@ describe("UraniaBodyClient — body-model mapping (flag on)", () => {
     expect(stillLinked).toBe(false);
     const nodeSurvives = fake.triples.some((t) => t.from === dropId);
     expect(nodeSurvives).toBe(true);
+  });
+});
+
+describe("UraniaBodyClient — provenance / authoredBy threading", () => {
+  const prev = process.env.CALLIOPE_URANIA_WIRED;
+  let fake: FakeCapture;
+  let client: UraniaBodyClient;
+
+  beforeEach(() => {
+    process.env.CALLIOPE_URANIA_WIRED = "1";
+    fake = new FakeCapture();
+    client = new UraniaBodyClient(fake);
+  });
+  afterEach(() => {
+    if (prev === undefined) delete process.env.CALLIOPE_URANIA_WIRED;
+    else process.env.CALLIOPE_URANIA_WIRED = prev;
+  });
+
+  it("saveBody defaults to authoredBy='human'", async () => {
+    await client.saveBody("note1", [{ text: "hello" }]);
+    expect(fake.capturedProvenance).toEqual(["human"]);
+  });
+
+  it("saveBody passes through authoredBy='calliope' when specified", async () => {
+    await client.saveBody("note1", [{ text: "hello" }], "calliope");
+    expect(fake.capturedProvenance).toEqual(["calliope"]);
+  });
+
+  it("editSection defaults to authoredBy='human'", async () => {
+    // Seed a section first so editSection has something to find.
+    await client.saveBody("note2", [{ text: "original" }]);
+    fake.capturedProvenance.length = 0; // reset after seed
+    const body = await client.readBody("note2");
+    const sectionId = body[0]?.id ?? "";
+    await client.editSection("note2", sectionId, "updated");
+    expect(fake.capturedProvenance).toEqual(["human"]);
+  });
+
+  it("editSection passes through authoredBy='calliope' when specified", async () => {
+    await client.saveBody("note3", [{ text: "original" }]);
+    fake.capturedProvenance.length = 0;
+    const body = await client.readBody("note3");
+    const sectionId = body[0]?.id ?? "";
+    await client.editSection("note3", sectionId, "updated", "calliope");
+    expect(fake.capturedProvenance).toEqual(["calliope"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F3 — Block-op transaction log
+// ---------------------------------------------------------------------------
+
+/** All 7 required BlockOp fields. */
+const BLOCK_OP_FIELDS = [
+  "block_id",
+  "op_type",
+  "content_delta",
+  "order_key",
+  "timestamp",
+  "authored_by",
+  "node_id",
+] as const;
+
+/** Assert every required field is present and non-empty-string where required. */
+function assertAllFields(op: BlockOp, nodeId: string): void {
+  for (const field of BLOCK_OP_FIELDS) {
+    expect(op).toHaveProperty(field);
+  }
+  expect(op.node_id).toBe(nodeId);
+  expect(op.block_id).toBeTruthy();
+  expect(op.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/); // ISO-8601
+}
+
+describe("UraniaBodyClient — block-op transaction log (F3)", () => {
+  const prev = process.env.CALLIOPE_URANIA_WIRED;
+  let fake: FakeCapture;
+  let emitter: FakeBlockOpEmitter;
+  let client: UraniaBodyClient;
+
+  beforeEach(() => {
+    process.env.CALLIOPE_URANIA_WIRED = "1";
+    fake = new FakeCapture();
+    emitter = new FakeBlockOpEmitter();
+    client = new UraniaBodyClient(fake, emitter);
+  });
+  afterEach(() => {
+    if (prev === undefined) delete process.env.CALLIOPE_URANIA_WIRED;
+    else process.env.CALLIOPE_URANIA_WIRED = prev;
+  });
+
+  it("saveBody of a new section emits an 'add' op with all 7 fields", async () => {
+    await client.saveBody("n1", [{ text: "hello" }]);
+    expect(emitter.ops).toHaveLength(1);
+    const op = emitter.ops[0] ?? ({ op_type: undefined } as unknown as BlockOp);
+    assertAllFields(op, "n1");
+    expect(op.op_type).toBe("add");
+    expect(op.content_delta).toBe("hello");
+    expect(op.authored_by).toBe("human");
+  });
+
+  it("saveBody with changed prose emits an 'update' op carrying the new text", async () => {
+    await client.saveBody("n2", [{ text: "original" }]);
+    emitter.ops.length = 0; // reset after seed
+
+    await client.saveBody("n2", [{ text: "edited" }]);
+    const updateOp = emitter.ops.find((o) => o.op_type === "update");
+    expect(updateOp).toBeDefined();
+    if (updateOp === undefined) return;
+    expect(updateOp.content_delta).toBe("edited");
+    assertAllFields(updateOp, "n2");
+    expect(updateOp.authored_by).toBe("human");
+  });
+
+  it("dropping a section emits a 'delete' op with the section's last order_key", async () => {
+    await client.saveBody("n3", [{ text: "keep" }, { text: "drop" }]);
+    const body = await client.readBody("n3");
+    const dropSec = body.find((s) => s.text === "drop");
+    expect(dropSec).toBeDefined();
+    if (dropSec === undefined) return;
+    emitter.ops.length = 0;
+
+    await client.saveBody("n3", [{ text: "keep" }]);
+    const delOp = emitter.ops.find((o) => o.op_type === "delete");
+    expect(delOp).toBeDefined();
+    if (delOp === undefined) return;
+    assertAllFields(delOp, "n3");
+    expect(delOp.block_id).toBe(dropSec.id);
+    expect(delOp.content_delta).toBe("");
+    expect(delOp.order_key).toBe(dropSec.orderKey);
+  });
+
+  it("reordering sections emits a 'reorder' op with the new order_key", async () => {
+    await client.saveBody("n4", [{ text: "a" }, { text: "b" }]);
+    const bodyBefore = await client.readBody("n4");
+    const secA = bodyBefore.find((s) => s.text === "a");
+    expect(secA).toBeDefined();
+    if (secA === undefined) return;
+    emitter.ops.length = 0;
+
+    // Swap order: b then a — both sections move, so two reorder ops are emitted.
+    await client.saveBody("n4", [{ text: "b" }, { text: "a" }]);
+
+    // At least one reorder op must be emitted.
+    const reorderOps = emitter.ops.filter((o) => o.op_type === "reorder");
+    expect(reorderOps.length).toBeGreaterThanOrEqual(1);
+
+    // Specifically, a reorder op must exist for secA (text "a").
+    const reorderA = reorderOps.find((o) => o.block_id === secA.id);
+    expect(reorderA).toBeDefined();
+    if (reorderA === undefined) return;
+    assertAllFields(reorderA, "n4");
+    expect(reorderA.content_delta).toBe(""); // prose unchanged
+    // The new order_key is different from secA's original order_key.
+    expect(reorderA.order_key).not.toBe(secA.orderKey);
+  });
+
+  it("editSection emits an 'update' op carrying human provenance from F2", async () => {
+    await client.saveBody("n5", [{ text: "original" }]);
+    const body = await client.readBody("n5");
+    const sectionId = body[0]?.id ?? "";
+    expect(sectionId).not.toBe("");
+    emitter.ops.length = 0;
+
+    await client.editSection("n5", sectionId, "updated prose");
+    expect(emitter.ops).toHaveLength(1);
+    const op = emitter.ops[0];
+    expect(op).toBeDefined();
+    if (op === undefined) return;
+    assertAllFields(op, "n5");
+    expect(op.op_type).toBe("update");
+    expect(op.content_delta).toBe("updated prose");
+    expect(op.authored_by).toBe("human"); // F2 provenance
+  });
+
+  it("editSection with explicit calliope provenance carries calliope in authored_by", async () => {
+    await client.saveBody("n6", [{ text: "original" }]);
+    const body = await client.readBody("n6");
+    const sectionId = body[0]?.id ?? "";
+    expect(sectionId).not.toBe("");
+    emitter.ops.length = 0;
+
+    await client.editSection("n6", sectionId, "machine edit", "calliope");
+    const op = emitter.ops[0];
+    expect(op).toBeDefined();
+    if (op === undefined) return;
+    expect(op.authored_by).toBe("calliope");
+  });
+
+  it("block-op log is append-only: emitter.emit is never called with a mutation of prior ops", async () => {
+    // Emit 3 saves; verify all ops accumulate, none are removed or replaced.
+    await client.saveBody("n7", [{ text: "alpha" }]);
+    await client.saveBody("n7", [{ text: "alpha" }, { text: "beta" }]);
+    await client.saveBody("n7", [{ text: "beta" }]);
+
+    // Every emitted op should still be in the array — no splices, no rewrites.
+    // The emitter array itself IS the append-only log: its length only grows.
+    expect(emitter.ops.length).toBeGreaterThanOrEqual(3);
+    for (const op of emitter.ops) {
+      // Each op has a valid op_type — no undefined/null entries (corruption check)
+      expect(["add", "update", "delete", "reorder"]).toContain(op.op_type);
+    }
+  });
+
+  it("no block-op emitter: saveBody still works without errors", async () => {
+    // Client without emitter — no second constructor arg
+    const plainClient = new UraniaBodyClient(fake);
+    await expect(
+      plainClient.saveBody("n8", [{ text: "x" }]),
+    ).resolves.toBeUndefined();
   });
 });
