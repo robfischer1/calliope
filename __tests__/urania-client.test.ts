@@ -7,6 +7,7 @@ import {
   UraniaBodyClient,
 } from "../src/urania-client.js";
 import type {
+  AuthoredBy,
   UraniaCapture,
   UraniaOp,
   UraniaTriple,
@@ -18,13 +19,16 @@ import type {
  */
 class FakeCapture implements UraniaCapture {
   readonly triples: UraniaTriple[] = [];
+  /** Records the `authoredBy` value passed on each `capture()` call. */
+  readonly capturedProvenance: AuthoredBy[] = [];
   private minted = 0;
 
   resolve(subject: string): Promise<UraniaTriple[]> {
     return Promise.resolve(this.triples.filter((t) => t.from === subject));
   }
 
-  capture(ops: UraniaOp[]): Promise<void> {
+  capture(ops: UraniaOp[], authoredBy: AuthoredBy = "human"): Promise<void> {
+    this.capturedProvenance.push(authoredBy);
     for (const op of ops) {
       if (op.op === "createNode") {
         this.triples.push({
@@ -182,5 +186,50 @@ describe("UraniaBodyClient — body-model mapping (flag on)", () => {
     expect(stillLinked).toBe(false);
     const nodeSurvives = fake.triples.some((t) => t.from === dropId);
     expect(nodeSurvives).toBe(true);
+  });
+});
+
+describe("UraniaBodyClient — provenance / authoredBy threading", () => {
+  const prev = process.env.CALLIOPE_URANIA_WIRED;
+  let fake: FakeCapture;
+  let client: UraniaBodyClient;
+
+  beforeEach(() => {
+    process.env.CALLIOPE_URANIA_WIRED = "1";
+    fake = new FakeCapture();
+    client = new UraniaBodyClient(fake);
+  });
+  afterEach(() => {
+    if (prev === undefined) delete process.env.CALLIOPE_URANIA_WIRED;
+    else process.env.CALLIOPE_URANIA_WIRED = prev;
+  });
+
+  it("saveBody defaults to authoredBy='human'", async () => {
+    await client.saveBody("note1", [{ text: "hello" }]);
+    expect(fake.capturedProvenance).toEqual(["human"]);
+  });
+
+  it("saveBody passes through authoredBy='calliope' when specified", async () => {
+    await client.saveBody("note1", [{ text: "hello" }], "calliope");
+    expect(fake.capturedProvenance).toEqual(["calliope"]);
+  });
+
+  it("editSection defaults to authoredBy='human'", async () => {
+    // Seed a section first so editSection has something to find.
+    await client.saveBody("note2", [{ text: "original" }]);
+    fake.capturedProvenance.length = 0; // reset after seed
+    const body = await client.readBody("note2");
+    const sectionId = body[0]?.id ?? "";
+    await client.editSection("note2", sectionId, "updated");
+    expect(fake.capturedProvenance).toEqual(["human"]);
+  });
+
+  it("editSection passes through authoredBy='calliope' when specified", async () => {
+    await client.saveBody("note3", [{ text: "original" }]);
+    fake.capturedProvenance.length = 0;
+    const body = await client.readBody("note3");
+    const sectionId = body[0]?.id ?? "";
+    await client.editSection("note3", sectionId, "updated", "calliope");
+    expect(fake.capturedProvenance).toEqual(["calliope"]);
   });
 });

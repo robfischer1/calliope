@@ -22,6 +22,16 @@ export const HAS_PART = "hasPart";
 export const TEXT = "text";
 export const ORDER_KEY = "order_key";
 
+/**
+ * The provenance identity carried on every body write.
+ *
+ * - `"human"` — attributed to Rob; the gateway issues `SET ROLE human` so that
+ *   block-ops written to Mnemosyne carry `authored_by = human`.
+ * - `"calliope"` — machine-authored (the default for legacy / direct-engine
+ *   writes that predate the gateway auth seam).
+ */
+export type AuthoredBy = "human" | "calliope";
+
 /** A capture op against the substrate (urania's mutation vocabulary). */
 export type UraniaOp =
   | { op: "createNode"; id: string; hasType: string }
@@ -47,8 +57,16 @@ export interface UraniaCapture {
    * note's `hasPart` edges and each section's `text` / `order_key` literals.
    */
   resolve(subject: string): Promise<UraniaTriple[]>;
-  /** Apply a batch of mutation ops atomically (urania capture via Hades). */
-  capture(ops: UraniaOp[]): Promise<void>;
+  /**
+   * Apply a batch of mutation ops atomically (urania capture via Hades).
+   *
+   * @param ops - The ops to apply.
+   * @param authoredBy - Provenance identity for the write. Defaults to
+   *   `"calliope"` (machine-authored). Pass `"human"` so that Mnemosyne
+   *   attributes the resulting block-ops to the human author (Rob), which the
+   *   gateway enforces via `SET ROLE human`.
+   */
+  capture(ops: UraniaOp[], authoredBy?: AuthoredBy): Promise<void>;
   /** Mint a fresh, unique section placement id under `nodeId`. */
   mintSectionId(nodeId: string): string;
 }
@@ -136,8 +154,16 @@ export class UraniaBodyClient implements BodyClient {
    * Then unwire (`removeEdge hasPart`) every old section the new body no longer
    * references. The superseded section nodes are left in place — they remain the
    * historical versions the substrate's lineage points at; only `hasPart` moves.
+   *
+   * @param authoredBy - Provenance identity. Defaults to `"human"` (the gateway
+   *   auth seam enforces `SET ROLE human` so Mnemosyne attributes these writes
+   *   to the human author). Pass `"calliope"` for machine-only writes.
    */
-  async saveBody(nodeId: string, sections: SectionInput[]): Promise<void> {
+  async saveBody(
+    nodeId: string,
+    sections: SectionInput[],
+    authoredBy: AuthoredBy = "human",
+  ): Promise<void> {
     const current = await this.readBody(nodeId);
     const keys = sequence(sections.length);
     const ops: UraniaOp[] = [];
@@ -204,7 +230,7 @@ export class UraniaBodyClient implements BodyClient {
       }
     }
 
-    await this.capture.capture(ops);
+    await this.capture.capture(ops, authoredBy);
   }
 
   /**
@@ -216,11 +242,15 @@ export class UraniaBodyClient implements BodyClient {
    * reconciles the whole body.
    *
    * Rejects if `sectionId` is not a current `hasPart` target of `nodeId`.
+   *
+   * @param authoredBy - Provenance identity. Defaults to `"human"`. See
+   *   {@link saveBody} for the gateway-auth contract.
    */
   async editSection(
     nodeId: string,
     sectionId: string,
     text: string,
+    authoredBy: AuthoredBy = "human",
   ): Promise<Section> {
     const current = await this.readBody(nodeId);
     const target = current.find((s) => s.id === sectionId);
@@ -238,7 +268,7 @@ export class UraniaBodyClient implements BodyClient {
       { op: "addEdge", from: nodeId, predicate: HAS_PART, to: id },
       { op: "removeEdge", from: nodeId, predicate: HAS_PART, to: target.id },
     ];
-    await this.capture.capture(ops);
+    await this.capture.capture(ops, authoredBy);
 
     return { id, text, orderKey: target.orderKey };
   }
