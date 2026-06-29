@@ -21,7 +21,7 @@ jobs:
       # setup-node MUST precede pnpm/action-setup: the pnpm self-installer
       # runs under whatever Node is active, and the runner default is too old.
       - name: Set up Node ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: ${{ matrix.node-version }}
 
@@ -33,7 +33,7 @@ jobs:
           standalone: true
 
       - name: Enable pnpm cache
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
