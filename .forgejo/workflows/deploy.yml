@@ -39,7 +39,7 @@ jobs:
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
     steps:
-      - uses: https://github.com/actions/checkout@v4
+      - uses: https://github.com/actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       # setup-node MUST precede pnpm/action-setup: pnpm 11's engines need Node
       # >=22.13, and the runner default is older.
