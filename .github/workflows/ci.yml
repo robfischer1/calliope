@@ -16,7 +16,7 @@ jobs:
         node-version: ["22", "24"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       # setup-node MUST precede pnpm/action-setup: the pnpm self-installer
       # runs under whatever Node is active, and the runner default is too old.
