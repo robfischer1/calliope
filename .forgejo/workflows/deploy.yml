@@ -44,7 +44,7 @@ jobs:
       # setup-node MUST precede pnpm/action-setup: pnpm 11's engines need Node
       # >=22.13, and the runner default is older.
       - name: Set up Node
-        uses: https://github.com/actions/setup-node@v4
+        uses: https://github.com/actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "22"
 
