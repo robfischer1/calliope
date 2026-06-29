@@ -39,17 +39,17 @@ jobs:
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
     steps:
-      - uses: https://github.com/actions/checkout@v4
+      - uses: https://github.com/actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       # setup-node MUST precede pnpm/action-setup: pnpm 11's engines need Node
       # >=22.13, and the runner default is older.
       - name: Set up Node
-        uses: https://github.com/actions/setup-node@v4
+        uses: https://github.com/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
 
       - name: Install pnpm
-        uses: https://github.com/pnpm/action-setup@v4
+        uses: https://github.com/pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           standalone: true   # bundles its own runtime; the runner's Node is too old
 
