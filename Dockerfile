@@ -4,7 +4,7 @@
 
 # -- Stage 1: builder ---------------------------------------------------------
 # pnpm 11 requires Node >=22.13; node:22-bookworm-slim satisfies it.
-FROM node:22-bookworm-slim AS builder
+FROM node:24-bookworm-slim AS builder
 
 # Enable the pinned pnpm via corepack (version comes from package.json
 # "packageManager"), so the image build matches the dev/CI toolchain exactly.
@@ -28,7 +28,7 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm prune --prod --ignore-scripts
 
 # -- Stage 2: runtime ---------------------------------------------------------
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim
 
 # The runtime runs on `node` alone — strip the bundled global npm (+ its
 # build-time deps) so image scans don't block on npm CVEs (e.g. picomatch ReDoS)
