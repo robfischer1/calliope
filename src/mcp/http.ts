@@ -17,9 +17,10 @@
  *
  * Port: `PORT` (the constellation-standard env every star reads), else
  * `CALLIOPE_MCP_PORT`, else 8204 (calliope's assigned star port).
- * Backend: the same selection as the stdio server — live urania over
- * `URANIA_URL` by default (internal-net `http://urania:8202/mcp`), or the
- * in-memory fixture via `CALLIOPE_MCP_BACKEND=fixture`.
+ * Backend: the same selection as the stdio server — the chaos substrate over
+ * `CHAOS_URL` by default (internal-net `http://chaos:8206/mcp`; legacy
+ * `URANIA_URL` honored), or the in-memory fixture via
+ * `CALLIOPE_MCP_BACKEND=fixture`.
  */
 
 import { createServer as createHttpServer } from "node:http";
