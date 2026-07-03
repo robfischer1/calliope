@@ -22,9 +22,11 @@
  * side is a urania node's name-hash, hex-encoded (the form `materialize` returns
  * for `is_node` attrs), so section ids round-trip through resolve() → capture().
  *
- * NOTE — Hades gate: the intended long-term write path is the Hades gate. Its
- * write API is not available to this repo yet, so — exactly as clotho does today
- * — this writes the urania engine-service directly. Flagged in deviations.
+ * NOTE — D1 sovereignty cut (2026-07-02): the substrate is CHAOS. urania is a
+ * sovereign projection lens and serves no `capture` — this transport dials the
+ * chaos engine-service directly (`CHAOS_URL`; legacy `URANIA_URL` honored as a
+ * fallback). Reads (`materialize_edges`) come from chaos too, so a
+ * read-modify-write cycle is read-your-writes (no projection lag).
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -38,7 +40,7 @@ import { HAS_PART, ORDER_KEY, TEXT } from "../urania-client.js";
 
 const HAS_TYPE = "hasType";
 const UNIT = "\x1f"; // urania.store._UNIT — canonical-term field delimiter
-const DEFAULT_URL = "http://nas01:8202";
+const DEFAULT_URL = "http://chaos:8206";
 const TIMEOUT_MS = 30_000;
 
 /** SHA-256 name-hash of a node/predicate IRI (urania contract), as hex. */
@@ -102,10 +104,12 @@ export class LiveUraniaCapture implements UraniaCapture {
   private id = 0;
 
   constructor(url?: string) {
-    const base = (url ?? process.env.URANIA_URL ?? DEFAULT_URL).replace(
-      /\/+$/,
-      "",
-    );
+    const base = (
+      url ??
+      process.env.CHAOS_URL ??
+      process.env.URANIA_URL ??
+      DEFAULT_URL
+    ).replace(/\/+$/, "");
     this.endpoint = `${base}/mcp`;
   }
 

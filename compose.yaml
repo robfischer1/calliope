@@ -3,7 +3,7 @@
 # The prose facet. An internal-only star: NO host port published — it is reached
 # east-west on mnemosyne-net by the Hades gateway at http://calliope-mcp:8204/mcp.
 # It in turn reaches urania (the engine star) over the same network at
-# http://urania:8202 (URANIA_URL). Adding it to the constellation is one line in
+# http://chaos:8206 (CHAOS_URL — the substrate, post-D1 cut). Adding it to the constellation is one line in
 # the gateway's hades.toml [stars] table + a Hades restart — no rebuild here.
 services:
   calliope-mcp:
@@ -16,7 +16,7 @@ services:
       HOST: "0.0.0.0"
       # The urania engine star, east-west on mnemosyne-net (the gateway uses the
       # same hostname). The /mcp suffix is appended by the client.
-      URANIA_URL: "http://urania:8202"
+      CHAOS_URL: "http://chaos:8206"
     networks:
       - mnemosyne-net
     restart: unless-stopped

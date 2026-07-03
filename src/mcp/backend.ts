@@ -3,9 +3,10 @@
  * handlers run against, from the environment.
  *
  *  - default / `"urania"`: a wired {@link UraniaBodyClient} over
- *    {@link LiveUraniaCapture}, writing the SAME urania substrate clotho does
- *    (env: `URANIA_URL`). This is the clotho-parity fallback (direct
- *    engine-service). Preserved unchanged when `CALLIOPE_WRITE_VIA_HADES` is off.
+ *    {@link LiveUraniaCapture}, writing the chaos substrate directly (env:
+ *    `CHAOS_URL`; legacy `URANIA_URL` honored). Post-D1-cut, urania is a lens
+ *    and serves no capture — the substrate is chaos. Preserved unchanged when
+ *    `CALLIOPE_WRITE_VIA_HADES` is off.
  *  - `"hades"`: a wired {@link UraniaBodyClient} over {@link HadesCapture} —
  *    the F2 gateway-auth path (Charon → Hades → calliope-mcp). Selected
  *    automatically when `CALLIOPE_WRITE_VIA_HADES=1` / `CHARON_URL` is set, or
@@ -64,5 +65,7 @@ export function makeBodyClient(
     return new UraniaBodyClient(new HadesCapture(env.CHARON_URL, env));
   }
   // Default: clotho-parity direct urania engine-service.
-  return new UraniaBodyClient(new LiveUraniaCapture(env.URANIA_URL));
+  return new UraniaBodyClient(
+    new LiveUraniaCapture(env.CHAOS_URL ?? env.URANIA_URL),
+  );
 }
