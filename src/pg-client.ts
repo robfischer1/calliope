@@ -23,14 +23,19 @@ import { sequence } from "./order-key.js";
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS sections (
-  id          text PRIMARY KEY,
+  id          text NOT NULL,
   node_id     text NOT NULL,
   text        text NOT NULL,
   order_key   text NOT NULL,
   authored_by text NOT NULL DEFAULT 'human',
   active      boolean NOT NULL DEFAULT true,
   supersedes  text,
-  created_at  timestamptz NOT NULL DEFAULT now()
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  -- Composite key: the substrate allows one section OBJECT to be hasPart of
+  -- several owners (the ULID node + its content-hash twin share sections), so
+  -- a section row is per (owner, section) — id alone is NOT unique. (Found by
+  -- the C2 parity gate: 15 twin owners read back empty under an id-only PK.)
+  PRIMARY KEY (node_id, id)
 );
 CREATE INDEX IF NOT EXISTS sections_node_active
   ON sections (node_id, order_key COLLATE "C") WHERE active;
@@ -132,9 +137,10 @@ export class PgBodyClient implements BodyClient {
         );
       }
       const nextId = mintSectionId(nodeId, text, target.order_key);
-      await client.query(`UPDATE sections SET active = false WHERE id = $1`, [
-        sectionId,
-      ]);
+      await client.query(
+        `UPDATE sections SET active = false WHERE node_id = $1 AND id = $2`,
+        [nodeId, sectionId],
+      );
       await client.query(
         `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
          VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -163,7 +169,7 @@ export class PgBodyClient implements BodyClient {
     await this.#pool.query(
       `INSERT INTO sections (id, node_id, text, order_key, authored_by)
        VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (id) DO NOTHING`,
+       ON CONFLICT (node_id, id) DO NOTHING`,
       [section.id, nodeId, section.text, section.orderKey, authoredBy],
     );
   }
