@@ -82,11 +82,11 @@ jobs:
       # publish + deploy. Trivy BLOCKS on a fixable HIGH/CRITICAL; --ignore-unfixed
       # drops base-image CVEs with no released fix.
       - name: Build image
-        run: docker compose build --no-cache
+        run: docker compose build --no-cache calliope-mcp
 
       - name: Image CVE scan (Trivy)
         run: |
-          IMG=$(docker compose config --images | head -1)
+          IMG=$(docker compose config --images calliope-mcp | head -1)
           echo "scanning image: $IMG"
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -100,11 +100,15 @@ jobs:
         shell: bash   # the act runner defaults to dash (no pipefail)
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          CALLIOPE_DB_PASSWORD: ${{ secrets.CALLIOPE_DB_PASSWORD }}
         run: |
           set -euo pipefail
+          # Fail fast: an unset password would make compose ship the literal
+          # ${CALLIOPE_DB_PASSWORD} as the real credential (the tethys rake).
+          test -n "${CALLIOPE_DB_PASSWORD}" || { echo "CALLIOPE_DB_PASSWORD secret is unset"; exit 1; }
           echo "${REGISTRY_TOKEN}" | docker login forgejo.notusmi.com -u rob --password-stdin
-          docker compose push
-          docker compose config --images | head -1 > /tmp/built-image
+          docker compose push calliope-mcp
+          docker compose config --images calliope-mcp | head -1 > /tmp/built-image
           docker compose up -d
 
       # Supply-chain (#1470 ph2): sign the published image with the constellation

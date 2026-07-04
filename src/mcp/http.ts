@@ -29,7 +29,7 @@ import { argv } from "node:process";
 import { pathToFileURL } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { BodyClient } from "../types.js";
-import { backendKind, makeBodyClient } from "./backend.js";
+import { backendKind, initBodyClient, makeBodyClient } from "./backend.js";
 import { createServer } from "./server.js";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
@@ -89,10 +89,13 @@ async function handleMcp(
 /** Build the bare Node HTTP server (exported for tests). */
 export function createCalliopeHttpServer(
   kind: ReturnType<typeof backendKind> = backendKind(),
+  prebuilt?: BodyClient,
 ): ReturnType<typeof createHttpServer> {
-  // One backend for the server's lifetime: the urania store (or fixture memory)
-  // is shared across every stateless request.
-  const client = makeBodyClient(kind);
+  // One backend for the server's lifetime: the store (or fixture memory)
+  // is shared across every stateless request. A caller that needs async
+  // initialization (the pg backend) builds + inits the client itself and
+  // passes it in.
+  const client = prebuilt ?? makeBodyClient(kind);
   return createHttpServer((req, res) => {
     const url = req.url ?? "";
     const path = url.split("?", 1)[0];
@@ -135,7 +138,9 @@ async function main(): Promise<void> {
   const kind = backendKind();
   const port = resolvePort();
   const host = process.env.HOST ?? "0.0.0.0";
-  const httpServer = createCalliopeHttpServer(kind);
+  const client = makeBodyClient(kind);
+  await initBodyClient(client);
+  const httpServer = createCalliopeHttpServer(kind, client);
 
   await new Promise<void>((resolve) => {
     httpServer.listen(port, host, resolve);

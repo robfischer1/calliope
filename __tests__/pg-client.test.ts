@@ -59,7 +59,7 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
   }, 120_000);
 
   afterAll(async () => {
-    await pool?.end();
+    await pool.end();
     if (containerId)
       execSync(`docker rm -f ${containerId}`, { stdio: "ignore" });
   });
@@ -89,27 +89,28 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     const v2 = await client.readBody("node-b");
     expect(v2.map((s) => s.text)).toEqual(["v2-a", "v2-b"]);
     expect(v2.some((s) => s.id === v1[0]?.id)).toBe(false);
-    const all = await pool.query(
+    const all = await pool.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM sections WHERE node_id = 'node-b'",
     );
-    expect(all.rows[0].n).toBe(3); // v1 row retained inactive
+    expect(all.rows[0]?.n).toBe(3); // v1 row retained inactive
   });
 
   it("editSection copy-on-writes: new id, same orderKey, lineage recorded", async () => {
     await client.saveBody("node-c", [{ text: "keep" }, { text: "edit me" }]);
     const before = await client.readBody("node-c");
-    const target = before[1]!;
+    const target = before.at(1);
+    if (target === undefined) throw new Error("fixture body missing");
     const edited = await client.editSection("node-c", target.id, "edited");
     expect(edited.id).not.toBe(target.id);
     expect(edited.orderKey).toBe(target.orderKey);
     const after = await client.readBody("node-c");
     expect(after.map((s) => s.text)).toEqual(["keep", "edited"]);
-    expect(after[0]!.id).toBe(before[0]!.id); // untouched sibling keeps identity
-    const lineage = await pool.query(
+    expect(after.at(0)?.id).toBe(before.at(0)?.id); // untouched sibling keeps identity
+    const lineage = await pool.query<{ supersedes: string | null }>(
       "SELECT supersedes FROM sections WHERE id = $1",
       [edited.id],
     );
-    expect(lineage.rows[0].supersedes).toBe(target.id);
+    expect(lineage.rows[0]?.supersedes).toBe(target.id);
   });
 
   it("editSection rejects a stale/foreign section id", async () => {
@@ -122,10 +123,10 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
   it("persists authored_by per version", async () => {
     const human = new PgBodyClient(pool, "human");
     await human.saveBody("node-e", [{ text: "by hand" }]);
-    const row = await pool.query(
+    const row = await pool.query<{ authored_by: string }>(
       "SELECT authored_by FROM sections WHERE node_id = 'node-e' AND active",
     );
-    expect(row.rows[0].authored_by).toBe("human");
+    expect(row.rows[0]?.authored_by).toBe("human");
   });
 
   it("importSection preserves ids and is idempotent; retainOnly converges", async () => {

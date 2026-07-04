@@ -10,12 +10,13 @@
  */
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { backendKind, makeBodyClient } from "./backend.js";
+import { backendKind, initBodyClient, makeBodyClient } from "./backend.js";
 import { createServer } from "./server.js";
 
 async function main(): Promise<void> {
   const kind = backendKind();
   const client = makeBodyClient(kind);
+  await initBodyClient(client);
   const server = createServer(client);
   const transport = new StdioServerTransport();
   await server.connect(transport);
