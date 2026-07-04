@@ -129,6 +129,19 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     expect(row.rows[0]?.authored_by).toBe("human");
   });
 
+  it("one section object can belong to two owners (twin nodes)", async () => {
+    const shared = { id: "e".repeat(64), text: "shared body", orderKey: "01" };
+    await client.importSection("twin-ulid", shared);
+    await client.importSection("twin-hash", shared);
+    expect(await client.readBody("twin-ulid")).toEqual([shared]);
+    expect(await client.readBody("twin-hash")).toEqual([shared]);
+    // Editing under ONE owner must not disturb the other's row.
+    const edited = await client.editSection("twin-ulid", shared.id, "diverged");
+    expect(edited.orderKey).toBe("01");
+    expect(await client.readBody("twin-hash")).toEqual([shared]);
+    expect((await client.readBody("twin-ulid")).at(0)?.text).toBe("diverged");
+  });
+
   it("importSection preserves ids and is idempotent; retainOnly converges", async () => {
     const sec = { id: "f".repeat(64), text: "migrated", orderKey: "01" };
     await client.importSection("node-m", sec);
