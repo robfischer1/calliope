@@ -26,7 +26,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           # JS actions execute on the runner's bundled Node (20), where pnpm 11's
           # engines check fails. The standalone binary bundles its own runtime.
