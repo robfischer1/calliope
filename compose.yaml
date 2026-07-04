@@ -1,10 +1,18 @@
 # Per-service Docker Compose stack for calliope-mcp (nas01, constellation star).
 #
-# The prose facet. An internal-only star: NO host port published — it is reached
-# east-west on mnemosyne-net by the Hades gateway at http://calliope-mcp:8204/mcp.
-# It in turn reaches urania (the engine star) over the same network at
-# http://chaos:8206 (CHAOS_URL — the substrate, post-D1 cut). Adding it to the constellation is one line in
+# The prose facet — the Notes & Prose Muse's wire. An internal-only star: NO host
+# port published — it is reached east-west on mnemosyne-net by the Hades gateway
+# at http://calliope-mcp:8204/mcp. Adding it to the constellation is one line in
 # the gateway's hades.toml [stars] table + a Hades restart — no rebuild here.
+#
+# C2 (the facet carve): bodies live in the SOVEREIGN store `calliope-db`
+# (pgvector, private calliope-net — reachable by nothing but this service; the
+# enforcement is the topology). CHAOS_URL remains only for the migration reads
+# and the one-time retraction (src/mcp/migrate.ts); the serving path is pg.
+#
+# CALLIOPE_DB_PASSWORD is bws-held (pantheon: CALLIOPE_DB_PASSWORD) and injected
+# by the deploy workflow from the repo Actions secret. Compose interpolation of
+# an UNSET var would ship the literal — the deploy step guards against that.
 services:
   calliope-mcp:
     image: forgejo.notusmi.com/rob/calliope-mcp:latest
@@ -14,13 +22,44 @@ services:
     environment:
       PORT: "8204"
       HOST: "0.0.0.0"
-      # The urania engine star, east-west on mnemosyne-net (the gateway uses the
-      # same hostname). The /mcp suffix is appended by the client.
+      # The chaos engine star, east-west on mnemosyne-net — migration/retraction
+      # reads only post-C2 (the body store is calliope-db).
       CHAOS_URL: "http://chaos:8206"
+      DATABASE_URL: "postgresql://calliope:${CALLIOPE_DB_PASSWORD}@calliope-db:5432/calliope"
+      # CUTOVER PIN: hold the serving backend on chaos until the migration's
+      # parity gate is green — DATABASE_URL alone would auto-select pg (empty
+      # store). The cutover is the one-line removal of this pin (specs/002 T004).
+      CALLIOPE_MCP_BACKEND: "urania"
     networks:
       - mnemosyne-net
+      - calliope-net
+    depends_on:
+      calliope-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  calliope-db:
+    image: pgvector/pgvector:pg17
+    container_name: calliope-db
+    environment:
+      POSTGRES_USER: calliope
+      POSTGRES_PASSWORD: ${CALLIOPE_DB_PASSWORD}
+      POSTGRES_DB: calliope
+    volumes:
+      - calliope-db-data:/var/lib/postgresql/data
+    networks:
+      - calliope-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U calliope -d calliope"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     restart: unless-stopped
 
 networks:
   mnemosyne-net:
     external: true
+  calliope-net: {}
+
+volumes:
+  calliope-db-data:

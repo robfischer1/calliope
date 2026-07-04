@@ -20,21 +20,27 @@
  * for the live backends so the injected transport is honored.
  */
 
+import { Pool } from "pg";
 import type { BodyClient } from "../types.js";
 import { FixtureBodyClient } from "../fixture-client.js";
 import { UraniaBodyClient } from "../urania-client.js";
+import { PgBodyClient } from "../pg-client.js";
 import { LiveUraniaCapture } from "./live-capture.js";
 import { HadesCapture, hadesEnabled } from "./hades-capture.js";
 
 /** How the MCP reaches the body model. */
-export type BackendKind = "urania" | "hades" | "fixture";
+export type BackendKind = "urania" | "hades" | "fixture" | "pg";
 
-/** Read the configured backend kind (default: live urania or hades if enabled). */
+/** Read the configured backend kind (default: pg when DATABASE_URL is set —
+ * the C2 sovereign store — else live urania, or hades if enabled). */
 export function backendKind(env: NodeJS.ProcessEnv = process.env): BackendKind {
   const explicit = env.CALLIOPE_MCP_BACKEND;
   if (explicit === "fixture") return "fixture";
   if (explicit === "hades") return "hades";
   if (explicit === "urania") return "urania";
+  if (explicit === "pg") return "pg";
+  // Auto-select the sovereign store when configured (C2 — the facet carve).
+  if (env.DATABASE_URL !== undefined && env.DATABASE_URL !== "") return "pg";
   // Auto-select hades when the env flag is set (CALLIOPE_WRITE_VIA_HADES or CHARON_URL).
   if (
     hadesEnabled(env) ||
@@ -58,6 +64,11 @@ export function makeBodyClient(
   if (kind === "fixture") {
     return new FixtureBodyClient();
   }
+  if (kind === "pg") {
+    // The sovereign store (C2). Schema bootstrap is async — the entrypoints
+    // await initBodyClient() before serving (fail-fast on an unreachable db).
+    return new PgBodyClient(new Pool({ connectionString: env.DATABASE_URL }));
+  }
   // The UraniaBodyClient guards its transport behind CALLIOPE_URANIA_WIRED; the
   // live server opts in for both live backends.
   env.CALLIOPE_URANIA_WIRED = "1";
@@ -68,4 +79,16 @@ export function makeBodyClient(
   return new UraniaBodyClient(
     new LiveUraniaCapture(env.CHAOS_URL ?? env.URANIA_URL),
   );
+}
+
+/**
+ * Async backend initialization: bootstrap the sovereign store's schema when
+ * the pg backend is selected (idempotent), a no-op otherwise. Entrypoints
+ * await this BEFORE serving so an unreachable/unbootstrappable database
+ * fails the boot loudly instead of failing the first request.
+ */
+export async function initBodyClient(client: BodyClient): Promise<void> {
+  if (client instanceof PgBodyClient) {
+    await client.ensureSchema();
+  }
 }
