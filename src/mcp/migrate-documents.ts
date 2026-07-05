@@ -59,7 +59,7 @@ interface SourceRow {
 async function readSourceRows(phdb: Pool): Promise<SourceRow[]> {
   const res = await phdb.query<SourceRow>(
     `SELECT d.id, d.schema_type, d.title, d.body_text, d.content_hash,
-            d.raw_hash, d.created_at, d.metadata_json, sf.path AS source_path
+            d.raw_hash, d.created_at, d.metadata_json, sf.source_path AS source_path
        FROM history.documents d
        LEFT JOIN _infra.source_files sf ON sf.id = d.source_file_id
       ORDER BY d.id`,
