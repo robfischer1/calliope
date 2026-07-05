@@ -17,12 +17,14 @@ async function main(): Promise<void> {
   const kind = backendKind();
   const backend = makeBackend(kind);
   await initBackend(backend);
-  const server = createServer(
-    backend.client,
-    backend.documents === undefined
-      ? undefined
-      : { documents: backend.documents },
-  );
+  const server = createServer(backend.client, {
+    ...(backend.documents !== undefined
+      ? { documents: backend.documents }
+      : {}),
+    ...(backend.revisions !== undefined
+      ? { revisions: backend.revisions }
+      : {}),
+  });
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr only — stdout is the MCP transport channel.

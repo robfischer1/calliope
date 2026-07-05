@@ -41,3 +41,12 @@ export type {
   WriteDocumentResult,
   ListDocumentsQuery,
 } from "./document-store.js";
+
+// C4 — the revision store (git-for-ideas, re-homed frozen history).
+export { PgRevisionStore, FixtureRevisionStore } from "./revision-store.js";
+export type {
+  RevisionStore,
+  RevisionRow,
+  RevisionDeltaRow,
+  RevisionQuery,
+} from "./revision-store.js";

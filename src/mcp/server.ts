@@ -19,6 +19,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { BodyClient } from "../types.js";
 import type { DocumentStore } from "../document-store.js";
+import type { RevisionStore } from "../revision-store.js";
 import { appendSection, editSection, readBody, writeBody } from "./tools.js";
 
 /**
@@ -39,6 +40,13 @@ export interface ServerOptions {
    * sink the monolith's typed-write surface strangled onto the star.
    */
   documents?: DocumentStore;
+  /**
+   * The revision store (C4). When present, the server additionally registers
+   * `file_revisions` + `revision_deltas` — the git-for-ideas archive
+   * re-homed from the monolith (frozen history; blob shas stay pointers
+   * into the vault's own git repo).
+   */
+  revisions?: RevisionStore;
 }
 
 /** Build a configured MCP server bound to `client`, ready to `connect()`. */
@@ -261,6 +269,72 @@ export function createServer(
             { type: "text", text: `${String(rows.length)} document(s).` },
           ],
           structuredContent: { documents: rows },
+        };
+      },
+    );
+  }
+
+  const revisions = options?.revisions;
+  if (revisions !== undefined) {
+    server.registerTool(
+      "file_revisions",
+      {
+        title: "Read the file-revision archive",
+        description:
+          "The git-for-ideas archive (frozen history, re-homed from phdb): " +
+          "revisions by file_path / repo / id, newest first. Blob shas are " +
+          "pointers into the vault's git repo. Returns { revisions: [...] }.",
+        inputSchema: {
+          id: z.number().int().optional().describe("A single revision id."),
+          file_path: z
+            .string()
+            .optional()
+            .describe("Vault-relative path filter."),
+          repo: z.string().optional().describe("Repo filter."),
+          limit: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("Row cap (default 50)."),
+        },
+      },
+      async ({ id, file_path, repo, limit }) => {
+        const rows = await revisions.revisions({
+          ...(id !== undefined ? { id } : {}),
+          ...(file_path !== undefined ? { file_path } : {}),
+          ...(repo !== undefined ? { repo } : {}),
+          ...(limit !== undefined ? { limit } : {}),
+        });
+        return {
+          content: [
+            { type: "text", text: `${String(rows.length)} revision(s).` },
+          ],
+          structuredContent: { revisions: rows },
+        };
+      },
+    );
+
+    server.registerTool(
+      "revision_deltas",
+      {
+        title: "Read a revision's triple deltas",
+        description:
+          "The frontmatter/link evolution record for one revision — " +
+          "denormalized (subject, predicate, object) labels, in stored " +
+          "order. Returns { deltas: [...] }.",
+        inputSchema: {
+          revision_id: z
+            .number()
+            .int()
+            .describe("The revision whose deltas to read."),
+        },
+      },
+      async ({ revision_id }) => {
+        const rows = await revisions.deltasFor(revision_id);
+        return {
+          content: [{ type: "text", text: `${String(rows.length)} delta(s).` }],
+          structuredContent: { deltas: rows },
         };
       },
     );
