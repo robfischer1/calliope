@@ -24,6 +24,8 @@ import { Pool } from "pg";
 import type { BodyClient } from "../types.js";
 import type { DocumentStore } from "../document-store.js";
 import { FixtureDocumentStore, PgDocumentStore } from "../document-store.js";
+import type { RevisionStore } from "../revision-store.js";
+import { FixtureRevisionStore, PgRevisionStore } from "../revision-store.js";
 import { FixtureBodyClient } from "../fixture-client.js";
 import { UraniaBodyClient } from "../urania-client.js";
 import { PgBodyClient } from "../pg-client.js";
@@ -104,6 +106,8 @@ export interface Backend {
    * absent on the substrate-direct backends, which have no document home.
    */
   documents?: DocumentStore;
+  /** The revision store (C4) — same presence rule as `documents`. */
+  revisions?: RevisionStore;
 }
 
 /** Build the body client AND its facet stores from one backend selection. */
@@ -115,14 +119,16 @@ export function makeBackend(
     return {
       client: new FixtureBodyClient(),
       documents: new FixtureDocumentStore(),
+      revisions: new FixtureRevisionStore(),
     };
   }
   if (kind === "pg") {
-    // ONE pool for both facets — the sovereign store is one database.
+    // ONE pool for every facet — the sovereign store is one database.
     const pool = new Pool({ connectionString: env.DATABASE_URL });
     return {
       client: new PgBodyClient(pool),
       documents: new PgDocumentStore(pool),
+      revisions: new PgRevisionStore(pool),
     };
   }
   return { client: makeBodyClient(kind, env) };
@@ -133,5 +139,8 @@ export async function initBackend(backend: Backend): Promise<void> {
   await initBodyClient(backend.client);
   if (backend.documents instanceof PgDocumentStore) {
     await backend.documents.ensureSchema();
+  }
+  if (backend.revisions instanceof PgRevisionStore) {
+    await backend.revisions.ensureSchema();
   }
 }

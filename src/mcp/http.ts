@@ -30,6 +30,7 @@ import { pathToFileURL } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { BodyClient } from "../types.js";
 import type { DocumentStore } from "../document-store.js";
+import type { RevisionStore } from "../revision-store.js";
 import { backendKind, initBackend, makeBackend } from "./backend.js";
 import { createServer } from "./server.js";
 
@@ -73,11 +74,12 @@ async function handleMcp(
   res: ServerResponse,
   client: BodyClient,
   documents?: DocumentStore,
+  revisions?: RevisionStore,
 ): Promise<void> {
-  const server = createServer(
-    client,
-    documents === undefined ? undefined : { documents },
-  );
+  const server = createServer(client, {
+    ...(documents !== undefined ? { documents } : {}),
+    ...(revisions !== undefined ? { revisions } : {}),
+  });
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session id, no server-initiated streams to keep alive.
     sessionIdGenerator: undefined,
@@ -96,6 +98,7 @@ export function createCalliopeHttpServer(
   kind: ReturnType<typeof backendKind> = backendKind(),
   prebuilt?: BodyClient,
   documents?: DocumentStore,
+  revisions?: RevisionStore,
 ): ReturnType<typeof createHttpServer> {
   // One backend for the server's lifetime: the store (or fixture memory)
   // is shared across every stateless request. A caller that needs async
@@ -103,11 +106,13 @@ export function createCalliopeHttpServer(
   // passes it in. When no prebuilt client is given, build the FULL backend
   // so the fixture path serves the document verbs too.
   let docStore = documents;
+  let revStore = revisions;
   let client = prebuilt;
   if (client === undefined) {
     const backend = makeBackend(kind);
     client = backend.client;
     docStore ??= backend.documents;
+    revStore ??= backend.revisions;
   }
   return createHttpServer((req, res) => {
     const url = req.url ?? "";
@@ -128,7 +133,7 @@ export function createCalliopeHttpServer(
       return;
     }
 
-    handleMcp(req, res, client, docStore).catch((err: unknown) => {
+    handleMcp(req, res, client, docStore, revStore).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`calliope-mcp-http: request error: ${message}\n`);
       if (!res.headersSent) {
@@ -157,6 +162,7 @@ async function main(): Promise<void> {
     kind,
     backend.client,
     backend.documents,
+    backend.revisions,
   );
 
   await new Promise<void>((resolve) => {
