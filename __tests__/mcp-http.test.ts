@@ -89,7 +89,9 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "append_section",
       "edit_section",
       "read_body",
+      "read_documents",
       "write_body",
+      "write_document",
     ]);
   });
 

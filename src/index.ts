@@ -27,3 +27,17 @@ export {
 } from "./urania-client.js";
 export type { UraniaCapture, UraniaOp, UraniaTriple } from "./urania-client.js";
 export { between, compareKeys, sequence } from "./order-key.js";
+
+// C3 — the document store (the prose strangle's dissolve sink).
+export {
+  PgDocumentStore,
+  FixtureDocumentStore,
+  sha256 as documentSha256,
+} from "./document-store.js";
+export type {
+  DocumentStore,
+  DocumentRow,
+  WriteDocumentInput,
+  WriteDocumentResult,
+  ListDocumentsQuery,
+} from "./document-store.js";

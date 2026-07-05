@@ -29,7 +29,8 @@ import { argv } from "node:process";
 import { pathToFileURL } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { BodyClient } from "../types.js";
-import { backendKind, initBodyClient, makeBodyClient } from "./backend.js";
+import type { DocumentStore } from "../document-store.js";
+import { backendKind, initBackend, makeBackend } from "./backend.js";
 import { createServer } from "./server.js";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
@@ -71,8 +72,12 @@ async function handleMcp(
   req: IncomingMessage,
   res: ServerResponse,
   client: BodyClient,
+  documents?: DocumentStore,
 ): Promise<void> {
-  const server = createServer(client);
+  const server = createServer(
+    client,
+    documents === undefined ? undefined : { documents },
+  );
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session id, no server-initiated streams to keep alive.
     sessionIdGenerator: undefined,
@@ -90,12 +95,20 @@ async function handleMcp(
 export function createCalliopeHttpServer(
   kind: ReturnType<typeof backendKind> = backendKind(),
   prebuilt?: BodyClient,
+  documents?: DocumentStore,
 ): ReturnType<typeof createHttpServer> {
   // One backend for the server's lifetime: the store (or fixture memory)
   // is shared across every stateless request. A caller that needs async
   // initialization (the pg backend) builds + inits the client itself and
-  // passes it in.
-  const client = prebuilt ?? makeBodyClient(kind);
+  // passes it in. When no prebuilt client is given, build the FULL backend
+  // so the fixture path serves the document verbs too.
+  let docStore = documents;
+  let client = prebuilt;
+  if (client === undefined) {
+    const backend = makeBackend(kind);
+    client = backend.client;
+    docStore ??= backend.documents;
+  }
   return createHttpServer((req, res) => {
     const url = req.url ?? "";
     const path = url.split("?", 1)[0];
@@ -115,7 +128,7 @@ export function createCalliopeHttpServer(
       return;
     }
 
-    handleMcp(req, res, client).catch((err: unknown) => {
+    handleMcp(req, res, client, docStore).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`calliope-mcp-http: request error: ${message}\n`);
       if (!res.headersSent) {
@@ -138,9 +151,13 @@ async function main(): Promise<void> {
   const kind = backendKind();
   const port = resolvePort();
   const host = process.env.HOST ?? "0.0.0.0";
-  const client = makeBodyClient(kind);
-  await initBodyClient(client);
-  const httpServer = createCalliopeHttpServer(kind, client);
+  const backend = makeBackend(kind);
+  await initBackend(backend);
+  const httpServer = createCalliopeHttpServer(
+    kind,
+    backend.client,
+    backend.documents,
+  );
 
   await new Promise<void>((resolve) => {
     httpServer.listen(port, host, resolve);

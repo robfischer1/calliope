@@ -10,14 +10,19 @@
  */
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { backendKind, initBodyClient, makeBodyClient } from "./backend.js";
+import { backendKind, initBackend, makeBackend } from "./backend.js";
 import { createServer } from "./server.js";
 
 async function main(): Promise<void> {
   const kind = backendKind();
-  const client = makeBodyClient(kind);
-  await initBodyClient(client);
-  const server = createServer(client);
+  const backend = makeBackend(kind);
+  await initBackend(backend);
+  const server = createServer(
+    backend.client,
+    backend.documents === undefined
+      ? undefined
+      : { documents: backend.documents },
+  );
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr only — stdout is the MCP transport channel.
