@@ -22,6 +22,8 @@
 
 import { Pool } from "pg";
 import type { BodyClient } from "../types.js";
+import type { DocumentStore } from "../document-store.js";
+import { FixtureDocumentStore, PgDocumentStore } from "../document-store.js";
 import { FixtureBodyClient } from "../fixture-client.js";
 import { UraniaBodyClient } from "../urania-client.js";
 import { PgBodyClient } from "../pg-client.js";
@@ -90,5 +92,46 @@ export function makeBodyClient(
 export async function initBodyClient(client: BodyClient): Promise<void> {
   if (client instanceof PgBodyClient) {
     await client.ensureSchema();
+  }
+}
+
+/** The full backend a server runs against: the body client + optional facets. */
+export interface Backend {
+  client: BodyClient;
+  /**
+   * The document store (C3). Present on the pg backend (the sovereign store —
+   * one pool shared with the body client) and the fixture backend (in-memory);
+   * absent on the substrate-direct backends, which have no document home.
+   */
+  documents?: DocumentStore;
+}
+
+/** Build the body client AND its facet stores from one backend selection. */
+export function makeBackend(
+  kind: BackendKind = backendKind(),
+  env: NodeJS.ProcessEnv = process.env,
+): Backend {
+  if (kind === "fixture") {
+    return {
+      client: new FixtureBodyClient(),
+      documents: new FixtureDocumentStore(),
+    };
+  }
+  if (kind === "pg") {
+    // ONE pool for both facets — the sovereign store is one database.
+    const pool = new Pool({ connectionString: env.DATABASE_URL });
+    return {
+      client: new PgBodyClient(pool),
+      documents: new PgDocumentStore(pool),
+    };
+  }
+  return { client: makeBodyClient(kind, env) };
+}
+
+/** Async init for a {@link Backend}: bootstrap every pg-backed schema. */
+export async function initBackend(backend: Backend): Promise<void> {
+  await initBodyClient(backend.client);
+  if (backend.documents instanceof PgDocumentStore) {
+    await backend.documents.ensureSchema();
   }
 }

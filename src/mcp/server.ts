@@ -18,6 +18,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { BodyClient } from "../types.js";
+import type { DocumentStore } from "../document-store.js";
 import { appendSection, editSection, readBody, writeBody } from "./tools.js";
 
 /**
@@ -30,8 +31,21 @@ function structured(result: object): Record<string, unknown> {
   return { ...result };
 }
 
+/** Optional extra facets a server can carry beside the body verbs. */
+export interface ServerOptions {
+  /**
+   * The document store (C3, the prose strangle). When present, the server
+   * additionally registers `write_document` + `read_documents` — the dissolve
+   * sink the monolith's typed-write surface strangled onto the star.
+   */
+  documents?: DocumentStore;
+}
+
 /** Build a configured MCP server bound to `client`, ready to `connect()`. */
-export function createServer(client: BodyClient): McpServer {
+export function createServer(
+  client: BodyClient,
+  options?: ServerOptions,
+): McpServer {
   const server = new McpServer({
     name: "calliope-mcp",
     version: "0.1.0",
@@ -139,6 +153,118 @@ export function createServer(client: BodyClient): McpServer {
       };
     },
   );
+
+  const documents = options?.documents;
+  if (documents !== undefined) {
+    server.registerTool(
+      "write_document",
+      {
+        title: "Write a dissolved document",
+        description:
+          "Store one dissolved vault note's body verbatim (the typed-write " +
+          "dissolve sink, strangled from phdb). Dedup key is (source_path, " +
+          "raw_hash) — an identical re-submit is a no-op. Returns " +
+          "{ ok, table, id, deduped }.",
+        inputSchema: {
+          source_path: z
+            .string()
+            .describe("The note's vault-relative source path."),
+          body_text: z.string().describe("The note body, stored verbatim."),
+          schema_type: z
+            .string()
+            .optional()
+            .describe("Schema.org @type (default DigitalDocument)."),
+          subject: z.string().optional().describe("The note's title."),
+          file_path: z
+            .string()
+            .optional()
+            .describe("Absolute file path at dissolve time."),
+          mtime: z
+            .string()
+            .optional()
+            .describe("Frontmatter `updated` (ISO-8601), provenance."),
+          ctime: z
+            .string()
+            .optional()
+            .describe("Frontmatter `created` (ISO-8601), provenance."),
+          source_kind: z
+            .string()
+            .optional()
+            .describe("Capture-kind tag (default vault-note)."),
+          raw_hash: z
+            .string()
+            .optional()
+            .describe("Dedup hash override (default sha256(body_text))."),
+        },
+      },
+      async (input) => {
+        const result = await documents.write(input);
+        return {
+          content: [
+            {
+              type: "text",
+              text: result.deduped
+                ? `Deduped (already stored): ${input.source_path}`
+                : `Stored document #${String(result.id ?? 0)}.`,
+            },
+          ],
+          structuredContent: structured(result),
+        };
+      },
+    );
+
+    server.registerTool(
+      "read_documents",
+      {
+        title: "Read dissolved documents",
+        description:
+          "Read the document store: by id, by source_path, or list " +
+          "(schema_type filter, newest first). Returns { documents: [...] }.",
+        inputSchema: {
+          id: z.number().int().optional().describe("A single document id."),
+          source_path: z
+            .string()
+            .optional()
+            .describe("All versions stored for one source path."),
+          schema_type: z
+            .string()
+            .optional()
+            .describe("List filter: Schema.org @type."),
+          limit: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("List cap (default 50)."),
+          omit_body: z
+            .boolean()
+            .optional()
+            .describe("List mode: skip body_text (index-style)."),
+        },
+      },
+      async ({ id, source_path, schema_type, limit, omit_body }) => {
+        let rows;
+        if (id !== undefined) {
+          const row = await documents.byId(id);
+          rows = row === null ? [] : [row];
+        } else if (source_path !== undefined) {
+          rows = await documents.bySourcePath(source_path);
+        } else {
+          rows = await documents.list({
+            ...(schema_type !== undefined ? { schema_type } : {}),
+            ...(limit !== undefined ? { limit } : {}),
+            ...(omit_body !== undefined ? { omit_body } : {}),
+          });
+        }
+        return {
+          content: [
+            { type: "text", text: `${String(rows.length)} document(s).` },
+          ],
+          structuredContent: { documents: rows },
+        };
+      },
+    );
+  }
 
   return server;
 }
