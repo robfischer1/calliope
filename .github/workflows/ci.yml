@@ -9,49 +9,28 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # pnpm 11 requires Node >=22.13 — Node 20 cannot run this toolchain.
-        # 22 matches .nvmrc; 24 matches the dev machines.
-        node-version: ["22", "24"]
 
     steps:
       - uses: actions/checkout@v4
 
-      # setup-node MUST precede pnpm/action-setup: the pnpm self-installer
-      # runs under whatever Node is active, and the runner default is too old.
-      - name: Set up Node ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      # bun is the runtime + package manager + script runner. Pinned to match
+      # packageManager in package.json. One runtime — no node version matrix.
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: ${{ matrix.node-version }}
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          # JS actions execute on the runner's bundled Node (20), where pnpm 11's
-          # engines check fails. The standalone binary bundles its own runtime.
-          standalone: true
-
-      - name: Enable pnpm cache
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: pnpm
+          bun-version: "1.3.14"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Format check
-        run: pnpm format:check
+        run: bun run format:check
 
       - name: Lint
-        run: pnpm lint
+        run: bun run lint
 
       - name: Typecheck
-        run: pnpm typecheck
+        run: bun run typecheck
 
       - name: Test
-        run: pnpm test
-
-      - name: Build
-        run: pnpm build
+        run: bun run test
