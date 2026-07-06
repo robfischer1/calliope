@@ -1,13 +1,13 @@
 # .dockerignore for the calliope-mcp star image. Keep the build context lean and
-# keep host state / secrets out of the image. The image builds its own
-# node_modules + dist; never copy the host's in.
+# keep host state / secrets out of the image. The image runs `bun install` +
+# `bun build` itself; never copy the host's node_modules in.
 
 # Version control / CI
 .git
 .github
 .forgejo
 
-# Host build artifacts (the image runs `pnpm install` + `pnpm build` itself)
+# Host build artifacts (the image installs + bundles itself with bun)
 node_modules
 **/node_modules
 dist
