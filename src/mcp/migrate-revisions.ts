@@ -7,8 +7,8 @@
  * Modes (run where BOTH databases are reachable — the deployed container
  * with `PHDB_DATABASE_URL` injected; the C3 harness):
  *
- *   node dist/mcp/migrate-revisions.js           # migrate + parity + export
- *   node dist/mcp/migrate-revisions.js --probe   # counts + parity only
+ *   bun run src/mcp/migrate-revisions.ts           # migrate + parity + export
+ *   bun run src/mcp/migrate-revisions.ts --probe   # counts + parity only
  *
  * Ids are preserved verbatim (the deltas key on revision id; re-runs are
  * idempotent via ON CONFLICT DO NOTHING). Deltas are DENORMALIZED at copy:
