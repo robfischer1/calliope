@@ -7,8 +7,8 @@
  * death). Row-count parity is the gate (the tables are id-preserved,
  * verbatim copies — `archive_*` prefixed).
  *
- *   node dist/mcp/migrate-dissolution-archive.js           # copy + parity + export
- *   node dist/mcp/migrate-dissolution-archive.js --probe   # counts only
+ *   bun run src/mcp/migrate-dissolution-archive.ts           # copy + parity + export
+ *   bun run src/mcp/migrate-dissolution-archive.ts --probe   # counts only
  *
  * Env: PHDB_DATABASE_URL (source), DATABASE_URL (calliope-db), EXPORT_PATH.
  */

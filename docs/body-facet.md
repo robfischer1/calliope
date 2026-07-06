@@ -26,7 +26,7 @@ enforcement is the topology, not a policy check.
 The pure facts/cognition graph: work-node structure (`parent`, `dependsOn`,
 `status`, `hasName`, `hasType`, decision nodes, …) and every non-body fact.
 Post-retraction, Chaos carries **zero** `hasPart` body edges and zero
-section-typed nodes — `node dist/mcp/migrate.js --probe` is the repeatable
+section-typed nodes — `bun run src/mcp/migrate.ts --probe` is the repeatable
 drift probe (expected: all zeros; anything else means a rogue body writer).
 
 ## The boundary hazard: Athena's `hasBody` literal
@@ -46,7 +46,7 @@ migrated from Chaos, which recorded no per-section authorship on reads).
 
 ## The migration record
 
-- Migration + parity: `node dist/mcp/migrate.js` (idempotent; per-node
+- Migration + parity: `bun run src/mcp/migrate.ts` (idempotent; per-node
   sha256 over the ordered `(order_key, text)` list, chaos-read vs pg-read;
   any mismatch exits nonzero).
 - Export artifact: full JSON dump of every body at `EXPORT_PATH` (default

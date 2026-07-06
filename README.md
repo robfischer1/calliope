@@ -66,9 +66,9 @@ The prose facet is also an MCP server exposing four tools (`read_body`,
 `http://urania:8202`; `CALLIOPE_MCP_BACKEND=fixture` for a standalone server).
 Two transports, one shared tool set:
 
-- **stdio** — `calliope-mcp` bin (`dist/mcp/main.js`); for Tantalus + local use.
-- **streamable-HTTP** — `calliope-mcp-http` bin (`dist/mcp/http.js`,
-  `pnpm start:http`); serves `POST /mcp` on `$PORT` (else `$CALLIOPE_MCP_PORT`,
+- **stdio** — `calliope-mcp` bin (`bun run src/mcp/main.ts`); for local use.
+- **streamable-HTTP** — `calliope-mcp-http` bin (`src/mcp/http.ts`,
+  `bun run start:http`); serves `POST /mcp` on `$PORT` (else `$CALLIOPE_MCP_PORT`,
   else 8204). This is the **constellation star** form: the Hades MCP gateway
   fronts it east-west at `http://calliope-mcp:8204/mcp`. Stateless — a fresh
   server+transport per request over a long-lived backend.
@@ -78,7 +78,7 @@ Two transports, one shared tool set:
 `compose.yaml` + `Dockerfile` + `.forgejo/workflows/deploy.yml` ship the HTTP
 star to nas01: container/hostname `calliope-mcp` on the external `mnemosyne-net`,
 internal-only (no host port), reaching urania at `URANIA_URL=http://urania:8202`.
-Push to `main` runs the gate (format/lint/typecheck/test/build) then builds,
+Push to `main` runs the gate (format/lint/typecheck/test) then builds,
 pushes to the Forgejo registry, and recreates the container. Joining the
 constellation is one line in the gateway's `hades.toml` `[stars]` table
 (`calliope = "http://calliope-mcp:8204/mcp"`) + a Hades restart.
@@ -86,12 +86,11 @@ constellation is one line in the gateway's `hades.toml` `[stars]` table
 ## Develop
 
 ```sh
-pnpm install
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
+bun install
+bun run lint
+bun run typecheck
+bun run test
 ```
 
-The package builds to `dist/` (ESM + `.d.ts`). A consumer links it with
-`file:../calliope`.
+bun runs the TypeScript directly — there is no build step and no `dist/`. A
+consumer links the sources with `file:../calliope`.

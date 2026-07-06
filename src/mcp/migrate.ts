@@ -5,9 +5,9 @@
  *
  * Modes (run inside the deployed container — it carries both networks + env):
  *
- *   node dist/mcp/migrate.js            # migrate + parity + export (idempotent)
- *   node dist/mcp/migrate.js --probe    # drift probe: count body facets left in Chaos
- *   node dist/mcp/migrate.js --retract  # post-cutover: retract body facets from Chaos
+ *   bun run src/mcp/migrate.ts            # migrate + parity + export (idempotent)
+ *   bun run src/mcp/migrate.ts --probe    # drift probe: count body facets left in Chaos
+ *   bun run src/mcp/migrate.ts --retract  # post-cutover: retract body facets from Chaos
  *                                       #   (refuses without a prior export file)
  *
  * The default run enumerates every `hasPart`-carrying subject in the `moirae`

@@ -7,8 +7,8 @@
  * Modes (run where BOTH databases are reachable — the deployed container with
  * `PHDB_DATABASE_URL` injected, or a one-off docker run on nas01):
  *
- *   node dist/mcp/migrate-documents.js           # migrate + parity + export (idempotent)
- *   node dist/mcp/migrate-documents.js --probe   # counts + parity only, writes nothing
+ *   bun run src/mcp/migrate-documents.ts           # migrate + parity + export (idempotent)
+ *   bun run src/mcp/migrate-documents.ts --probe   # counts + parity only, writes nothing
  *
  * Env:
  *   PHDB_DATABASE_URL      the monolith's PostgreSQL (read-only use)

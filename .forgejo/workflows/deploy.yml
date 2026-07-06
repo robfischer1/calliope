@@ -3,12 +3,12 @@
 # socket mounted, so `docker compose` targets nas01's own daemon and recreates
 # the container from source.
 #
-# calliope-mcp is the constellation's prose-facet star — a Node/pnpm MCP server
+# calliope-mcp is the constellation's prose-facet star — a bun MCP server
 # fronted east-west by the Hades gateway (http://calliope-mcp:8204/mcp). It
-# builds from public npm deps; no private schema, no DB, no private-repo auth.
-# It reaches urania over mnemosyne-net (URANIA_URL, baked in compose.yaml).
+# builds from public npm deps; no private schema, no private-repo auth. Bodies
+# live in the sovereign store calliope-db (DATABASE_URL, baked in compose.yaml).
 #
-# SECURITY GATE (#1471): the deploy gate also runs pnpm audit (blocking), opengrep
+# SECURITY GATE (#1471): the deploy gate also runs bun audit (blocking), opengrep
 # (vendored TS taint ruleset, a BLOCKING gate), and a Trivy scan of the freshly
 # built image (blocking, --ignore-unfixed) before publish.
 #
@@ -41,31 +41,27 @@ jobs:
     steps:
       - uses: https://github.com/actions/checkout@v4
 
-      # setup-node MUST precede pnpm/action-setup: pnpm 11's engines need Node
-      # >=22.13, and the runner default is older.
-      - name: Set up Node
-        uses: https://github.com/actions/setup-node@v4
+      # Bun is the runtime + package manager + script runner. Pinned to match
+      # packageManager in package.json.
+      - name: Install Bun
+        uses: https://github.com/oven-sh/setup-bun@v2
         with:
-          node-version: "22"
+          bun-version: "1.3.14"
 
-      - name: Install pnpm
-        uses: https://github.com/pnpm/action-setup@v4
-        with:
-          standalone: true   # bundles its own runtime; the runner's Node is too old
-
-      # Gate: format / lint / type / test / build. Deploy only on green.
-      - name: Gate — format / lint / typecheck / test / build
+      # Gate: format / lint / type / test. Deploy only on green. (No build step —
+      # bun runs the TS natively; typecheck is `tsc --noEmit`.)
+      - name: Gate — format / lint / typecheck / test
         run: |
-          pnpm install --frozen-lockfile
-          pnpm format:check
-          pnpm lint
-          pnpm typecheck
-          pnpm test
-          pnpm build
+          bun install --frozen-lockfile
+          bun run format:check
+          bun run lint
+          bun run typecheck
+          bun run test
 
-      # pnpm audit BLOCKS on a HIGH+ production dependency advisory.
-      - name: Dependency vuln scan (pnpm audit)
-        run: pnpm audit --prod --audit-level=high
+      # bun audit BLOCKS on a HIGH+ advisory. NOTE: unlike `pnpm audit --prod`,
+      # bun has no prod-only scope — this also scans dev deps (vitest, etc.).
+      - name: Dependency vuln scan (bun audit)
+        run: bun audit --audit-level=high
 
       # opengrep runs the vendored TS taint ruleset (rules/sast), a BLOCKING gate
       # while tuned. LANG forces UTF-8: opengrep reads files under the C locale
