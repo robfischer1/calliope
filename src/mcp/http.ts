@@ -33,6 +33,7 @@ import type { DocumentStore } from "../document-store.js";
 import type { RevisionStore } from "../revision-store.js";
 import { backendKind, initBackend, makeBackend } from "./backend.js";
 import { createServer } from "./server.js";
+import { startHeartbeat } from "./heartbeat.js";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
 const MCP_PATH = "/mcp";
@@ -173,7 +174,11 @@ async function main(): Promise<void> {
     `calliope-mcp-http: serving (backend=${kind}) on http://${host}:${String(port)}${MCP_PATH}\n`,
   );
 
+  // Publish liveness to Pontus (the op-contract heartbeat) now that we serve.
+  const heartbeat = startHeartbeat();
+
   const shutdown = (): void => {
+    void heartbeat.stop();
     httpServer.close(() => {
       process.exit(0);
     });

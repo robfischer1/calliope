@@ -26,9 +26,14 @@ services:
       # reads only post-C2 (the body store is calliope-db).
       CHAOS_URL: "http://chaos:8206"
       DATABASE_URL: "postgresql://calliope:${CALLIOPE_DB_PASSWORD}@calliope-db:5432/calliope"
+      # Op-contract heartbeat: publish liveness to Pontus (Redpanda) on the
+      # pantheon net, so Nyx / operators / Hades read this star off the backbone.
+      PONTUS_BOOTSTRAP: "pontus:29092"
     networks:
       - mnemosyne-net
       - calliope-net
+      # pantheon carries the Pontus broker (pontus:29092) for the heartbeat.
+      - pantheon
     depends_on:
       calliope-db:
         condition: service_healthy
@@ -54,6 +59,9 @@ services:
 
 networks:
   mnemosyne-net:
+    external: true
+  # The constellation event backbone (Pontus/Redpanda live here) — pre-existing.
+  pantheon:
     external: true
   calliope-net: {}
 
