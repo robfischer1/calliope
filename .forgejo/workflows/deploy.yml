@@ -90,28 +90,27 @@ jobs:
             --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
             "$IMG"
 
-      # Publish the built image to the Forgejo container registry, then deploy.
+      # Publish the built image to the Forgejo container registry.
       # `docker compose push` publishes forgejo.notusmi.com/rob/calliope-mcp:latest.
-      - name: Publish to Forgejo registry + deploy on nas01
+      # NB: the container LIFECYCLE is foundry-managed (fleet_native.tf) — this
+      # workflow only PUBLISHES the image; the roll is a foundry pin bump + apply.
+      # (No `docker compose up -d` here: the repo compose is not the live deploy;
+      # running it would spawn a container conflicting with the foundry-managed one.)
+      - name: Publish to Forgejo registry
         shell: bash   # the act runner defaults to dash (no pipefail)
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          CALLIOPE_DB_PASSWORD: ${{ secrets.CALLIOPE_DB_PASSWORD }}
         run: |
           set -euo pipefail
-          # Fail fast: an unset password would make compose ship the literal
-          # ${CALLIOPE_DB_PASSWORD} as the real credential (the tethys rake).
-          test -n "${CALLIOPE_DB_PASSWORD}" || { echo "CALLIOPE_DB_PASSWORD secret is unset"; exit 1; }
           echo "${REGISTRY_TOKEN}" | docker login forgejo.notusmi.com -u rob --password-stdin
           IMG=$(docker compose config --images | grep calliope-mcp)
           docker push "$IMG"
           echo "$IMG" > /tmp/built-image
-          docker compose up -d
 
       # Supply-chain (#1470 ph2): sign the published image with the constellation
       # cosign key + attach a CycloneDX SBOM attestation, then verify with the
-      # committed public key (cosign.pub). Runs AFTER deploy so a signing hiccup
-      # can't block the rollout; a failure here still reds the run. cosign/syft
+      # committed public key (cosign.pub). Runs AFTER publish so a signing hiccup
+      # can't block the image push; a failure here still reds the run. cosign/syft
       # aren't on the runner image -> fetch them. COSIGN_PRIVATE_KEY (base64,
       # single-line) + COSIGN_PASSWORD are bws-sourced repo Actions secrets; the
       # publish step's docker login persists here (same job container).
