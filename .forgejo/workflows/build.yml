@@ -17,6 +17,9 @@ name: build
 on:
   push:
     branches: [main]
+    # Docs-only pushes don't change the image — skip the rebuild + publish.
+    paths-ignore:
+      - "**.md"
 
 jobs:
   build:
