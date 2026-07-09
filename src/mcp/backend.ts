@@ -31,6 +31,7 @@ import { UraniaBodyClient } from "../urania-client.js";
 import { PgBodyClient } from "../pg-client.js";
 import { LiveUraniaCapture } from "./live-capture.js";
 import { HadesCapture, hadesEnabled } from "./hades-capture.js";
+import { IndexingBodyClient, UraniaIndexClient } from "./index-push.js";
 
 /** How the MCP reaches the body model. */
 export type BackendKind = "urania" | "hades" | "fixture" | "pg";
@@ -55,11 +56,38 @@ export function backendKind(env: NodeJS.ProcessEnv = process.env): BackendKind {
 }
 
 /**
+ * The urania endpoint the write-side body push targets (B): an explicit
+ * `CALLIOPE_INDEX_URL`, else the same urania/chaos URL the direct backend uses.
+ * Absent (e.g. the fixture/test env) → no push wrapping.
+ */
+function indexUrl(env: NodeJS.ProcessEnv): string | undefined {
+  const url = env.CALLIOPE_INDEX_URL ?? env.URANIA_URL ?? env.CHAOS_URL;
+  return url !== undefined && url !== "" ? url : undefined;
+}
+
+/**
+ * Wrap a directly-persisting body client so every write also pushes the
+ * assembled prose to urania's similarity index (the write-side body push). A
+ * no-op wrap when no urania endpoint is configured, so tests and the fixture
+ * backend stay push-free.
+ */
+function withIndexPush(client: BodyClient, env: NodeJS.ProcessEnv): BodyClient {
+  const url = indexUrl(env);
+  return url === undefined
+    ? client
+    : new IndexingBodyClient(client, new UraniaIndexClient(url));
+}
+
+/**
  * Build the {@link BodyClient} for the configured backend.
  *
  * - `"urania"`: direct engine-service via {@link LiveUraniaCapture} (clotho-parity).
  * - `"hades"`: gateway-auth path via {@link HadesCapture} (F2; `CHARON_URL`).
  * - `"fixture"`: in-memory {@link FixtureBodyClient} (dev/test).
+ *
+ * The directly-persisting backends (`pg`, `urania`) are wrapped with
+ * {@link withIndexPush}; `hades` is not — its write is delegated over the
+ * gateway to the server-side calliope-mcp, which performs the push itself.
  */
 export function makeBodyClient(
   kind: BackendKind = backendKind(),
@@ -71,17 +99,25 @@ export function makeBodyClient(
   if (kind === "pg") {
     // The sovereign store (C2). Schema bootstrap is async — the entrypoints
     // await initBodyClient() before serving (fail-fast on an unreachable db).
-    return new PgBodyClient(new Pool({ connectionString: env.DATABASE_URL }));
+    return withIndexPush(
+      new PgBodyClient(new Pool({ connectionString: env.DATABASE_URL })),
+      env,
+    );
   }
   // The UraniaBodyClient guards its transport behind CALLIOPE_URANIA_WIRED; the
   // live server opts in for both live backends.
   env.CALLIOPE_URANIA_WIRED = "1";
   if (kind === "hades") {
+    // Gateway path: the write routes to the server-side calliope-mcp, which
+    // does the index push as part of its own persistence — no push here.
     return new UraniaBodyClient(new HadesCapture(env.CHARON_URL, env));
   }
   // Default: clotho-parity direct urania engine-service.
-  return new UraniaBodyClient(
-    new LiveUraniaCapture(env.CHAOS_URL ?? env.URANIA_URL),
+  return withIndexPush(
+    new UraniaBodyClient(
+      new LiveUraniaCapture(env.CHAOS_URL ?? env.URANIA_URL),
+    ),
+    env,
   );
 }
 
@@ -126,7 +162,7 @@ export function makeBackend(
     // ONE pool for every facet — the sovereign store is one database.
     const pool = new Pool({ connectionString: env.DATABASE_URL });
     return {
-      client: new PgBodyClient(pool),
+      client: withIndexPush(new PgBodyClient(pool), env),
       documents: new PgDocumentStore(pool),
       revisions: new PgRevisionStore(pool),
     };
