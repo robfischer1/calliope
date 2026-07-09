@@ -10,7 +10,7 @@
 # row (calliope:8204) is authoritative, then this container_name can drop.
 name             = "calliope"
 container_name   = "calliope-mcp"
-image            = "forgejo.notusmi.com/rob/calliope@sha256:d45da4c87cd6d43d9949d62be85b1f02e3a72c3577f1ef974b61b9f0703b83e7"
+image            = "forgejo.notusmi.com/rob/calliope@sha256:cf067fce8db76e4df5a8d99f46763cd8f46d9f1629741e5d8963ad1fc14024ff"
 listen_port      = 8204
 extra_networks   = ["mnemosyne-net", "pantheon"]
 private_networks = []
