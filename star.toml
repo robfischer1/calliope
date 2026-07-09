@@ -24,7 +24,7 @@ async = []
 exports = ["metrics"]
 
 [image]
-ref = "forgejo.notusmi.com/rob/calliope-mcp:latest"
+ref = "forgejo.notusmi.com/rob/calliope:latest"
 
 [governance]
 bundle = "oci://forgejo.notusmi.com/rob/furnace/policy"
