@@ -1,16 +1,19 @@
 # calliope — the ONE sovereign /infra file (tofu auto-loads terraform.tfvars).
 # Coupled cutover: the bun-mcp star on stellar_core:bun-mcp + the Pistis identity
 # plane. DB password boot-fetched from Calypso /fleet via the SPIRE SVID (identity
-# star-calliope). The image is rob/calliope (fleet convention, repo name); the
-# calliope-mcp DNS alias keeps that legacy name resolving (hades reaches
-# calliope-mcp:8204). verb_prefix is omitted (null) — calliope serves BARE prose
-# verbs (declared in hades_bare_verb_stars).
+# star-calliope). The image is rob/calliope (fleet convention, repo name). The
+# CONTAINER is named calliope-mcp so hades reaches it at calliope-mcp:8204 (the
+# hades_straggler_routes fallback, which merge-overrides the contract row; the
+# poured root /infra passes container_name but not aliases). verb_prefix is
+# omitted (null) — calliope serves BARE prose verbs (hades_bare_verb_stars).
+# FOLLOW-UP: retire calliope+urania from hades_straggler_routes so the contract
+# row (calliope:8204) is authoritative, then this container_name can drop.
 name             = "calliope"
+container_name   = "calliope-mcp"
 image            = "forgejo.notusmi.com/rob/calliope@sha256:d45da4c87cd6d43d9949d62be85b1f02e3a72c3577f1ef974b61b9f0703b83e7"
 listen_port      = 8204
 extra_networks   = ["mnemosyne-net", "pantheon"]
 private_networks = []
-aliases          = ["calliope-mcp"]
 
 labels = { "pistis.star" = "calliope" }
 volumes = [
