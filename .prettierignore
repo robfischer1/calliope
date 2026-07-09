@@ -1,0 +1,2 @@
+# Markdown is prose, not code — keep it out of the prettier gate.
+*.md

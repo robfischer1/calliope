@@ -1,0 +1,6 @@
+# Materialized per-run by the deploy pipeline (the telescope contract) — never committed.
+fleet.json
+.terraform/
+*.tfplan
+# The deploy materializes a sovereign-DB star's secret map here (JSON) — never commit it.
+secrets.auto.tfvars.json
