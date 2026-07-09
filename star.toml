@@ -1,0 +1,32 @@
+# star.toml -- DERIVED by the Hephaestus foundry (master-plan F2). Do not edit
+# by hand: re-derive from the plan. The conformance target every gate reads.
+# Conformance: the Ouranos admission rego (stellar_core.admission builds its input).
+name    = "calliope"
+service = "Calliope"
+cluster = "pantheon"
+charter = "The Notes & Prose Muse's wire: the MCP body service over the section body model."
+
+verb_prefix = "calliope"
+absorbs = []
+
+[substrate]
+kind      = "container"
+namespace = "calliope"
+
+[logic]
+entrypoint = "src/mcp/http.ts"
+
+[interface]
+sync  = ["mcp"]
+async = []
+
+[observability]
+exports = ["metrics"]
+
+[image]
+ref = "forgejo.notusmi.com/rob/calliope-mcp:latest"
+
+[governance]
+bundle = "oci://forgejo.notusmi.com/rob/furnace/policy"
+tag    = "policy-v1"
+digest = "sha256:bda3af5f1c5c2ad1ec21505c796c0c5c93af8feb160fdeec90c872f24aca2c3b"
