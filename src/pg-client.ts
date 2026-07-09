@@ -69,6 +69,17 @@ export class PgBodyClient implements BodyClient {
     await this.#pool.query(SCHEMA_SQL);
   }
 
+  /**
+   * Every node id that currently has a body — the backfill enumeration
+   * (`DISTINCT node_id WHERE active`), ordered for a deterministic sweep.
+   */
+  async listBodyNodeIds(): Promise<string[]> {
+    const res = await this.#pool.query<{ node_id: string }>(
+      `SELECT DISTINCT node_id FROM sections WHERE active ORDER BY node_id`,
+    );
+    return res.rows.map((r) => r.node_id);
+  }
+
   async readBody(nodeId: string): Promise<Section[]> {
     const res = await this.#pool.query<SectionRow>(
       `SELECT id, text, order_key FROM sections
