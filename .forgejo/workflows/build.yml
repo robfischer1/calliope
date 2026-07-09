@@ -7,7 +7,7 @@
 # from the ci-build-deploy block). A top-level workflow on: push to main (branch-gated,
 # so a feature-branch push never fires a hollow no-op) — re-runs the gate, then builds,
 # labels, sha-tags, Trivy-scans, pushes + cosign-signs the image. The container
-# LIFECYCLE stays Tofu-managed (Nereus); CI only publishes the image. Secrets
+# LIFECYCLE stays Tofu-managed (foundry); CI only publishes the image. Secrets
 # (REGISTRY_TOKEN / COSIGN_* / DATABASE_URL) are the star's own repo secrets. A
 # non-deploying SDD repo drops this file via a per-consumer override. Retires the
 # copied per-repo deploy.yml.
@@ -42,19 +42,35 @@ jobs:
       - name: Load tool versions
         run: grep -E '^[A-Z_]+=' .forgejo/versions.env >> "$GITHUB_ENV"
 
-      # uv / opengrep / cosign / syft are baked into the ci-runner image from the
-      # local Forgejo mirror — no per-build installers (no GitHub/astral 429).
+      # uv / bun / opengrep / cosign / syft are baked into the ci-runner image
+      # from the local Forgejo mirror — no per-build installers (no GitHub/astral
+      # 429). The Gate is LANGUAGE-DETECTED: a bun star (package.json + bun.lock)
+      # runs the bun gate; every other repo keeps the python (uv) gate byte-for-
+      # byte, so a re-pour leaves python stars behaviourally unchanged.
 
       - name: Gate — lint / type / test (deploy only on green)
         run: |
-          uv sync --all-extras --locked
-          uv run pre-commit run --all-files --show-diff-on-failure
-          uv run mypy src tests
-          uv run pyright
-          uv run pytest -q
+          if [ -f package.json ] && [ -f bun.lock ]; then
+            bun install --frozen-lockfile
+            bun run format:check
+            bun run lint
+            bun run typecheck
+            bun run test
+          else
+            uv sync --all-extras --locked
+            uv run pre-commit run --all-files --show-diff-on-failure
+            uv run mypy src tests
+            uv run pyright
+            uv run pytest -q
+          fi
 
-      - name: Dependency vuln scan (pip-audit)
-        run: uv run --with pip-audit pip-audit
+      - name: Dependency vuln scan
+        run: |
+          if [ -f package.json ] && [ -f bun.lock ]; then
+            bun audit --audit-level=high
+          else
+            uv run --with pip-audit pip-audit
+          fi
 
       - name: SAST (opengrep, scoped taint rules)
         # opengrep is baked into the ci-runner image (from the Forgejo mirror) —
