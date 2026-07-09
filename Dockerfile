@@ -1,53 +1,27 @@
-# Multi-stage Dockerfile for calliope-mcp — the prose-facet constellation star.
-# Both stages run on oven/bun: bun runs the TypeScript natively (no tsc build,
-# no dist/), so the runtime is bun, not node. The star exposes the SAME
-# four-tool MCP server over StreamableHTTP; the container serves the HTTP
-# transport (src/mcp/http.ts) that the Hades gateway fronts east-west at
-# http://calliope-mcp:8204/mcp. Deps (@modelcontextprotocol/sdk, pg, zod) are
-# pure JS and work under bun.
+# Multi-stage Dockerfile for calliope -- on the stellar_core:bun-mcp base.
+# The base is FROM oven/bun + the Pistis stellar-boot chain; its ENTRYPOINT is
+# stellar-boot, which execs this CMD (dormant until CALYPSO_IDENTITY_ID is set).
 
-# -- Stage 1: builder (bun) ---------------------------------------------------
-FROM oven/bun:1.3-slim AS builder
+# -- Stage 1: builder ---------------------------------------------------------
+FROM forgejo.notusmi.com/rob/stellar_core:bun-mcp@sha256:b8d636c2b64b82f07940bdfddc9347443bc40775bfde367eca2ef5a4b449280b AS builder
 ENV CI=1
 WORKDIR /app
 COPY . /app
 RUN --mount=type=cache,id=bun,target=/root/.bun/install/cache \
     bun install --frozen-lockfile
-# Bundle the HTTP entrypoint + pg + mcp-sdk + zod into ONE bun-target file.
-# --target=bun keeps node builtins (net/tls/crypto/http) external, resolved by
-# the runtime bun; the artifact is self-contained without shipping node_modules
-# — smaller image, smaller CVE surface (the node runtime's `pnpm prune --prod`
-# equivalent). pg's optional pg-native is never required (native:false default),
-# so it drops out cleanly.
+# Bundle the streamable-HTTP entry + deps into ONE bun-target file (no
+# node_modules shipped -- smaller image, smaller CVE surface).
 RUN bun build src/mcp/http.ts --target=bun --outfile /deploy/server.js --minify
 
-# -- Stage 2: runtime (bun) ---------------------------------------------------
-FROM oven/bun:1.3-slim AS runtime
+# -- Stage 2: runtime ---------------------------------------------------------
+FROM forgejo.notusmi.com/rob/stellar_core:bun-mcp@sha256:b8d636c2b64b82f07940bdfddc9347443bc40775bfde367eca2ef5a4b449280b
 WORKDIR /app
-
-# Patch the debian base: the pinned oven/bun tag lags debian's security fixes,
-# so the deploy gate's Trivy blocks on fixable HIGH/CRITICAL base CVEs. Upgrade
-# as root before dropping to the unprivileged bun user.
-RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
-
-# The self-contained server bundle (no node_modules, no dist).
 COPY --from=builder --chown=bun:bun /deploy/server.js ./server.js
-
-ENV NODE_ENV=production \
-    PORT=8204 \
-    HOST=0.0.0.0 \
-    # Substrate default for a no-DATABASE_URL run; compose overrides with the
-    # sovereign store (DATABASE_URL → the pg backend) + CHAOS_URL for migration.
-    URANIA_URL=http://urania:8202
-
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=8204
 USER bun
-
 EXPOSE 8204
-
-# Liveness probe — the oven/bun image has bun (no node, no curl); use bun's
-# fetch against the MCP route. A GET /mcp answers 405 (POST-only), which still
-# proves the HTTP server is up; only a connection failure fails the probe.
+# Liveness -- the base has bun (no curl); a GET /mcp answers 405 (POST-only),
+# which still proves the HTTP server is up; only a connect failure fails.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD bun -e "fetch('http://127.0.0.1:'+(process.env.PORT||8204)+'/mcp').then(function(r){process.exit(r.status?0:1)}).catch(function(){process.exit(1)})"
-
 CMD ["bun", "server.js"]
