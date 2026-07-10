@@ -17,9 +17,13 @@ name: build
 on:
   push:
     branches: [main]
-    # Docs-only pushes don't change the image — skip the rebuild + publish.
+    # Only CODE changes rebuild the image. A CI-file re-pour (.forgejo/**) or a
+    # deploy-spec change (infra/**, deploy.yml's domain) must NOT trigger a rebuild —
+    # that flooded the 2 runners on a fleet-wide ci.tf pour (18 needless builds).
     paths-ignore:
       - "**.md"
+      - ".forgejo/**"
+      - "infra/**"
 
 jobs:
   build:
@@ -88,6 +92,9 @@ jobs:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Continuous-monitoring plane (replaces the retired build-time Trivy gate).
+          # Absent on a star until provisioned -> the upload self-skips (see below).
+          DTRACK_API_KEY: ${{ secrets.DTRACK_API_KEY }}
         run: |
           set -euo pipefail
           # cosign + syft are baked into the ci-runner image (Forgejo mirror).
@@ -130,17 +137,12 @@ jobs:
             --label "org.opencontainers.image.title=${GITHUB_REPOSITORY##*/}" \
             --label "org.opencontainers.image.url=${SRC}" \
             -
-          # Full-image vuln gate, MINUS the vendored upstream `spire-agent` gobinary
-          # every mcp star inherits from the mcp-runtime base (SPIRE ships it verbatim;
-          # its Go-stdlib CVEs land only in Go patches no SPIRE release carries yet).
-          # Everything the star itself owns still gates; spire-agent is non-blocking.
-          # (--scanners vuln matches build-base; secrets/SAST are opengrep's job above.)
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest \
-            image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --no-progress --format json "$IMG" > /tmp/scan.json
-          N=$(python3 -c 'import json; d=json.load(open("/tmp/scan.json")); print(sum(len(r.get("Vulnerabilities") or []) for r in (d.get("Results") or []) if "spire-agent" not in (r.get("Target") or "")))')
-          U=$(python3 -c 'import json; d=json.load(open("/tmp/scan.json")); print(sum(len(r.get("Vulnerabilities") or []) for r in (d.get("Results") or []) if "spire-agent" in (r.get("Target") or "")))')
-          echo "trivy gated (full-image less spire-agent): ${N} HIGH/CRITICAL | ungated spire-agent (visibility): ${U}"
-          [ "$N" -eq 0 ] || { echo "trivy: ${N} fixable HIGH/CRITICAL vulns"; exit 1; }
+          # Per-build full-image Trivy scan RETIRED (CI cost + hygiene pass): the base
+          # is scanned + weekly-rescanned at base-build; app python deps already gate via
+          # pip-audit above; the SBOM below feeds Dependency-Track for continuous
+          # monitoring (the post-publish green->red window a one-shot build scan can't
+          # cover); Renovate keeps deps current. See the PR for the coverage-vs-cost
+          # rationale. Trivy was the CI CPU/IO hog — this is the sustained-cost fix.
           # sha-pin (Decision #12): tag {name}:<short-sha> alongside :latest, push both.
           SHA_TAG="${IMG%:*}:${GITHUB_SHA:0:12}"
           docker tag "$IMG" "$SHA_TAG"
@@ -156,6 +158,17 @@ jobs:
           syft "$IMG" -o cyclonedx-json > /tmp/sbom.cdx.json
           cosign attest --key /tmp/cosign.key --type cyclonedx --predicate /tmp/sbom.cdx.json --yes "$DIGEST"
           cosign verify --key cosign.pub "$DIGEST"
+          # Continuous vuln monitoring (replaces the retired build-time Trivy gate): push
+          # the SBOM to Dependency-Track, which re-evaluates it against new advisories with
+          # no rebuild. Non-fatal + self-skips until DTRACK_API_KEY is provisioned on the
+          # star repo (a follow-up; frontends already carry it).
+          if [ -n "${DTRACK_API_KEY:-}" ]; then
+            PROJ="${IMG##*/}"; PROJ="${PROJ%:*}"
+            printf '{"projectName":"%s","projectVersion":"latest","autoCreate":true,"bom":"%s"}' "$PROJ" "$(base64 -w0 /tmp/sbom.cdx.json)" > /tmp/dt-bom.json
+            docker run --rm -i --network host curlimages/curl:latest -s -X PUT http://127.0.0.1:30181/api/v1/bom -H "Content-Type: application/json" -H "X-Api-Key: ${DTRACK_API_KEY}" --data-binary @- -o /dev/null -w 'DT upload HTTP %{http_code}\n' < /tmp/dt-bom.json || echo "DT upload failed (non-fatal)"
+          else
+            echo "DTRACK_API_KEY unset — skipping Dependency-Track upload (provision it to enable monitoring)"
+          fi
           # The digest is the deploy's pin target -- hephaestus/infra references @sha256:...
           echo "DEPLOY_DIGEST=$DIGEST" | tee /tmp/deploy-digest
           docker logout forgejo.notusmi.com
