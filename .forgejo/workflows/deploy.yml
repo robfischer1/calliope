@@ -58,9 +58,9 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: nas01
     container:
-      # forge-ci: tofu/oras/cosign (+ uv/opengrep/syft/conftest) baked once
+      # python-ci: tofu/oras/cosign + uv/opengrep/syft/conftest baked once
       # (bases/ci-runner/, cosign-signed by build-base) — no per-run GitHub installers.
-      image: forgejo.notusmi.com/rob/forge-ci:latest
+      image: forgejo.notusmi.com/rob/stellar_core:python-ci
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
     defaults:
@@ -140,9 +140,9 @@ jobs:
     if: github.event_name == 'push'
     runs-on: nas01
     container:
-      # forge-ci: tofu/oras/cosign (+ uv/opengrep/syft/conftest) baked once
+      # python-ci: tofu/oras/cosign + uv/opengrep/syft/conftest baked once
       # (bases/ci-runner/, cosign-signed by build-base) — no per-run GitHub installers.
-      image: forgejo.notusmi.com/rob/forge-ci:latest
+      image: forgejo.notusmi.com/rob/stellar_core:python-ci
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
     defaults:
