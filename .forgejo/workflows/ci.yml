@@ -1,0 +1,54 @@
+# MANAGED BY FOUNDRY (infra/ci.tf, kind=star) — do not hand-edit.
+# Central definition: foundry/infra/ci-templates/ci.yml. A hand edit is drift;
+# the next core apply restores this file.
+#
+# ci.yml — the python lint / type / test gate (PR). Runs IN stellar_core:python-ci
+# (uv + the SDK + a WARM uv-cache + opengrep + node + the 3.12-3.14 interpreters
+# baked), so the gate installs NOTHING at job time (no astral/GitHub curl — the
+# 429-flaky path that stranded the CI-to-tofu migration). Migrated off furnace
+# (the ci-gate block) into the Tofu pour so one engine owns all of a star's CI.
+
+name: ci
+
+on:
+  pull_request:
+    # A code change gates; an infra-only PR (the auto-bump deploy PR touches only
+    # infra/image.auto.tfvars.json), a CI-file-only PR, or docs have no code to
+    # lint/type/test — skip the gate. admit.yml still runs on those PRs: it is the
+    # ONLY admission check for a push-built image (build.yml is push-only, admit is
+    # PR-only), so it must not be skipped. Not a required status check, so a skipped
+    # run doesn't block merge.
+    paths-ignore:
+      - "infra/**"
+      - ".forgejo/**"
+      - "**.md"
+
+jobs:
+  gate:
+    name: gate (lint / type / test)
+    runs-on: nas01
+    defaults:
+      run:
+        shell: bash
+    container:
+      # The python CI image: uv + SDK + a WARM uv-cache (ruff/mypy/pytest/pip-audit)
+      # + opengrep + node + 3.12/3.13/3.14 baked. `uv sync` reuses the cache and
+      # resolves .python-version from the image — no install, no download.
+      image: forgejo.notusmi.com/rob/stellar_core:python-ci
+    env:
+      UV_CACHE_DIR: /opt/uv-cache
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+      - name: Lint / type / test
+        run: |
+          uv sync --all-extras --locked
+          uv run pre-commit run --all-files --show-diff-on-failure
+          uv run mypy src tests
+          uv run pyright
+          uv run pytest -q
+      - name: Dependency vuln scan (pip-audit)
+        run: uv run --with pip-audit pip-audit
+      - name: SAST (opengrep, scoped taint rules)
+        run: |
+          export LANG=C.UTF-8 LC_ALL=C.UTF-8
+          opengrep scan --config rules/sast --error .
