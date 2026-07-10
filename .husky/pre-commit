@@ -1,0 +1,5 @@
+# Restrictive parity with CI: lint-staged autofixes staged files, then the
+# shared `gate` (format:check / lint / typecheck / test / build) runs the exact
+# checks CI runs. Use `git commit --no-verify` to skip on a WIP commit.
+bunx lint-staged
+bun run gate
