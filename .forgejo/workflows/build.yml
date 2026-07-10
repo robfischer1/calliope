@@ -35,11 +35,11 @@ jobs:
       run:
         shell: bash
     container:
-      # forge-ci = the constellation CI toolchain baked once (bases/ci-runner/,
+      # python-ci = the python CI toolchain baked once (bases/python-ci/,
       # forged + cosign-signed by build-base.yml): uv, cosign, oras, syft, opengrep,
       # conftest, tofu, jq. No build step curls GitHub/astral (those installers
       # 429-flaked star CI). cosign/oras are built from source (trivy-clean).
-      image: forgejo.notusmi.com/rob/forge-ci:latest
+      image: forgejo.notusmi.com/rob/stellar_core:python-ci
       options: --network host
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
