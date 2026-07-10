@@ -36,6 +36,17 @@ on:
     branches: [main]
     paths: ["infra/**"]
 
+# Serialize deploys per repo: a tofu apply that REPLACES a container (a new image
+# digest) must never race a concurrent apply on the same isolated pg state
+# (schema=repo) — the same race that destroyed charon 3x during the F12 frontend
+# cutover (mirrors frontend/deploy.yml, foundry #151). The F14 re-pour makes this
+# load-bearing for stars too: the core apply commits main.tf then prunes 4 files —
+# several infra/** pushes that would otherwise fire overlapping applies. Queue,
+# don't cancel: cancelling a mid-flight apply strands the tofu state lock.
+concurrency:
+  group: star-deploy-${{ github.repository }}
+  cancel-in-progress: false
+
 env:
   TELESCOPE_EPOCH: epoch-5
   ORAS_VERSION: "1.2.0"
