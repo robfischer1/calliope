@@ -91,7 +91,10 @@ jobs:
       - name: tofu plan (isolated state, schema = repo)
         env:
           PG_CONN_STR: ${{ secrets.PG_CONN_STR }}
-          TF_VAR_docker_host: unix:///var/run/docker.sock
+          # Deploy targets NAS01's docker via the crossover socket-proxy
+          # (10.10.10.1:2375, nas01<->llm01 DAC /30). The runner moved to llm01, so its
+          # LOCAL sock is the wrong daemon — that caused the wrong-daemon deploys.
+          TF_VAR_docker_host: tcp://10.10.10.1:2375
           # A sovereign-DB star sets TF_VAR_SECRETS (a JSON map, e.g.
           # {"FOO_DB_PASSWORD":"..."}) so its postgres co-container's password
           # resolves; a Pistis-only star leaves it unset -> {} (var.secrets default).
@@ -173,7 +176,10 @@ jobs:
       - name: tofu apply (the reviewed plan is the approval)
         env:
           PG_CONN_STR: ${{ secrets.PG_CONN_STR }}
-          TF_VAR_docker_host: unix:///var/run/docker.sock
+          # Deploy targets NAS01's docker via the crossover socket-proxy
+          # (10.10.10.1:2375, nas01<->llm01 DAC /30). The runner moved to llm01, so its
+          # LOCAL sock is the wrong daemon — that caused the wrong-daemon deploys.
+          TF_VAR_docker_host: tcp://10.10.10.1:2375
           # See the plan step: a sovereign-DB star's password rides TF_VAR_SECRETS.
           SECRETS_JSON: ${{ secrets.TF_VAR_SECRETS }}
         run: |
