@@ -1,149 +1,181 @@
-# Forgejo Actions: build + deploy a Forge front-end star on push to main.
-# Runs on the nas01 self-hosted runner (label `nas01`) with the host docker
-# socket mounted, so `docker compose` targets nas01's own daemon and recreates
-# the container from source. Image shape (Node standalone or static nginx) is
-# decided by the stamped Dockerfile; this workflow stays framework-agnostic.
+# MANAGED BY FOUNDRY (infra/ci.tf, Smaller Hammers F5) — do not hand-edit.
+# Central definition: foundry/infra/ci-templates/deploy.yml. A hand edit is
+# drift; the next core apply restores this file.
 #
-# The deploy gate runs the same checks as the PR ci.yml plus bun audit +
-# opengrep, then BUILDS the image, scans it with Trivy, and deploys only on a
-# clean scan. App-specific build-args / runtime env (a backend URL, etc.) live
-# in compose.yaml (the authoritative deploy spec) + repo Actions secrets, not
-# here -- this workflow stays generic across stamped repos.
+# Forgejo Actions: the GitOps DEPLOY pipeline (constellation star).
+# deploy = tofu over this repo's own /infra against its ISOLATED state
+# (pg backend, schema_name = this repo — Smaller Hammers F1):
 #
-# REQUIRED Forgejo Actions secrets (repo -> Settings -> Actions -> Secrets):
-#   REGISTRY_TOKEN       a Forgejo PAT (write:package) -- docker login + push the
-#                        built image to forgejo.notusmi.com/rob/<service>.
-#   COSIGN_PRIVATE_KEY   base64 of the constellation cosign private key (single line).
-#   COSIGN_PASSWORD      passphrase for that cosign key.
-#   DTRACK_API_KEY       Dependency-Track Containers-team key (BOM upload + autocreate).
-# The constellation public key ships committed at the repo root as cosign.pub, so
-# the post-deploy `cosign verify --key cosign.pub` resolves without a secret.
+#   * PR touching infra/**   -> tofu plan, posted into the PR as a comment
+#     (the reviewable plan is the merge gate: merge-if-clean).
+#   * merge to main          -> tofu apply (the reviewed plan is the approval).
 #
-# Prereqs: Forgejo Actions enabled on the repo + a runner with the `nas01` label
-# (host-networked, /var/run/docker.sock allowed).
+# Wiring inputs come from the TELESCOPE fleet contract (Smaller Hammers F3):
+# the signed epoch artifact is pulled + cosign-verified, then materialized as
+# infra/fleet.json for the repo's /infra to read. No repo reads the core state.
+#
+# tofu runs as the PINNED binary installed into this ephemeral job container —
+# the "no local tofu on any host" convention is about hosts; a -v bind of the
+# checkout into an opentofu container resolves against the HOST daemon's fs
+# (the job runs in a container), so the binary-in-job is the working form.
+#
+# REQUIRED Forgejo Actions secrets:
+#   PG_CONN_STR     postgres://forge:...@<tailnet>:5432/tofu?sslmode=disable
+#                   (the shared state backend; the schema is per-repo).
+#   DEPLOY_TOKEN    a Forgejo PAT — posts the plan comment; pulls the telescope
+#                   artifact; authenticates the module fetch. (FORGEJO_* is a
+#                   RESERVED Actions-secret prefix — hence the name.)
+# The telescope epoch pin + tool versions are central: bumping them here rolls
+# the whole enrolled fleet through drift-managed materialization.
 
 name: deploy
 on:
+  pull_request:
+    paths: ["infra/**"]
   push:
     branches: [main]
-    # Docs-only pushes don't change the image — skip the rebuild + redeploy.
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - "LICENSE"
+    paths: ["infra/**"]
+
+env:
+  TELESCOPE_EPOCH: epoch-5
+  ORAS_VERSION: "1.2.0"
+  COSIGN_VERSION: "v3.0.2"
+  TOFU_VERSION: "1.10.3"
 
 jobs:
-  build-and-deploy:
+  plan:
+    if: github.event_name == 'pull_request'
     runs-on: nas01
     container:
-      image: catthehacker/ubuntu:act-22.04   # glibc + docker CLI + compose v2
+      # forge-ci: tofu/oras/cosign (+ uv/opengrep/syft/conftest) baked once
+      # (bases/ci-runner/, cosign-signed by build-base) — no per-run GitHub installers.
+      image: forgejo.notusmi.com/rob/forge-ci:latest
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: https://github.com/actions/checkout@v4
 
-      # Bun is the package manager + script runner. Pinned to match
-      # packageManager in package.json.
-      - name: Install Bun
-        uses: https://github.com/oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.14"
+      # tofu / oras / cosign are baked into the ci-runner image from the local
+      # Forgejo mirror — no per-run GitHub-release installers (429-flaky).
 
-      # Gate: the same `gate` script the PR ci.yml + the pre-commit hook run.
-      # Deploy only on green.
-      - name: Gate — format / lint / typecheck / test / build
-        run: |
-          bun install --frozen-lockfile
-          bun run gate
-
-      # bun audit BLOCKS on a HIGH+ advisory. NOTE: unlike `pnpm audit --prod`,
-      # bun has no prod-only scope -- this also scans dev deps (vitest, etc.).
-      - name: Dependency vuln scan (bun audit)
-        run: bun audit --audit-level=high
-
-      # opengrep runs the vendored TS taint ruleset (rules/sast), a BLOCKING gate
-      # while tuned. LANG forces UTF-8: opengrep reads files under the C locale
-      # otherwise and dies on any non-ASCII byte.
-      - name: SAST (opengrep, scoped taint rules)
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash
-          export PATH="$HOME/.opengrep/cli/latest:$PATH"
-          export LANG=C.UTF-8 LC_ALL=C.UTF-8
-          opengrep scan --config rules/sast --error .
-
-      # Build the image FRESH, scan it, then deploy. --no-cache so Trivy always
-      # scans a deterministic image built from the current lockfile: a stale
-      # cached install layer can otherwise feed Trivy an already-fixed CVE,
-      # falsely blocking a deploy. Trivy BLOCKS on a fixable HIGH/CRITICAL;
-      # --ignore-unfixed drops base-image CVEs with no released fix. Image name
-      # is read from the compose file so this stays generic across stamped repos.
-      - name: Build image
-        run: docker compose build --no-cache
-
-      - name: Image CVE scan (Trivy)
-        run: |
-          IMG=$(docker compose config --images | head -1)
-          echo "scanning image: $IMG"
-          # Persist Trivy's vuln DB across runs (named volume on nas01's daemon)
-          # so it isn't re-downloaded every CI — caches definitions, not scan
-          # results, so it can never hide a CVE.
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v trivy-db-cache:/root/.cache/trivy \
-            aquasec/trivy:latest image \
-            --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
-            "$IMG"
-
-      # Publish the built image to the Forgejo container registry, then deploy.
-      # `docker compose push` publishes the image named in compose.yaml; the
-      # docker login persists into the sign step (same job container).
-      - name: Publish to Forgejo registry + deploy on nas01
-        shell: bash   # the act runner defaults to dash (no pipefail)
+      - name: Authenticate the module fetch (foundry star module, private origin)
         env:
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          FORGEJO_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+        run: |
+          git config --global "http.https://forgejo.notusmi.com.extraheader" "Authorization: token ${FORGEJO_TOKEN}"
+
+      - name: Fetch + verify the fleet contract (telescope)
+        env:
+          FORGEJO_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
         run: |
           set -euo pipefail
-          echo "${REGISTRY_TOKEN}" | docker login forgejo.notusmi.com -u rob --password-stdin
-          docker compose push
-          docker compose config --images | head -1 > /tmp/built-image
-          docker compose up -d
+          echo "${FORGEJO_TOKEN}" | oras login forgejo.notusmi.com -u rob --password-stdin
+          cosign verify --key cosign.pub --insecure-ignore-tlog "forgejo.notusmi.com/rob/telescope:${TELESCOPE_EPOCH}"
+          mkdir -p /tmp/fleet && oras pull -o /tmp/fleet "forgejo.notusmi.com/rob/telescope:${TELESCOPE_EPOCH}"
+          cp /tmp/fleet/roster.json infra/fleet.json
 
-      # Supply-chain: sign the published image with the constellation cosign key +
-      # attach a CycloneDX SBOM attestation, then verify with the committed public
-      # key (cosign.pub). Runs AFTER deploy so a signing hiccup can't block the
-      # rollout; a failure here still reds the run. cosign/syft aren't on the
-      # runner image -> fetch them. COSIGN_PRIVATE_KEY (base64, single-line) +
-      # COSIGN_PASSWORD are bws-sourced repo Actions secrets; the publish step's
-      # docker login persists here (same job container).
-      - name: Sign image + attest SBOM (cosign)
+      - name: tofu plan (isolated state, schema = repo)
+        env:
+          PG_CONN_STR: ${{ secrets.PG_CONN_STR }}
+          TF_VAR_docker_host: unix:///var/run/docker.sock
+          # A sovereign-DB star sets TF_VAR_SECRETS (a JSON map, e.g.
+          # {"FOO_DB_PASSWORD":"..."}) so its postgres co-container's password
+          # resolves; a Pistis-only star leaves it unset -> {} (var.secrets default).
+          SECRETS_JSON: ${{ secrets.TF_VAR_SECRETS }}
+        run: |
+          set -euo pipefail
+          # The secrets map rides a JSON repo secret; materialize it as a JSON
+          # auto-tfvars (tofu parses *.auto.tfvars.json natively — TF_VAR_secrets
+          # would parse the JSON as HCL and choke on the ':'). jq wraps + validates
+          # it; {} when the star sets none. (NOT `${VAR:-{}}` — that brace collides
+          # with the expansion's close and appends a stray '}'.)
+          SJSON="${SECRETS_JSON:-}"; [ -n "$SJSON" ] || SJSON='{}'
+          jq -n --argjson s "$SJSON" '{secrets: $s}' > infra/secrets.auto.tfvars.json
+          REPO="${GITHUB_REPOSITORY##*/}"
+          tofu -chdir=infra init -input=false \
+            -backend-config="conn_str=${PG_CONN_STR}" \
+            -backend-config="schema_name=${REPO}"
+          set +e
+          tofu -chdir=infra plan -input=false -no-color -detailed-exitcode \
+            -out=plan.tfplan | tee /tmp/plan.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          # 0 = no changes, 2 = changes to apply; anything else is a real error.
+          if [ "$rc" != "0" ] && [ "$rc" != "2" ]; then exit "$rc"; fi
+          echo "$rc" > /tmp/plan.rc
+
+      - name: Post the plan into the PR
+        env:
+          FORGEJO_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          rc=$(cat /tmp/plan.rc)
+          status="no changes (clean)"
+          [ "$rc" = "2" ] && status="CHANGES pending apply-on-merge"
+          { echo "### tofu plan — ${status}"
+            echo '```'
+            tail -c 60000 /tmp/plan.txt
+            echo '```'
+          } > /tmp/comment.md
+          jq -n --rawfile body /tmp/comment.md '{body: $body}' | curl -sS -X POST \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/issues/${{ github.event.number }}/comments" \
+            -H "Authorization: token ${FORGEJO_TOKEN}" -H "Content-Type: application/json" \
+            --data-binary @- -o /dev/null -w 'plan comment HTTP %{http_code}\n'
+
+  apply:
+    if: github.event_name == 'push'
+    runs-on: nas01
+    container:
+      # forge-ci: tofu/oras/cosign (+ uv/opengrep/syft/conftest) baked once
+      # (bases/ci-runner/, cosign-signed by build-base) — no per-run GitHub installers.
+      image: forgejo.notusmi.com/rob/forge-ci:latest
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+    defaults:
+      run:
         shell: bash
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+
+      # tofu / oras / cosign are baked into the ci-runner image from the local
+      # Forgejo mirror — no per-run GitHub-release installers (429-flaky).
+
+      - name: Authenticate the module fetch (foundry star module, private origin)
         env:
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-          DTRACK_API_KEY: ${{ secrets.DTRACK_API_KEY }}
+          FORGEJO_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+        run: |
+          git config --global "http.https://forgejo.notusmi.com.extraheader" "Authorization: token ${FORGEJO_TOKEN}"
+
+      - name: Fetch + verify the fleet contract (telescope)
+        env:
+          FORGEJO_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
         run: |
           set -euo pipefail
-          curl -sSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
-          chmod +x /usr/local/bin/cosign
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin >/dev/null
-          IMG=$(cat /tmp/built-image)
-          DIGEST=$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "$IMG" | grep '^forgejo.notusmi.com/' | head -1)
-          test -n "$DIGEST"
-          echo "signing $DIGEST"
-          printf '%s' "${COSIGN_PRIVATE_KEY}" | base64 -d > /tmp/cosign.key
-          trap 'rm -f /tmp/cosign.key' EXIT
-          cosign sign   --key /tmp/cosign.key --yes "$DIGEST"
-          syft "$IMG" -o cyclonedx-json > /tmp/sbom.cdx.json
-          cosign attest --key /tmp/cosign.key --type cyclonedx --predicate /tmp/sbom.cdx.json --yes "$DIGEST"
-          cosign verify --key cosign.pub "$DIGEST"
+          echo "${FORGEJO_TOKEN}" | oras login forgejo.notusmi.com -u rob --password-stdin
+          cosign verify --key cosign.pub --insecure-ignore-tlog "forgejo.notusmi.com/rob/telescope:${TELESCOPE_EPOCH}"
+          mkdir -p /tmp/fleet && oras pull -o /tmp/fleet "forgejo.notusmi.com/rob/telescope:${TELESCOPE_EPOCH}"
+          cp /tmp/fleet/roster.json infra/fleet.json
 
-          # Upload the SBOM to Dependency-Track for continuous CVE tracking of
-          # shipped artifacts. DT binds 127.0.0.1 on the host, so reach it via a
-          # host-networked curl sidecar fed the payload over stdin. Non-fatal --
-          # DT is telemetry, not a deploy gate. autoCreate makes the project on
-          # first upload (the Containers-team key has PROJECT_CREATION_UPLOAD).
-          PROJ_NAME=${IMG##*/}; PROJ_NAME=${PROJ_NAME%%:*}
-          printf '{"projectName":"%s","projectVersion":"latest","autoCreate":true,"bom":"%s"}' "$PROJ_NAME" "$(base64 -w0 /tmp/sbom.cdx.json)" > /tmp/dt-bom.json
-          docker run --rm -i --network host curlimages/curl:latest -s -X PUT http://127.0.0.1:30181/api/v1/bom -H "Content-Type: application/json" -H "X-Api-Key: ${DTRACK_API_KEY}" --data-binary @- -o /dev/null -w 'DT upload HTTP %{http_code}\n' < /tmp/dt-bom.json || echo "DT upload failed (non-fatal)"
-
-          docker logout forgejo.notusmi.com
+      - name: tofu apply (the reviewed plan is the approval)
+        env:
+          PG_CONN_STR: ${{ secrets.PG_CONN_STR }}
+          TF_VAR_docker_host: unix:///var/run/docker.sock
+          # See the plan step: a sovereign-DB star's password rides TF_VAR_SECRETS.
+          SECRETS_JSON: ${{ secrets.TF_VAR_SECRETS }}
+        run: |
+          set -euo pipefail
+          # The secrets map rides a JSON repo secret; materialize it as a JSON
+          # auto-tfvars (tofu parses *.auto.tfvars.json natively — TF_VAR_secrets
+          # would parse the JSON as HCL and choke on the ':'). jq wraps + validates
+          # it; {} when the star sets none. (NOT `${VAR:-{}}` — that brace collides
+          # with the expansion's close and appends a stray '}'.)
+          SJSON="${SECRETS_JSON:-}"; [ -n "$SJSON" ] || SJSON='{}'
+          jq -n --argjson s "$SJSON" '{secrets: $s}' > infra/secrets.auto.tfvars.json
+          REPO="${GITHUB_REPOSITORY##*/}"
+          tofu -chdir=infra init -input=false \
+            -backend-config="conn_str=${PG_CONN_STR}" \
+            -backend-config="schema_name=${REPO}"
+          tofu -chdir=infra apply -input=false -auto-approve -no-color
