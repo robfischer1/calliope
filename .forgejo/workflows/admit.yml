@@ -1,0 +1,170 @@
+# MANAGED BY FOUNDRY (infra/ci.tf, kind=star) — do not hand-edit.
+# Central definition: foundry/infra/ci-templates/admit.yml. A hand edit is drift;
+# the next core apply restores this file.
+#
+# admit.yml — the star-admission gate (PR). Computes the supply-chain facts +
+# migration namespaces, verifies the signed policy authority (Ouranos) + fleet
+# roster (Telescope), and runs a LOCAL opa eval — no service. Runs IN
+# stellar_core:python-ci (uv/cosign/syft/oras/jq baked; docker socket for the
+# ouranos eval image). Migrated off furnace (the ci-admit block) into Tofu.
+
+name: admit
+
+on:
+  pull_request:
+
+env:
+  OURANOS_IMAGE: ${{ vars.OURANOS_IMAGE || 'forgejo.notusmi.com/rob/ouranos:policy-v1' }}
+  TELESCOPE_IMAGE: ${{ vars.TELESCOPE_IMAGE || 'forgejo.notusmi.com/rob/telescope:epoch-1' }}
+
+jobs:
+  admit:
+    name: Admission gate
+    runs-on: nas01
+    defaults:
+      run:
+        shell: bash
+    container:
+      # The python CI image: uv/cosign/syft/oras/jq baked (no per-run installers —
+      # those 429-flaked CI). host network: reach the Forgejo registry + PyPI behind
+      # the Caddy SSO gate (nas01 tailnet identity). docker socket: `docker run` the
+      # ouranos eval image.
+      image: forgejo.notusmi.com/rob/stellar_core:python-ci
+      options: --network host -v /var/run/docker.sock:/var/run/docker.sock
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+
+      - name: Load tool versions
+        run: grep -E '^[A-Z_]+=' .forgejo/versions.env >> "$GITHUB_ENV"
+
+      - name: Install Python dependencies
+        run: uv sync --all-extras --locked
+
+      - name: Compute supply-chain facts
+        run: |
+          set -euo pipefail
+          IMAGE_DECLARED="false"; IMAGE_SIGNED="false"; SBOM_PRESENT="false"
+          IMAGE_REF=$(uv run python -c "
+          import tomllib
+          print(tomllib.loads(open('star.toml').read()).get('image', {}).get('ref', ''))
+          " 2>/dev/null || true)
+          if [ -n "${IMAGE_REF}" ]; then
+            IMAGE_DECLARED="true"
+            if cosign verify --key cosign.pub --insecure-ignore-tlog=true "${IMAGE_REF}" >/dev/null 2>&1; then
+              IMAGE_SIGNED="true"
+            fi
+            if syft "${IMAGE_REF}" -o spdx-json --file sbom.spdx.json >/dev/null 2>&1; then
+              SBOM_PRESENT="true"
+            fi
+          fi
+          echo "IMAGE_DECLARED=${IMAGE_DECLARED}" >> "${GITHUB_ENV}"
+          echo "IMAGE_SIGNED=${IMAGE_SIGNED}" >> "${GITHUB_ENV}"
+          echo "SBOM_PRESENT=${SBOM_PRESENT}" >> "${GITHUB_ENV}"
+
+      - name: Verify + pull the policy authority
+        run: |
+          set -euo pipefail
+          cosign verify --key cosign.pub --insecure-ignore-tlog=true "${OURANOS_IMAGE}"
+          docker pull "${OURANOS_IMAGE}"
+
+      - name: Verify + pull the fleet roster (Telescope)
+        run: |
+          set -euo pipefail
+          cosign verify --key cosign.pub --insecure-ignore-tlog=true "${TELESCOPE_IMAGE}"
+          ( cd /tmp && oras pull "${TELESCOPE_IMAGE}" )
+          jq '{fleet: .}' /tmp/roster.json > /tmp/fleet.json
+          echo "roster: telescope ($(jq '.fleet.map | length' /tmp/fleet.json) stars, $(jq '.fleet.topics | length' /tmp/fleet.json) topics)"
+
+      - name: Build the admission input
+        run: |
+          set -euo pipefail
+          # build_admission_input is a CI-TIME tool, NOT a star dependency — pull
+          # stellar_core ephemerally from the Forgejo PyPI (public read) so admit works
+          # for every star: the older vendored-.ops generation never took the SDK as a
+          # dep (ModuleNotFoundError), AND an SDK-consuming star (e.g. hades) pins an
+          # OLD stellar_core in its .venv that lacks build_admission_input (ImportError).
+          # --isolated ignores the project's .venv/config so --with always resolves a
+          # FRESH SDK from the index, not the star's locked one; the cwd stays the repo
+          # so the star.toml / migrations reads below still resolve.
+          uv run --isolated --no-project --with stellar_core --extra-index-url https://forgejo.notusmi.com/api/packages/rob/pypi/simple/ python - <<'PYEOF'
+          import json
+          import pathlib
+          import re
+
+          from stellar_core import build_admission_input
+
+          def sql_namespaces(sql: str) -> set[str]:
+              # The namespaces a migration TOUCHES, derived from the DDL: the
+              # sovereignty rule compares each against substrate.namespace, so a
+              # migration reaching into another star's schema fails closed. Strip
+              # comments; collect CREATE SCHEMA names + every schema-qualified
+              # identifier after DDL/DML keywords.
+              sql = re.sub(r"--[^\n]*", "", sql)
+              sql = re.sub(r"/\*.*?\*/", "", sql, flags=re.S)
+              names = set(
+                  re.findall(
+                      r"(?i)\bCREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+                      r"([a-z_][a-z0-9_]*)",
+                      sql,
+                  )
+              )
+              names |= set(
+                  re.findall(
+                      r"(?i)\b(?:TABLE|EXISTS|ON|INTO|FROM|UPDATE)\s+"
+                      r"([a-z_][a-z0-9_]*)\s*\.",
+                      sql,
+                  )
+              )
+              return names
+
+          star_toml = pathlib.Path("star.toml").read_text(encoding="utf-8")
+          supply_chain = {
+              "image_declared": "${IMAGE_DECLARED}" == "true",
+              "image_signed": "${IMAGE_SIGNED}" == "true",
+              "sbom_present": "${SBOM_PRESENT}" == "true",
+          }
+          migrations = []
+          if pathlib.Path("migrations").is_dir():
+              for f in sorted(pathlib.Path("migrations").iterdir()):
+                  if not f.is_file():
+                      continue
+                  spaces = (
+                      sql_namespaces(f.read_text(encoding="utf-8"))
+                      if f.suffix == ".sql"
+                      else set()
+                  )
+                  # One entry per namespace touched; none derivable -> "" (fails
+                  # closed against the sovereignty equality).
+                  for ns in sorted(spaces) or [""]:
+                      migrations.append({"file": f.name, "namespace": ns})
+          doc = build_admission_input(
+              star_toml, supply_chain=supply_chain, migrations=migrations,
+          )
+          pathlib.Path("/tmp/admission-input.json").write_text(json.dumps(doc))
+          PYEOF
+
+      - name: Evaluate admission (local opa eval — no service)
+        run: |
+          set -euo pipefail
+          set +e
+          OUT=$(docker run --rm -i -v /tmp/fleet.json:/fleet.json "${OURANOS_IMAGE}" \
+            --data /fleet.json < /tmp/admission-input.json)
+          CODE=$?
+          set -e
+          if [ "${CODE}" -ne 0 ]; then
+            echo "ADMISSION DENIED:" >&2
+            echo "${OUT}" | uv run python -c "
+          import sys, json
+          try:
+              v = json.load(sys.stdin)['result'][0]['expressions'][0]['value']
+              # v may be one reason (str) or a list of them — never iterate a str
+              # (that prints one CHARACTER per line).
+              reasons = [v] if isinstance(v, str) else v
+              for r in reasons:
+                  print('  - ' + str(r), file=sys.stderr)
+          except Exception:
+              pass
+          " || true
+            exit 1
+          fi
+          echo "Admitted."
