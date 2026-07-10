@@ -1,35 +1,35 @@
-# .dockerignore for the calliope-mcp star image. Keep the build context lean and
-# keep host state / secrets out of the image. The image runs `bun install` +
-# `bun build` itself; never copy the host's node_modules in.
+# Canonical .dockerignore for a Forge frontend repo (mirrors SRSC #1314).
+# Keeps the build context lean; no host state / secrets / deps leak into the image.
 
 # Version control / CI
 .git
 .github
-.forgejo
 
-# Host build artifacts (the image installs + bundles itself with bun)
-node_modules
+# Installed deps + build caches (the image installs + builds its own)
 **/node_modules
-dist
+**/.next
+**/.turbo
 **/dist
-*.tsbuildinfo
-.turbo
+**/*.tsbuildinfo
 coverage
-
-# Tests / dev-only artifacts not needed at runtime
-__tests__
 
 # Secrets / local env
 .env
 .env.*
 *.pem
+.secrets.baseline
 
 # Editor / OS noise
 .idea
 .vscode
 .DS_Store
 
-# The AI governance layer (not part of the runtime image)
+# Dev-only artifacts not needed in the runtime image
+**/__tests__
+**/*.test.ts
+**/*.test.tsx
+
+# The AI governance layer (poured separately; not part of the runtime image)
 .claude
 .gemini
 AGENTS.md

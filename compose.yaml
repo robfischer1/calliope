@@ -1,0 +1,10 @@
+# Per-app Docker Compose stack for calliope (nas01, tailnet-served).
+# Auth + identity are handled upstream by the gateway MCP / Tailscale, not here.
+# State (if any) externalizes to a named volume or a backing service by URL.
+services:
+  calliope:
+    image: forgejo.notusmi.com/rob/calliope:latest
+    build: .
+    ports:
+      - "8140:8140"
+    restart: unless-stopped
