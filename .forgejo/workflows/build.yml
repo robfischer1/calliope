@@ -159,3 +159,58 @@ jobs:
           # The digest is the deploy's pin target -- hephaestus/infra references @sha256:...
           echo "DEPLOY_DIGEST=$DIGEST" | tee /tmp/deploy-digest
           docker logout forgejo.notusmi.com
+
+      - name: Open a deploy PR — auto-bump the image pin (decentralized stars)
+        # The digest just built + signed + SBOM-attested IS the deploy's pin. Instead
+        # of a human re-deriving the bump each session, write it as a machine-owned
+        # auto-tfvars on a deploy branch and open a PR — deploy.yml's plan-on-PR
+        # (paths: infra/**) is the review gate, merge applies. tofu auto-loads
+        # *.auto.tfvars.json and it OVERRIDES terraform.tfvars, so the operator's spec
+        # stays sovereign and the digest is clearly build-owned data (mirrors
+        # secrets.auto.tfvars.json). PR-gated by design — never pushes to main.
+        # Skipped for a repo with no infra/ (a non-deploying SDD star). Uses the
+        # contents API (like forgejo-put-file), not git, to sidestep the checkout
+        # auth-header dance; DEPLOY_TOKEN is a real PAT so the PR fires deploy.yml
+        # (a push made with the Actions token would be event-suppressed).
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -d infra ] || { echo "no infra/ — not a decentralized deploy star; skipping pin-bump"; exit 0; }
+          DIGEST=$(sed -n 's/^DEPLOY_DIGEST=//p' /tmp/deploy-digest)
+          test -n "$DIGEST"
+          REPO="${GITHUB_REPOSITORY##*/}"
+          SHORT="${GITHUB_SHA:0:12}"
+          BRANCH="deploy/${SHORT}"
+          AUTH="Authorization: token ${DEPLOY_TOKEN}"
+          APIREPO="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}"
+          # Re-run guard: the same commit already opened its bump PR.
+          if [ "$(curl -sS -o /dev/null -w '%{http_code}' -H "$AUTH" "${APIREPO}/branches/${BRANCH}")" = "200" ]; then
+            echo "deploy branch ${BRANCH} already exists — pin-bump already opened; skipping"
+            exit 0
+          fi
+          FILE_API="${APIREPO}/contents/infra/image.auto.tfvars.json"
+          CONTENT_B64=$(jq -n --arg img "$DIGEST" '{image: $img}' | base64 -w0)
+          MSG="deploy(${REPO}): pin image @ ${SHORT}"
+          # Create-or-update on a NEW deploy branch (contents API cuts new_branch from
+          # main); a prior deploy left the file on main -> update needs its sha.
+          SHA=$(curl -sS -H "$AUTH" "${FILE_API}?ref=main" | jq -r '.sha // ""')
+          if [ -n "$SHA" ]; then
+            METHOD=PUT
+            BODY=$(jq -n --arg c "$CONTENT_B64" --arg m "$MSG" --arg s "$SHA" --arg nb "$BRANCH" \
+              '{content:$c, message:$m, sha:$s, branch:"main", new_branch:$nb}')
+          else
+            METHOD=POST
+            BODY=$(jq -n --arg c "$CONTENT_B64" --arg m "$MSG" --arg nb "$BRANCH" \
+              '{content:$c, message:$m, branch:"main", new_branch:$nb}')
+          fi
+          wcode=$(printf '%s' "$BODY" | curl -sS -o /dev/null -w '%{http_code}' \
+            -X "$METHOD" -H "$AUTH" -H "Content-Type: application/json" --data-binary @- "$FILE_API")
+          case "$wcode" in 200 | 201) : ;; *) echo "pin-bump write HTTP $wcode" >&2; exit 1 ;; esac
+          # Open the deploy PR (a real PAT -> deploy.yml's pull_request trigger fires).
+          PRBODY="Auto-bump the image pin to the digest just built, signed, and SBOM-attested. Merging applies — deploy.yml posts the plan on this PR. Digest: ${DIGEST}"
+          jq -n --arg h "$BRANCH" --arg t "$MSG" --arg b "$PRBODY" \
+             '{head: $h, base: "main", title: $t, body: $b}' \
+          | curl -sS -X POST "${APIREPO}/pulls" \
+             -H "$AUTH" -H "Content-Type: application/json" \
+             --data-binary @- -o /dev/null -w 'deploy PR HTTP %{http_code}\n'
