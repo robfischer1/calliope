@@ -19,11 +19,11 @@ RUN bun build apps/calliope/src/mcp/http.ts --target=bun --outfile /deploy/serve
 FROM forgejo.notusmi.com/rob/stellar_core:bun-mcp
 WORKDIR /app
 COPY --from=builder --chown=bun:bun /deploy/server.js ./server.js
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=8140
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=8204
 USER bun
-EXPOSE 8140
+EXPOSE 8204
 # Liveness — the base has bun (no curl); a GET /mcp answers 405 (POST-only),
 # which still proves the HTTP server is up; only a connect failure fails.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD bun -e "fetch('http://127.0.0.1:'+(process.env.PORT||8140)+'/mcp').then(function(r){process.exit(r.status?0:1)}).catch(function(){process.exit(1)})"
+    CMD bun -e "fetch('http://127.0.0.1:'+(process.env.PORT||8204)+'/mcp').then(function(r){process.exit(r.status?0:1)}).catch(function(){process.exit(1)})"
 CMD ["bun", "server.js"]

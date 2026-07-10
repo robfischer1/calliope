@@ -9,7 +9,7 @@ db_kind: postgres
 description: The Notes & Prose Muse's MCP body service
 framework: mcp
 interstellar: true
-port: 8140
+port: 8204
 project_name: Calliope
 repo_name: calliope
 scope: calliope

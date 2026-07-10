@@ -14,7 +14,7 @@ kind      = "container"
 namespace = "calliope"
 
 [logic]
-entrypoint = "src/mcp/http.ts"
+entrypoint = "apps/calliope/src/mcp/http.ts"
 
 [interface]
 sync  = ["mcp"]

@@ -6,5 +6,5 @@ services:
     image: forgejo.notusmi.com/rob/calliope:latest
     build: .
     ports:
-      - "8140:8140"
+      - "8204:8204"
     restart: unless-stopped
