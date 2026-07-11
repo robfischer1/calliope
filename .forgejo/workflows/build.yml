@@ -97,29 +97,17 @@ jobs:
           # cosign + syft are baked into the ci-runner image (Forgejo mirror).
           echo "${REGISTRY_TOKEN}" | docker login forgejo.notusmi.com -u rob --password-stdin
           # Compose-OPTIONAL build (Smaller Hammers decentralization): a decentralized
-          # star's runtime source of truth is infra/terraform.tfvars, not compose, so it
-          # carries NO compose file. When one is present, use it — it may encode an image
-          # name a bare build can't derive (e.g. calliope-mcp, not the repo name) or
-          # build-time args; when absent, the image is the fleet-invariant
-          # forgejo.notusmi.com/rob/<repo>:latest and the context is '.'.
-          # Robust under `set -euo pipefail`: a glob-loop (never `ls` a missing file,
-          # which exits 2 → pipefail → the step dies before the build).
-          CF=""
-          for f in compose.yaml compose.yml docker-compose.yml; do [ -f "$f" ] && { CF=$f; break; }; done
-          if [ -n "$CF" ]; then
-            # `docker compose build`/`config` interpolate the WHOLE compose file, incl.
-            # runtime-only vars (a db service's `${STAR_DB_PASSWORD:?...}`). A build needs
-            # no runtime secret, so satisfy interpolation with a throwaway dummy .env —
-            # real secrets in the step env still win (shell env > .env file). `|| true`
-            # so a compose with no ${VAR} refs (grep exits 1) doesn't fail the step.
-            grep -ohE '\$\{[A-Za-z_][A-Za-z0-9_]*' "$CF" \
-              | sed 's/^\${//' | sort -u | sed 's/$/=ci-build-dummy/' > .env || true
-            docker compose build
-            IMG=$(docker compose config --images | grep '^forgejo.notusmi.com/' | head -1)
-          else
-            IMG="forgejo.notusmi.com/rob/${GITHUB_REPOSITORY##*/}:latest"
-            docker build --network=host -t "$IMG" .
-          fi
+          # Image name: some stars publish a non-repo-name image, so read it from the
+          # compose recipe if present (grep only — NO docker compose: it is a vestigial
+          # build hint, tofu owns deploy); else the fleet convention. Build is straight
+          #  with BuildKit via buildx (the Dockerfiles use RUN --mount).
+          IMG=""
+          for f in compose.yaml compose.yml docker-compose.yml; do
+            [ -f "$f" ] && { IMG=$(grep -oE 'forgejo\.notusmi\.com/rob/[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?' "$f" | head -1); break; }
+          done
+          [ -n "$IMG" ] || IMG="forgejo.notusmi.com/rob/${GITHUB_REPOSITORY##*/}:latest"
+          case "$IMG" in *:*) ;; *) IMG="$IMG:latest";; esac
+          docker build --network=host -t "$IMG" .
           # Stamp standard OCI provenance labels (a labels-only layer). Without a
           # tagged, labelled image the registry blob-GC reaps untagged manifests and
           # any @sha256 pin dangles (the 2026-07-02 chaos/clio/nyx/terpsichore incident).
