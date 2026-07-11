@@ -19,12 +19,31 @@
 # checkout into an opentofu container resolves against the HOST daemon's fs
 # (the job runs in a container), so the binary-in-job is the working form.
 #
-# REQUIRED Forgejo Actions secrets:
-#   PG_CONN_STR     postgres://forge:...@<tailnet>:5432/tofu?sslmode=disable
-#                   (the shared state backend; the schema is per-repo).
-#   DEPLOY_TOKEN    a Forgejo PAT — posts the plan comment; pulls the telescope
-#                   artifact; authenticates the module fetch. (FORGEJO_* is a
-#                   RESERVED Actions-secret prefix — hence the name.)
+# CREDENTIAL RESOLUTION — ZERO-CREDENTIAL by Forgejo-OIDC (Cedar OIDC migration).
+# The deploy no longer relies on stored Forgejo Actions secrets. Each enrolled
+# star owns a Calypso (self-hosted Infisical) oidc-auth machine identity
+# (ci-<star>, minted by infra/bin/oidc-identity, bound to repository=rob/<star>,
+# aud=https://calypso.notusmi.com). The runner mints a short-lived Forgejo Actions
+# OIDC id-token (enable-openid-connect: true at the job level), exchanges it at
+# Calypso for an access token, and reads the fleet-shared secrets at env=prod
+# path=/fleet — NO credential is ever stored on the repo. The star's identityId
+# rides a non-secret per-repo Forgejo Actions VARIABLE (CI_OIDC_IDENTITY_ID), set
+# by oidc-identity at mint time, so this template stays byte-identical fleet-wide.
+#
+# STRANGLER (staged rollout): if CI_OIDC_IDENTITY_ID is set the job takes the OIDC
+# path; if it is unset the job falls back to the LEGACY stored Actions secrets
+# (PG_CONN_STR / DEPLOY_TOKEN / TF_VAR_SECRETS). This lets the new template pour
+# fleet-wide inertly, then each star cut over one at a time (mint identity -> set
+# the variable -> verify a green deploy -> remove the stored secrets). Once every
+# star is OIDC the legacy branch + set-deploy-secrets retire.
+#
+# What /fleet supplies (values flow machine-to-machine; NEVER logged):
+#   PGPASS_FORGE_ALL       -> the shared tofu-state backend password; PG_CONN_STR
+#                             is reconstructed from it (postgres://forge:...@.../tofu).
+#   DEPLOY_TOKEN           -> a Forgejo PAT (plan comment, telescope pull, module fetch).
+#   <UPPER_STAR>_DB_PASSWORD (sovereign-DB stars only) -> materialized into
+#                             infra/secrets.auto.tfvars.json {secrets:{...}}. A
+#                             Pistis-only star has no such key -> {} (var.secrets default).
 # The telescope epoch pin + tool versions are central: bumping them here rolls
 # the whole enrolled fleet through drift-managed materialization.
 
@@ -52,14 +71,23 @@ env:
   ORAS_VERSION: "1.2.0"
   COSIGN_VERSION: "v3.0.2"
   TOFU_VERSION: "1.10.3"
+  # The fleet secrets plane (Calypso = self-hosted Infisical). Non-secret coords.
+  CALYPSO_URL: https://calypso.notusmi.com
+  CALYPSO_WS: 107e672d-b7bd-4f94-b181-169e02fc7253
+  CALYPSO_FLEET_PATH: /fleet
 
 jobs:
   plan:
     if: github.event_name == 'pull_request'
     runs-on: nas01
+    # Inject the Forgejo Actions OIDC id-token endpoint (ACTIONS_ID_TOKEN_REQUEST_*)
+    # so the Resolve-credentials step can mint a token, exchange it at Calypso, and
+    # read /fleet with ZERO stored credential. Inert for a legacy (unmigrated) star.
+    enable-openid-connect: true
     container:
       # python-ci: tofu/oras/cosign + uv/opengrep/syft/conftest baked once
       # (bases/python-ci/, cosign-signed by build-base) — no per-run GitHub installers.
+      # Also carries node/curl/jq — the OIDC exchange is pure curl, no Infisical CLI.
       image: forgejo.notusmi.com/rob/stellar_core:python-ci
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
@@ -72,42 +100,92 @@ jobs:
       # tofu / oras / cosign are baked into the python-ci image from the local
       # Forgejo mirror — no per-run GitHub-release installers (429-flaky).
 
-      - name: Authenticate the module fetch (foundry star module, private origin)
+      - name: Resolve deploy credentials (Forgejo-OIDC -> Calypso /fleet, or legacy secrets)
         env:
-          FORGEJO_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-        run: |
-          git config --global "http.https://forgejo.notusmi.com.extraheader" "Authorization: token ${FORGEJO_TOKEN}"
-
-      - name: Fetch + verify the fleet contract (telescope)
-        env:
-          FORGEJO_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          CALYPSO_IDENTITY_ID: ${{ vars.CI_OIDC_IDENTITY_ID }}
+          # LEGACY fallback (used only while this star has no CI_OIDC_IDENTITY_ID set).
+          LEGACY_PG_CONN_STR: ${{ secrets.PG_CONN_STR }}
+          LEGACY_DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          LEGACY_TF_VAR_SECRETS: ${{ secrets.TF_VAR_SECRETS }}
         run: |
           set -euo pipefail
-          echo "${FORGEJO_TOKEN}" | oras login forgejo.notusmi.com -u rob --password-stdin
+          umask 077
+          REPO="${GITHUB_REPOSITORY##*/}"
+          if [ -n "${CALYPSO_IDENTITY_ID:-}" ]; then
+            echo "credential source: Forgejo-OIDC -> Calypso oidc-auth -> ${CALYPSO_FLEET_PATH} (zero stored cred)"
+            test -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" \
+              || { echo "::error::runner did not inject the OIDC id-token endpoint (need enable-openid-connect: true + a runner that supports it)"; exit 1; }
+            # 1) Forgejo Actions OIDC id-token, aud = Calypso.
+            OIDC_JWT=$(curl -sf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${CALYPSO_URL}" | jq -r '.value')
+            [ -n "$OIDC_JWT" ] && [ "$OIDC_JWT" != null ] || { echo "::error::no OIDC token value"; exit 1; }
+            # 2) exchange at Calypso oidc-auth login -> short-lived access token.
+            ACCESS=$(curl -sf -X POST "${CALYPSO_URL}/api/v1/auth/oidc-auth/login" \
+              -H 'Content-Type: application/json' \
+              -d "$(jq -nc --arg id "$CALYPSO_IDENTITY_ID" --arg jwt "$OIDC_JWT" '{identityId:$id, jwt:$jwt}')" \
+              | jq -r '.accessToken')
+            [ -n "$ACCESS" ] && [ "$ACCESS" != null ] || { echo "::error::Calypso oidc-auth login rejected the token"; exit 1; }
+            # 3) read /fleet ONCE into a private 0600 file — values NEVER hit a log.
+            FLEET_JSON="$(mktemp)"; chmod 600 "$FLEET_JSON"
+            trap 'rm -f "$FLEET_JSON"' EXIT
+            curl -sf -G "${CALYPSO_URL}/api/v3/secrets/raw" \
+              -H "Authorization: Bearer ${ACCESS}" \
+              --data-urlencode "workspaceId=${CALYPSO_WS}" \
+              --data-urlencode "environment=prod" \
+              --data-urlencode "secretPath=${CALYPSO_FLEET_PATH}" > "$FLEET_JSON"
+            # value of a /fleet key by name (empty if absent) — never echoed.
+            fleet() { jq -r --arg k "$1" '(.secrets[] | select(.secretKey==$k) | .secretValue) // ""' "$FLEET_JSON"; }
+            PGPASS="$(fleet PGPASS_FORGE_ALL)"; [ -n "$PGPASS" ] || { echo "::error::PGPASS_FORGE_ALL absent from /fleet"; exit 1; }
+            PG="postgres://forge:${PGPASS}@100.93.64.106:5432/tofu?sslmode=disable"
+            DTOKEN="$(fleet DEPLOY_TOKEN)"; [ -n "$DTOKEN" ] || { echo "::error::DEPLOY_TOKEN absent from /fleet"; exit 1; }
+            # Sovereign-DB password (generic): <UPPER_REPO>_DB_PASSWORD if /fleet carries one.
+            DBKEY="$(printf '%s' "$REPO" | tr '[:lower:]-' '[:upper:]_')_DB_PASSWORD"
+            DBPASS="$(fleet "$DBKEY")"
+            # Mask before anything can echo them; then hand to later steps via $GITHUB_ENV (a file, never logged).
+            for v in "$PGPASS" "$PG" "$DTOKEN" "$DBPASS"; do [ -n "$v" ] && echo "::add-mask::$v"; done
+            { echo "PG_CONN_STR=${PG}"; echo "DEPLOY_TOKEN=${DTOKEN}"; } >> "$GITHUB_ENV"
+            if [ -n "$DBPASS" ]; then
+              jq -nc --arg k "$DBKEY" --arg p "$DBPASS" '{secrets: {($k): $p}}' > infra/secrets.auto.tfvars.json
+              echo "sovereign DB password ${DBKEY} materialized from /fleet"
+            else
+              echo '{"secrets":{}}' > infra/secrets.auto.tfvars.json
+              echo "no ${DBKEY} in /fleet -> Pistis-only star (empty secrets map)"
+            fi
+          else
+            echo "credential source: LEGACY stored Actions secrets (this star not yet OIDC-migrated)"
+            [ -n "${LEGACY_PG_CONN_STR}" ] || { echo "::error::neither CI_OIDC_IDENTITY_ID nor a stored PG_CONN_STR is set for this star"; exit 1; }
+            echo "::add-mask::${LEGACY_PG_CONN_STR}"; [ -n "${LEGACY_DEPLOY_TOKEN}" ] && echo "::add-mask::${LEGACY_DEPLOY_TOKEN}"
+            { echo "PG_CONN_STR=${LEGACY_PG_CONN_STR}"; echo "DEPLOY_TOKEN=${LEGACY_DEPLOY_TOKEN}"; } >> "$GITHUB_ENV"
+            # The secrets map rides a JSON repo secret; materialize it as a JSON auto-tfvars
+            # (tofu parses *.auto.tfvars.json natively — TF_VAR_secrets would parse the JSON as
+            # HCL and choke on the ':'). jq wraps + validates it; {} when the star sets none.
+            SJSON="${LEGACY_TF_VAR_SECRETS:-}"; [ -n "$SJSON" ] || SJSON='{}'
+            jq -n --argjson s "$SJSON" '{secrets: $s}' > infra/secrets.auto.tfvars.json
+          fi
+
+      - name: Authenticate the module fetch (foundry star module, private origin)
+        run: |
+          git config --global "http.https://forgejo.notusmi.com.extraheader" "Authorization: token ${DEPLOY_TOKEN}"
+
+      - name: Fetch + verify the fleet contract (telescope)
+        run: |
+          set -euo pipefail
+          echo "${DEPLOY_TOKEN}" | oras login forgejo.notusmi.com -u rob --password-stdin
           cosign verify --key cosign.pub --insecure-ignore-tlog "forgejo.notusmi.com/rob/telescope:${TELESCOPE_EPOCH}"
           mkdir -p /tmp/fleet && oras pull -o /tmp/fleet "forgejo.notusmi.com/rob/telescope:${TELESCOPE_EPOCH}"
           cp /tmp/fleet/roster.json infra/fleet.json
 
       - name: tofu plan (isolated state, schema = repo)
         env:
-          PG_CONN_STR: ${{ secrets.PG_CONN_STR }}
           # Deploy targets NAS01's docker via the crossover socket-proxy
           # (10.10.10.1:2375, nas01<->llm01 DAC /30). The runner moved to llm01, so its
           # LOCAL sock is the wrong daemon — that caused the wrong-daemon deploys.
           TF_VAR_docker_host: tcp://10.10.10.1:2375
-          # A sovereign-DB star sets TF_VAR_SECRETS (a JSON map, e.g.
-          # {"FOO_DB_PASSWORD":"..."}) so its postgres co-container's password
-          # resolves; a Pistis-only star leaves it unset -> {} (var.secrets default).
-          SECRETS_JSON: ${{ secrets.TF_VAR_SECRETS }}
         run: |
           set -euo pipefail
-          # The secrets map rides a JSON repo secret; materialize it as a JSON
-          # auto-tfvars (tofu parses *.auto.tfvars.json natively — TF_VAR_secrets
-          # would parse the JSON as HCL and choke on the ':'). jq wraps + validates
-          # it; {} when the star sets none. (NOT `${VAR:-{}}` — that brace collides
-          # with the expansion's close and appends a stray '}'.)
-          SJSON="${SECRETS_JSON:-}"; [ -n "$SJSON" ] || SJSON='{}'
-          jq -n --argjson s "$SJSON" '{secrets: $s}' > infra/secrets.auto.tfvars.json
+          # infra/secrets.auto.tfvars.json was materialized by the resolve-credentials step
+          # (from /fleet under OIDC, or the legacy TF_VAR_SECRETS repo secret). PG_CONN_STR
+          # rides the job env from that same step.
           REPO="${GITHUB_REPOSITORY##*/}"
           tofu -chdir=infra init -input=false \
             -backend-config="conn_str=${PG_CONN_STR}" \
@@ -122,8 +200,6 @@ jobs:
           echo "$rc" > /tmp/plan.rc
 
       - name: Post the plan into the PR
-        env:
-          FORGEJO_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
         run: |
           set -euo pipefail
           rc=$(cat /tmp/plan.rc)
@@ -136,12 +212,15 @@ jobs:
           } > /tmp/comment.md
           jq -n --rawfile body /tmp/comment.md '{body: $body}' | curl -sS -X POST \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/issues/${{ github.event.number }}/comments" \
-            -H "Authorization: token ${FORGEJO_TOKEN}" -H "Content-Type: application/json" \
+            -H "Authorization: token ${DEPLOY_TOKEN}" -H "Content-Type: application/json" \
             --data-binary @- -o /dev/null -w 'plan comment HTTP %{http_code}\n'
 
   apply:
     if: github.event_name == 'push'
     runs-on: nas01
+    # See the plan job: inject the Forgejo Actions OIDC id-token endpoint for the
+    # zero-credential /fleet read. Inert for a legacy (unmigrated) star.
+    enable-openid-connect: true
     container:
       # python-ci: tofu/oras/cosign + uv/opengrep/syft/conftest baked once
       # (bases/python-ci/, cosign-signed by build-base) — no per-run GitHub installers.
@@ -157,40 +236,81 @@ jobs:
       # tofu / oras / cosign are baked into the python-ci image from the local
       # Forgejo mirror — no per-run GitHub-release installers (429-flaky).
 
-      - name: Authenticate the module fetch (foundry star module, private origin)
+      - name: Resolve deploy credentials (Forgejo-OIDC -> Calypso /fleet, or legacy secrets)
         env:
-          FORGEJO_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-        run: |
-          git config --global "http.https://forgejo.notusmi.com.extraheader" "Authorization: token ${FORGEJO_TOKEN}"
-
-      - name: Fetch + verify the fleet contract (telescope)
-        env:
-          FORGEJO_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          CALYPSO_IDENTITY_ID: ${{ vars.CI_OIDC_IDENTITY_ID }}
+          # LEGACY fallback (used only while this star has no CI_OIDC_IDENTITY_ID set).
+          LEGACY_PG_CONN_STR: ${{ secrets.PG_CONN_STR }}
+          LEGACY_DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          LEGACY_TF_VAR_SECRETS: ${{ secrets.TF_VAR_SECRETS }}
         run: |
           set -euo pipefail
-          echo "${FORGEJO_TOKEN}" | oras login forgejo.notusmi.com -u rob --password-stdin
+          umask 077
+          REPO="${GITHUB_REPOSITORY##*/}"
+          if [ -n "${CALYPSO_IDENTITY_ID:-}" ]; then
+            echo "credential source: Forgejo-OIDC -> Calypso oidc-auth -> ${CALYPSO_FLEET_PATH} (zero stored cred)"
+            test -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" \
+              || { echo "::error::runner did not inject the OIDC id-token endpoint (need enable-openid-connect: true + a runner that supports it)"; exit 1; }
+            OIDC_JWT=$(curl -sf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${CALYPSO_URL}" | jq -r '.value')
+            [ -n "$OIDC_JWT" ] && [ "$OIDC_JWT" != null ] || { echo "::error::no OIDC token value"; exit 1; }
+            ACCESS=$(curl -sf -X POST "${CALYPSO_URL}/api/v1/auth/oidc-auth/login" \
+              -H 'Content-Type: application/json' \
+              -d "$(jq -nc --arg id "$CALYPSO_IDENTITY_ID" --arg jwt "$OIDC_JWT" '{identityId:$id, jwt:$jwt}')" \
+              | jq -r '.accessToken')
+            [ -n "$ACCESS" ] && [ "$ACCESS" != null ] || { echo "::error::Calypso oidc-auth login rejected the token"; exit 1; }
+            FLEET_JSON="$(mktemp)"; chmod 600 "$FLEET_JSON"
+            trap 'rm -f "$FLEET_JSON"' EXIT
+            curl -sf -G "${CALYPSO_URL}/api/v3/secrets/raw" \
+              -H "Authorization: Bearer ${ACCESS}" \
+              --data-urlencode "workspaceId=${CALYPSO_WS}" \
+              --data-urlencode "environment=prod" \
+              --data-urlencode "secretPath=${CALYPSO_FLEET_PATH}" > "$FLEET_JSON"
+            fleet() { jq -r --arg k "$1" '(.secrets[] | select(.secretKey==$k) | .secretValue) // ""' "$FLEET_JSON"; }
+            PGPASS="$(fleet PGPASS_FORGE_ALL)"; [ -n "$PGPASS" ] || { echo "::error::PGPASS_FORGE_ALL absent from /fleet"; exit 1; }
+            PG="postgres://forge:${PGPASS}@100.93.64.106:5432/tofu?sslmode=disable"
+            DTOKEN="$(fleet DEPLOY_TOKEN)"; [ -n "$DTOKEN" ] || { echo "::error::DEPLOY_TOKEN absent from /fleet"; exit 1; }
+            DBKEY="$(printf '%s' "$REPO" | tr '[:lower:]-' '[:upper:]_')_DB_PASSWORD"
+            DBPASS="$(fleet "$DBKEY")"
+            for v in "$PGPASS" "$PG" "$DTOKEN" "$DBPASS"; do [ -n "$v" ] && echo "::add-mask::$v"; done
+            { echo "PG_CONN_STR=${PG}"; echo "DEPLOY_TOKEN=${DTOKEN}"; } >> "$GITHUB_ENV"
+            if [ -n "$DBPASS" ]; then
+              jq -nc --arg k "$DBKEY" --arg p "$DBPASS" '{secrets: {($k): $p}}' > infra/secrets.auto.tfvars.json
+              echo "sovereign DB password ${DBKEY} materialized from /fleet"
+            else
+              echo '{"secrets":{}}' > infra/secrets.auto.tfvars.json
+              echo "no ${DBKEY} in /fleet -> Pistis-only star (empty secrets map)"
+            fi
+          else
+            echo "credential source: LEGACY stored Actions secrets (this star not yet OIDC-migrated)"
+            [ -n "${LEGACY_PG_CONN_STR}" ] || { echo "::error::neither CI_OIDC_IDENTITY_ID nor a stored PG_CONN_STR is set for this star"; exit 1; }
+            echo "::add-mask::${LEGACY_PG_CONN_STR}"; [ -n "${LEGACY_DEPLOY_TOKEN}" ] && echo "::add-mask::${LEGACY_DEPLOY_TOKEN}"
+            { echo "PG_CONN_STR=${LEGACY_PG_CONN_STR}"; echo "DEPLOY_TOKEN=${LEGACY_DEPLOY_TOKEN}"; } >> "$GITHUB_ENV"
+            SJSON="${LEGACY_TF_VAR_SECRETS:-}"; [ -n "$SJSON" ] || SJSON='{}'
+            jq -n --argjson s "$SJSON" '{secrets: $s}' > infra/secrets.auto.tfvars.json
+          fi
+
+      - name: Authenticate the module fetch (foundry star module, private origin)
+        run: |
+          git config --global "http.https://forgejo.notusmi.com.extraheader" "Authorization: token ${DEPLOY_TOKEN}"
+
+      - name: Fetch + verify the fleet contract (telescope)
+        run: |
+          set -euo pipefail
+          echo "${DEPLOY_TOKEN}" | oras login forgejo.notusmi.com -u rob --password-stdin
           cosign verify --key cosign.pub --insecure-ignore-tlog "forgejo.notusmi.com/rob/telescope:${TELESCOPE_EPOCH}"
           mkdir -p /tmp/fleet && oras pull -o /tmp/fleet "forgejo.notusmi.com/rob/telescope:${TELESCOPE_EPOCH}"
           cp /tmp/fleet/roster.json infra/fleet.json
 
       - name: tofu apply (the reviewed plan is the approval)
         env:
-          PG_CONN_STR: ${{ secrets.PG_CONN_STR }}
           # Deploy targets NAS01's docker via the crossover socket-proxy
           # (10.10.10.1:2375, nas01<->llm01 DAC /30). The runner moved to llm01, so its
           # LOCAL sock is the wrong daemon — that caused the wrong-daemon deploys.
           TF_VAR_docker_host: tcp://10.10.10.1:2375
-          # See the plan step: a sovereign-DB star's password rides TF_VAR_SECRETS.
-          SECRETS_JSON: ${{ secrets.TF_VAR_SECRETS }}
         run: |
           set -euo pipefail
-          # The secrets map rides a JSON repo secret; materialize it as a JSON
-          # auto-tfvars (tofu parses *.auto.tfvars.json natively — TF_VAR_secrets
-          # would parse the JSON as HCL and choke on the ':'). jq wraps + validates
-          # it; {} when the star sets none. (NOT `${VAR:-{}}` — that brace collides
-          # with the expansion's close and appends a stray '}'.)
-          SJSON="${SECRETS_JSON:-}"; [ -n "$SJSON" ] || SJSON='{}'
-          jq -n --argjson s "$SJSON" '{secrets: $s}' > infra/secrets.auto.tfvars.json
+          # infra/secrets.auto.tfvars.json + PG_CONN_STR come from the resolve-credentials step.
           REPO="${GITHUB_REPOSITORY##*/}"
           tofu -chdir=infra init -input=false \
             -backend-config="conn_str=${PG_CONN_STR}" \
