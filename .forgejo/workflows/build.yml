@@ -49,7 +49,7 @@ jobs:
       - name: Load tool versions
         run: grep -E '^[A-Z_]+=' .forgejo/versions.env >> "$GITHUB_ENV"
 
-      # uv / bun / opengrep / cosign / syft are baked into the ci-runner image
+      # uv / bun / opengrep / cosign / syft are baked into the python-ci image
       # from the local Forgejo mirror — no per-build installers (no GitHub/astral
       # 429). The Gate is LANGUAGE-DETECTED: a bun star (package.json + bun.lock)
       # runs the bun gate; every other repo keeps the python (uv) gate byte-for-
@@ -80,7 +80,7 @@ jobs:
           fi
 
       - name: SAST (opengrep, scoped taint rules)
-        # opengrep is baked into the ci-runner image (from the Forgejo mirror) —
+        # opengrep is baked into the python-ci image (from the Forgejo mirror) —
         # no per-build install, no GitHub rate-limit flake.
         run: |
           export LANG=C.UTF-8 LC_ALL=C.UTF-8
@@ -94,7 +94,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           set -euo pipefail
-          # cosign + syft are baked into the ci-runner image (Forgejo mirror).
+          # cosign + syft are baked into the python-ci image (Forgejo mirror).
           echo "${REGISTRY_TOKEN}" | docker login forgejo.notusmi.com -u rob --password-stdin
           # Compose-OPTIONAL build (Smaller Hammers decentralization): a decentralized
           # Image name: some stars publish a non-repo-name image, so read it from the
