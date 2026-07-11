@@ -59,7 +59,7 @@ jobs:
     runs-on: nas01
     container:
       # python-ci: tofu/oras/cosign + uv/opengrep/syft/conftest baked once
-      # (bases/ci-runner/, cosign-signed by build-base) — no per-run GitHub installers.
+      # (bases/python-ci/, cosign-signed by build-base) — no per-run GitHub installers.
       image: forgejo.notusmi.com/rob/stellar_core:python-ci
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
@@ -69,7 +69,7 @@ jobs:
     steps:
       - uses: https://github.com/actions/checkout@v4
 
-      # tofu / oras / cosign are baked into the ci-runner image from the local
+      # tofu / oras / cosign are baked into the python-ci image from the local
       # Forgejo mirror — no per-run GitHub-release installers (429-flaky).
 
       - name: Authenticate the module fetch (foundry star module, private origin)
@@ -144,7 +144,7 @@ jobs:
     runs-on: nas01
     container:
       # python-ci: tofu/oras/cosign + uv/opengrep/syft/conftest baked once
-      # (bases/ci-runner/, cosign-signed by build-base) — no per-run GitHub installers.
+      # (bases/python-ci/, cosign-signed by build-base) — no per-run GitHub installers.
       image: forgejo.notusmi.com/rob/stellar_core:python-ci
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
@@ -154,7 +154,7 @@ jobs:
     steps:
       - uses: https://github.com/actions/checkout@v4
 
-      # tofu / oras / cosign are baked into the ci-runner image from the local
+      # tofu / oras / cosign are baked into the python-ci image from the local
       # Forgejo mirror — no per-run GitHub-release installers (429-flaky).
 
       - name: Authenticate the module fetch (foundry star module, private origin)
