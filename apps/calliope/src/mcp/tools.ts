@@ -14,7 +14,12 @@
  * {@link UraniaBodyClient}. No model is reimplemented here.
  */
 
-import type { BodyClient, Section, SectionInput } from "../types.js";
+import type {
+  BodyClient,
+  RevisionMeta,
+  Section,
+  SectionInput,
+} from "../types.js";
 
 /** A section as the MCP returns it (the lib {@link Section} shape, verbatim). */
 export interface ToolSection {
@@ -43,6 +48,17 @@ export interface AppendSectionResult {
 /** `edit_section` result: the (copy-on-write) section after the edit. */
 export interface EditSectionResult {
   section: ToolSection;
+}
+
+/** `read_body_revisions` result: the body's write-events, newest first. */
+export interface ReadBodyRevisionsResult {
+  revisions: RevisionMeta[];
+}
+
+/** `read_body_at` result: the body's sections as of a write-event. */
+export interface ReadBodyAtResult {
+  revision: string;
+  sections: ToolSection[];
 }
 
 function toToolSection(s: Section): ToolSection {
@@ -127,4 +143,45 @@ export async function editSection(
   }
   const section = await client.editSection(nodeId, sectionId, text);
   return { section: toToolSection(section) };
+}
+
+/**
+ * read_body_revisions(node_id, limit?) -> { revisions } — the body's stored
+ * write-events, newest first (A8's history surface). Requires a
+ * {@link BodyClient} implementing the optional `readRevisions`; rejects with
+ * a clear error otherwise (mirrors the `edit_section` guard).
+ */
+export async function readBodyRevisions(
+  client: BodyClient,
+  nodeId: string,
+  limit?: number,
+): Promise<ReadBodyRevisionsResult> {
+  if (client.readRevisions === undefined) {
+    throw new Error(
+      "read_body_revisions: the configured body backend does not support " +
+        "revision reads (no readRevisions method).",
+    );
+  }
+  const revisions = await client.readRevisions(nodeId, limit);
+  return { revisions };
+}
+
+/**
+ * read_body_at(node_id, revision) -> { revision, sections } — the body
+ * reconstructed as of the write-event `revision` (a value returned by
+ * `read_body_revisions`). A revision predating the body yields `[]`.
+ */
+export async function readBodyAt(
+  client: BodyClient,
+  nodeId: string,
+  revision: string,
+): Promise<ReadBodyAtResult> {
+  if (client.readRevisionAt === undefined) {
+    throw new Error(
+      "read_body_at: the configured body backend does not support " +
+        "revision reads (no readRevisionAt method).",
+    );
+  }
+  const sections = await client.readRevisionAt(nodeId, revision);
+  return { revision, sections: sections.map(toToolSection) };
 }

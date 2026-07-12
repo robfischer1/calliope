@@ -20,7 +20,14 @@ import { z } from "zod";
 import type { BodyClient } from "../types.js";
 import type { DocumentStore } from "../document-store.js";
 import type { RevisionStore } from "../revision-store.js";
-import { appendSection, editSection, readBody, writeBody } from "./tools.js";
+import {
+  appendSection,
+  editSection,
+  readBody,
+  readBodyAt,
+  readBodyRevisions,
+  writeBody,
+} from "./tools.js";
 
 /**
  * Adapt a typed tool result to the MCP SDK's `structuredContent` slot, which
@@ -156,6 +163,68 @@ export function createServer(
       return {
         content: [
           { type: "text", text: `Edited section ${result.section.id}.` },
+        ],
+        structuredContent: structured(result),
+      };
+    },
+  );
+
+  server.registerTool(
+    "read_body_revisions",
+    {
+      title: "List a body's revisions",
+      description:
+        "List a plan node body's stored write-events (copy-on-write lineage), " +
+        "newest first — each coarse save and each single-section edit is one " +
+        "event. Returns { revisions: [{ revision, kind, authoredBy, " +
+        "sections }] }. Read-only.",
+      inputSchema: {
+        node_id: z.string().describe("The node whose history to list."),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Max events to return (default 50, newest first)."),
+      },
+    },
+    async ({ node_id, limit }) => {
+      const result = await readBodyRevisions(client, node_id, limit);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${String(result.revisions.length)} revision(s).`,
+          },
+        ],
+        structuredContent: structured(result),
+      };
+    },
+  );
+
+  server.registerTool(
+    "read_body_at",
+    {
+      title: "Read a body at a revision",
+      description:
+        "Reconstruct a plan node's body as it stood at a write-event returned " +
+        "by read_body_revisions. Returns { revision, sections }; a revision " +
+        "predating the body returns an empty list. Read-only.",
+      inputSchema: {
+        node_id: z.string().describe("The node whose body to reconstruct."),
+        revision: z
+          .string()
+          .describe("The write-event timestamp (from read_body_revisions)."),
+      },
+    },
+    async ({ node_id, revision }) => {
+      const result = await readBodyAt(client, node_id, revision);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${String(result.sections.length)} section(s) at ${result.revision}.`,
+          },
         ],
         structuredContent: structured(result),
       };
