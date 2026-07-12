@@ -1,43 +1,8 @@
-# MANAGED BY FOUNDRY (infra/ci.tf, kind=frontend) — do not hand-edit.
-# Central definition: foundry/infra/ci-templates/frontend/ci.yml. A hand edit is
-# drift; the next core apply restores this file.
-#
-# ci.yml — PR gate for a front-end star. Runs IN stellar_core:frontend-ci (bun +
-# the React/Vite/vitest lint/format/typecheck toolchain warm in bun's install
-# cache + opengrep — all baked), so the gate installs NOTHING at job time. No
-# build or deploy here — that lives in the per-star deploy workflow. Migrated off
-# furnace into the Tofu pour so one engine owns the frontend leaf's CI.
-
+# Caller stub (Flame pull-CI, frontend) — logic in foundry/foundry-stocks; invariant, copier-shipped.
 name: ci
-
 on:
   pull_request:
-
 jobs:
-  gate:
-    runs-on: nas01
-    container:
-      image: forgejo.notusmi.com/rob/stellar_core:frontend-ci
-    steps:
-      - uses: https://github.com/actions/checkout@v4
-
-      # `bun run gate` is the SAME script the husky pre-commit hook runs, so the
-      # local gate and CI can't drift (format:check / lint / typecheck / test / build).
-      # bun is baked into the frontend-ci image — no setup step.
-      - name: Gate — format / lint / typecheck / test / build
-        run: |
-          bun install --frozen-lockfile
-          bun run gate
-
-      # bun audit BLOCKS on a HIGH+ advisory. NOTE: unlike `pnpm audit --prod`,
-      # bun has no prod-only scope -- this also scans dev deps (vitest, etc.).
-      - name: Dependency vuln scan (bun audit)
-        run: bun audit --audit-level=high
-
-      # opengrep is baked into the frontend-ci image (no install). It runs the
-      # vendored TS taint ruleset (rules/sast), a BLOCKING gate while tuned.
-      # LANG forces UTF-8: opengrep reads under the C locale otherwise.
-      - name: SAST (opengrep, scoped taint rules)
-        run: |
-          export LANG=C.UTF-8 LC_ALL=C.UTF-8
-          opengrep scan --config rules/sast --error .
+  ci:
+    uses: foundry/foundry-stocks/.forgejo/workflows/frontend-ci.yml@main
+    secrets: inherit
