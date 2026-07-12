@@ -17,7 +17,12 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { Pool } from "pg";
-import type { BodyClient, Section, SectionInput } from "./types.js";
+import type {
+  BodyClient,
+  RevisionMeta,
+  Section,
+  SectionInput,
+} from "./types.js";
 import type { AuthoredBy } from "./urania-client.js";
 import { sequence } from "./order-key.js";
 
@@ -165,6 +170,74 @@ export class PgBodyClient implements BodyClient {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * List the body's write-events, newest first (A8 — the history surface).
+   * One event = one distinct `created_at` (rows written in one transaction
+   * share it). `kind` is `"save"` when the event minted a fresh generation
+   * (any row with `supersedes IS NULL`), `"edit"` for a single-section
+   * copy-on-write edit. Reconstruction needs no schema change — the lineage
+   * columns (`supersedes`, `created_at`, `authored_by`) already carry it.
+   */
+  async readRevisions(nodeId: string, limit = 50): Promise<RevisionMeta[]> {
+    const res = await this.#pool.query<{
+      revision: string;
+      is_save: boolean;
+      authored_by: string;
+      sections: number;
+    }>(
+      `SELECT to_char(created_at AT TIME ZONE 'UTC',
+                      'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS revision,
+              bool_or(supersedes IS NULL) AS is_save,
+              max(authored_by) AS authored_by,
+              count(*)::int AS sections
+         FROM sections
+        WHERE node_id = $1
+        GROUP BY created_at
+        ORDER BY created_at DESC
+        LIMIT $2`,
+      [nodeId, limit],
+    );
+    return res.rows.map((r) => ({
+      revision: r.revision,
+      kind: r.is_save ? "save" : "edit",
+      authoredBy: r.authored_by,
+      sections: r.sections,
+    }));
+  }
+
+  /**
+   * Reconstruct the body as of the write-event `revision` (an ISO timestamp
+   * from {@link readRevisions}): take the latest fresh generation at or
+   * before T (`supersedes IS NULL` rows), then let edit chains created at or
+   * before T win over the rows they supersede. A revision predating the
+   * body's first save yields `[]`.
+   */
+  async readRevisionAt(nodeId: string, revision: string): Promise<Section[]> {
+    const res = await this.#pool.query<SectionRow>(
+      `WITH gen AS (
+         SELECT max(created_at) AS t0 FROM sections
+          WHERE node_id = $1 AND supersedes IS NULL AND created_at <= $2
+       )
+       SELECT s.id, s.text, s.order_key
+         FROM sections s, gen
+        WHERE s.node_id = $1
+          AND s.created_at <= $2
+          AND s.created_at >= gen.t0
+          AND NOT EXISTS (
+            SELECT 1 FROM sections r
+             WHERE r.node_id = $1 AND r.supersedes = s.id
+               AND r.created_at <= $2
+          )
+        ORDER BY s.order_key COLLATE "C", s.id`,
+      [nodeId, revision],
+    );
+    return res.rows.map((r) => ({
+      id: r.id,
+      text: r.text,
+      orderKey: r.order_key,
+    }));
   }
 
   /**

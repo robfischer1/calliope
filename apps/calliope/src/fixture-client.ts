@@ -1,4 +1,9 @@
-import type { BodyClient, Section, SectionInput } from "./types.js";
+import type {
+  BodyClient,
+  RevisionMeta,
+  Section,
+  SectionInput,
+} from "./types.js";
 import { compareKeys, sequence } from "./order-key.js";
 
 /** An in-memory section row, mirroring the substrate's `{ text, order_key }`. */
@@ -8,25 +13,38 @@ interface FixtureSection {
   orderKey: string;
 }
 
+/** One recorded write-event: the body snapshot after it landed (A8 history). */
+interface FixtureRevision {
+  revision: string;
+  kind: "save" | "edit";
+  sections: number;
+  snapshot: FixtureSection[];
+}
+
 /**
  * In-memory {@link BodyClient}. Sections are kept per `nodeId`; this is the
  * default for standalone dev and for Tantalus today — fully working, no wire.
  *
  * It models the substrate semantics it can: a coarse save relays a fresh
  * fractional `order_key` sequence, mints a placement id per section, and reads
- * back sorted by `orderKey` (COLLATE "C"). It does *not* model copy-on-write
- * versioning — that is a substrate concern with no observable effect through the
- * {@link BodyClient} read/save contract.
+ * back sorted by `orderKey` (COLLATE "C"). Copy-on-write versioning is modeled
+ * ONLY as far as the A8 history surface observes it: each save/edit records a
+ * write-event with a post-event snapshot, so `readRevisions`/`readRevisionAt`
+ * behave like the sovereign store's lineage reconstruction (strictly
+ * increasing event timestamps, save vs edit kinds, as-of reads).
  */
 export class FixtureBodyClient implements BodyClient {
   private readonly bodies = new Map<string, FixtureSection[]>();
+  private readonly revisions = new Map<string, FixtureRevision[]>();
   private seq = 0;
+  private lastEventMs = 0;
 
   /** Seed a node's body up front (e.g. for stories / standalone demo). */
   constructor(seed?: Record<string, readonly SectionInput[]>) {
     if (seed) {
       for (const [nodeId, sections] of Object.entries(seed)) {
         this.bodies.set(nodeId, this.materialize(nodeId, sections));
+        this.record(nodeId, "save");
       }
     }
   }
@@ -41,6 +59,7 @@ export class FixtureBodyClient implements BodyClient {
 
   saveBody(nodeId: string, sections: SectionInput[]): Promise<void> {
     this.bodies.set(nodeId, this.materialize(nodeId, sections));
+    this.record(nodeId, "save");
     return Promise.resolve();
   }
 
@@ -73,11 +92,60 @@ export class FixtureBodyClient implements BodyClient {
       nodeId,
       rows.map((r) => (r.id === sectionId ? next : r)),
     );
+    this.record(nodeId, "edit");
     return Promise.resolve({
       id: next.id,
       text: next.text,
       orderKey: next.orderKey,
     });
+  }
+
+  /** List write-events newest first — the fixture half of the A8 contract. */
+  readRevisions(nodeId: string, limit = 50): Promise<RevisionMeta[]> {
+    const events = this.revisions.get(nodeId) ?? [];
+    return Promise.resolve(
+      [...events]
+        .reverse()
+        .slice(0, limit)
+        .map((e) => ({
+          revision: e.revision,
+          kind: e.kind,
+          authoredBy: "human",
+          sections: e.sections,
+        })),
+    );
+  }
+
+  /** The body as of `revision` — the snapshot the event recorded. */
+  readRevisionAt(nodeId: string, revision: string): Promise<Section[]> {
+    const events = this.revisions.get(nodeId) ?? [];
+    // The body at T = the latest event at or before T (ISO strings compare
+    // lexicographically); before the first event there was no body.
+    let snapshot: FixtureSection[] = [];
+    for (const e of events) {
+      if (e.revision <= revision) snapshot = e.snapshot;
+      else break;
+    }
+    return Promise.resolve(
+      [...snapshot]
+        .sort((a, b) => compareKeys(a.orderKey, b.orderKey))
+        .map((r) => ({ id: r.id, text: r.text, orderKey: r.orderKey })),
+    );
+  }
+
+  /** Record a write-event with a strictly-increasing ISO timestamp. */
+  private record(nodeId: string, kind: "save" | "edit"): void {
+    const now = Math.max(Date.now(), this.lastEventMs + 1);
+    this.lastEventMs = now;
+    const snapshot = (this.bodies.get(nodeId) ?? []).map((r) => ({ ...r }));
+    const events = this.revisions.get(nodeId) ?? [];
+    events.push({
+      revision: new Date(now).toISOString(),
+      kind,
+      sections: kind === "edit" ? 1 : snapshot.length,
+      snapshot,
+    });
+    this.revisions.set(nodeId, events);
   }
 
   private materialize(

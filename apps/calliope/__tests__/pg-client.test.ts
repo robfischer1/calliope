@@ -142,6 +142,60 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     expect((await client.readBody("twin-ulid")).at(0)?.text).toBe("diverged");
   });
 
+  it("readRevisions lists write-events newest first with kinds (A8)", async () => {
+    await client.saveBody("node-r", [{ text: "r1-a" }, { text: "r1-b" }]);
+    const v1 = await client.readBody("node-r");
+    const target = v1.at(1);
+    if (target === undefined) throw new Error("fixture body missing");
+    await client.editSection("node-r", target.id, "r1-b-edited");
+    await client.saveBody("node-r", [{ text: "r2-only" }]);
+
+    const revs = await client.readRevisions("node-r");
+    expect(revs.map((r) => r.kind)).toEqual(["save", "edit", "save"]);
+    expect(revs.map((r) => r.sections)).toEqual([1, 1, 2]);
+    expect(revs.every((r) => r.authoredBy === "human")).toBe(true);
+    // Newest first, strictly descending.
+    const stamps = revs.map((r) => r.revision);
+    expect([...stamps].sort().reverse()).toEqual(stamps);
+  });
+
+  it("readRevisionAt reconstructs each moment of the lineage (A8)", async () => {
+    await client.saveBody("node-s", [{ text: "s1-a" }, { text: "s1-b" }]);
+    const v1 = await client.readBody("node-s");
+    const target = v1.at(0);
+    if (target === undefined) throw new Error("fixture body missing");
+    await client.editSection("node-s", target.id, "s1-a-edited");
+    await client.saveBody("node-s", [{ text: "s2-x" }, { text: "s2-y" }]);
+
+    const revs = await client.readRevisions("node-s");
+    const [atSave2, atEdit, atSave1] = revs;
+    if (!atSave2 || !atEdit || !atSave1) throw new Error("missing revisions");
+
+    expect(
+      (await client.readRevisionAt("node-s", atSave1.revision)).map(
+        (s) => s.text,
+      ),
+    ).toEqual(["s1-a", "s1-b"]);
+    expect(
+      (await client.readRevisionAt("node-s", atEdit.revision)).map(
+        (s) => s.text,
+      ),
+    ).toEqual(["s1-a-edited", "s1-b"]);
+    expect(
+      (await client.readRevisionAt("node-s", atSave2.revision)).map(
+        (s) => s.text,
+      ),
+    ).toEqual(["s2-x", "s2-y"]);
+    // The latest revision reconstructs to the live body.
+    expect(await client.readRevisionAt("node-s", atSave2.revision)).toEqual(
+      await client.readBody("node-s"),
+    );
+    // A moment before the body existed reconstructs to [].
+    expect(
+      await client.readRevisionAt("node-s", "2000-01-01T00:00:00.000000Z"),
+    ).toEqual([]);
+  });
+
   it("importSection preserves ids and is idempotent; retainOnly converges", async () => {
     const sec = { id: "f".repeat(64), text: "migrated", orderKey: "01" };
     await client.importSection("node-m", sec);

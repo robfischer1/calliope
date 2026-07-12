@@ -129,4 +129,38 @@ export interface BodyClient {
     sectionId: string,
     text: string,
   ): Promise<Section>;
+
+  /**
+   * List the body's stored revisions — the write-events of its copy-on-write
+   * lineage, newest first. Each coarse save and each single-section edit is
+   * one event. Optional for backward compatibility, like {@link editSection}:
+   * a transport without it simply has no history surface.
+   */
+  readRevisions?(nodeId: string, limit?: number): Promise<RevisionMeta[]>;
+
+  /**
+   * Reconstruct the body as it stood at the write-event `revision` (a value
+   * returned by {@link readRevisions}). Resolves to the ordered sections of
+   * that moment; a revision predating the body resolves to `[]`.
+   */
+  readRevisionAt?(nodeId: string, revision: string): Promise<Section[]>;
+}
+
+/**
+ * One write-event in a body's copy-on-write lineage (the A8 history surface).
+ *
+ * - `revision`    — the event's identity: its `created_at` as an ISO-8601 UTC
+ *                   string (one transaction = one event; rows written together
+ *                   share it).
+ * - `kind`        — `"save"` (a coarse save minted a fresh generation) or
+ *                   `"edit"` (a single-section copy-on-write edit).
+ * - `authoredBy`  — the provenance persisted with the event's rows.
+ * - `sections`    — how many section rows the event wrote (a save writes the
+ *                   whole body; an edit writes one).
+ */
+export interface RevisionMeta {
+  revision: string;
+  kind: "save" | "edit";
+  authoredBy: string;
+  sections: number;
 }
