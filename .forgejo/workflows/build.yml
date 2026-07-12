@@ -70,6 +70,11 @@ jobs:
       - name: Publish (sha-pinned) + sign + SBOM
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          # nas01 docker (29.6.1, no buildx plugin) defaults to the legacy
+          # builder - star Dockerfiles use RUN --mount caches, which need BuildKit
+          # asked for explicitly (found 2026-07-11: the poured template's first
+          # aglaia build died on it; the pre-pour repo workflows had set this).
+          DOCKER_BUILDKIT: "1"
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           DTRACK_API_KEY: ${{ secrets.DTRACK_API_KEY }}
