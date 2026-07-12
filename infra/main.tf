@@ -269,4 +269,3 @@ variable "pistis" {
   })
   default = null
 }
-
