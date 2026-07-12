@@ -101,6 +101,14 @@ export class IndexingBodyClient implements BodyClient {
     sectionId: string,
     text: string,
   ) => Promise<Section>;
+  /** A8: the optional revision reads pass straight through (no index push —
+   * they are reads). Conditional assignment preserves the capability signal:
+   * an inner client without them keeps them `undefined` here, so the tool
+   * layer's support guard stays honest. Found live 2026-07-11: the deployed
+   * pg backend is ALWAYS wrapped by this decorator, which silently hid the
+   * new verbs ("no readRevisions method") while the bare-client tests passed. */
+  readonly readRevisions?: BodyClient["readRevisions"];
+  readonly readRevisionAt?: BodyClient["readRevisionAt"];
 
   constructor(
     private readonly inner: BodyClient,
@@ -115,6 +123,8 @@ export class IndexingBodyClient implements BodyClient {
         return section;
       };
     }
+    this.readRevisions = inner.readRevisions?.bind(inner);
+    this.readRevisionAt = inner.readRevisionAt?.bind(inner);
   }
 
   readBody(nodeId: string): Promise<Section[]> {
