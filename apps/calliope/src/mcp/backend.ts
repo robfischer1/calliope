@@ -187,3 +187,6 @@ export async function initBackend(backend: Backend): Promise<void> {
     await backend.revisions.ensureSchema();
   }
 }
+
+// CI rake (2026-07-12): build.yml paths-ignore means an EMPTY commit spawns
+// no run — a rebuild trigger needs a real diff outside md/.forgejo/infra.
