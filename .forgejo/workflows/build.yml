@@ -1,44 +1,57 @@
-# MANAGED BY FOUNDRY (infra/ci.tf, Smaller Hammers F5/F6) — do not hand-edit.
-# Central definition: foundry/infra/ci-templates/build.yml (re-sourced from the
-# furnace ci-build-deploy pour generation: OCI labels, sha-pin, tier-1 base).
-# A hand edit is drift; the next core apply restores this file.
+# MANAGED BY FOUNDRY (infra/ci.tf, kind=bun-star) — do not hand-edit.
+# Central definition: foundry/infra/ci-templates/bun/build.yml. A hand edit is
+# drift; the next core apply restores this file.
 #
-# deploy.yml — build, sha-pin, sign, publish, poured per-star by furnace (composed
-# from the ci-build-deploy block). A top-level workflow on: push to main (branch-gated,
-# so a feature-branch push never fires a hollow no-op) — re-runs the gate, then builds,
-# labels, sha-tags, Trivy-scans, pushes + cosign-signs the image. The container
-# LIFECYCLE stays Tofu-managed (foundry); CI only publishes the image. Secrets
-# (REGISTRY_TOKEN / COSIGN_* / DATABASE_URL) are the star's own repo secrets. A
-# non-deploying SDD repo drops this file via a per-consumer override. Retires the
-# copied per-repo deploy.yml.
+# The BUN star build pipeline (the bun-star lane, 2026-07-11): the gate runs as
+# its own job in stellar_core:frontend-ci (bun + the FE toolchain baked — the
+# python-ci image bakes uv, NOT bun; the standard build.yml's language-detected
+# bun lane dies there with `bun: command not found`, found on calliope's first
+# post-pour build), then the language-agnostic publish half (build → label →
+# sha-pin → push → cosign sign → SBOM attest → Dependency-Track → auto-bump
+# deploy PR) runs gated on it, byte-carried from ci-templates/go/build.yml.
 
 name: build
 
 on:
   push:
     branches: [main]
-    # Only CODE changes rebuild the image. A CI-file re-pour (.forgejo/**) or a
-    # deploy-spec change (infra/**, deploy.yml's domain) must NOT trigger a rebuild —
-    # that flooded the 2 runners on a fleet-wide ci.tf pour (18 needless builds).
     paths-ignore:
       - "**.md"
       - ".forgejo/**"
       - "infra/**"
 
 jobs:
-  build:
-    name: Build, sha-pin, sign, publish
-    # Its own workflow (deploy.yml, on: push: branches:[main]) — the trigger branch-gates
-    # it, so it only ever fires on a push to main. No event conditional needed.
+  gate:
+    name: bun gate (format / lint / typecheck / test / build / audit)
     runs-on: nas01
     defaults:
       run:
         shell: bash
     container:
-      # python-ci = the python CI toolchain baked once (bases/python-ci/,
-      # forged + cosign-signed by build-base.yml): uv, cosign, oras, syft, opengrep,
-      # conftest, tofu, jq. No build step curls GitHub/astral (those installers
-      # 429-flaked star CI). cosign/oras are built from source (trivy-clean).
+      image: forgejo.notusmi.com/rob/stellar_core:frontend-ci
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+
+      # `bun run gate` is the SAME script the husky pre-commit hook runs, so
+      # the local gate and CI can't drift.
+      - name: Gate — format / lint / typecheck / test / build
+        run: |
+          bun install --frozen-lockfile
+          bun run gate
+
+      # bun audit BLOCKS on a HIGH+ advisory (scans dev deps too — bun has no
+      # prod-only scope).
+      - name: Dependency vuln scan (bun audit)
+        run: bun audit --audit-level=high
+
+  build:
+    name: Build, sha-pin, sign, publish
+    needs: gate
+    runs-on: nas01
+    defaults:
+      run:
+        shell: bash
+    container:
       image: forgejo.notusmi.com/rob/stellar_core:python-ci
       options: --network host
       volumes:
@@ -49,39 +62,7 @@ jobs:
       - name: Load tool versions
         run: grep -E '^[A-Z_]+=' .forgejo/versions.env >> "$GITHUB_ENV"
 
-      # uv / bun / opengrep / cosign / syft are baked into the python-ci image
-      # from the local Forgejo mirror — no per-build installers (no GitHub/astral
-      # 429). The Gate is LANGUAGE-DETECTED: a bun star (package.json + bun.lock)
-      # runs the bun gate; every other repo keeps the python (uv) gate byte-for-
-      # byte, so a re-pour leaves python stars behaviourally unchanged.
-
-      - name: Gate — lint / type / test (deploy only on green)
-        run: |
-          if [ -f package.json ] && [ -f bun.lock ]; then
-            bun install --frozen-lockfile
-            bun run format:check
-            bun run lint
-            bun run typecheck
-            bun run test
-          else
-            uv sync --all-extras --locked
-            uv run pre-commit run --all-files --show-diff-on-failure
-            uv run mypy src tests
-            uv run pyright
-            uv run pytest -q
-          fi
-
-      - name: Dependency vuln scan
-        run: |
-          if [ -f package.json ] && [ -f bun.lock ]; then
-            bun audit --audit-level=high
-          else
-            uv run --with pip-audit pip-audit
-          fi
-
       - name: SAST (opengrep, scoped taint rules)
-        # opengrep is baked into the python-ci image (from the Forgejo mirror) —
-        # no per-build install, no GitHub rate-limit flake.
         run: |
           export LANG=C.UTF-8 LC_ALL=C.UTF-8
           opengrep scan --config rules/sast --error .
@@ -91,27 +72,16 @@ jobs:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DTRACK_API_KEY: ${{ secrets.DTRACK_API_KEY }}
         run: |
           set -euo pipefail
-          # cosign + syft are baked into the python-ci image (Forgejo mirror).
           echo "${REGISTRY_TOKEN}" | docker login forgejo.notusmi.com -u rob --password-stdin
-          # Compose-OPTIONAL build (Smaller Hammers decentralization): a decentralized
-          # Image name: some stars publish a non-repo-name image, so read it from the
-          # compose recipe if present (grep only — NO docker compose: it is a vestigial
-          # build hint, tofu owns deploy); else the fleet convention. Build is straight
-          #  with BuildKit via buildx (the Dockerfiles use RUN --mount).
-          IMG=""
-          for f in compose.yaml compose.yml docker-compose.yml; do
-            [ -f "$f" ] && { IMG=$(grep -oE 'forgejo\.notusmi\.com/rob/[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?' "$f" | head -1); break; }
-          done
-          [ -n "$IMG" ] || IMG="forgejo.notusmi.com/rob/${GITHUB_REPOSITORY##*/}:latest"
-          case "$IMG" in *:*) ;; *) IMG="$IMG:latest";; esac
+          # A decentralized Go star's runtime source of truth is infra/terraform.tfvars
+          # — no compose file; the image is the fleet-invariant name, context '.'.
+          IMG="forgejo.notusmi.com/rob/${GITHUB_REPOSITORY##*/}:latest"
           docker build --network=host -t "$IMG" .
-          # Stamp standard OCI provenance labels (a labels-only layer). Without a
-          # tagged, labelled image the registry blob-GC reaps untagged manifests and
-          # any @sha256 pin dangles (the 2026-07-02 chaos/clio/nyx/terpsichore incident).
-          # revision ties the image back to its commit; the sha-tag below keeps it tagged.
+          # Stamp standard OCI provenance labels (a labels-only layer) — without a
+          # tagged, labelled image the registry blob-GC reaps untagged manifests.
           CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           SRC="${GITHUB_SERVER_URL:-https://forgejo.notusmi.com}/${GITHUB_REPOSITORY}"
           echo "FROM $IMG" | docker build -t "$IMG" \
@@ -122,17 +92,8 @@ jobs:
             --label "org.opencontainers.image.title=${GITHUB_REPOSITORY##*/}" \
             --label "org.opencontainers.image.url=${SRC}" \
             -
-          # Per-build full-image Trivy scan RETIRED (CI cost + hygiene pass): the base
-          # is scanned + weekly-rescanned at base-build; app python deps already gate via
-          # pip-audit above; Renovate keeps deps current. (Stars don't feed Dependency-
-          # Track — they're pure pip on the scanned base, so their SBOM only re-monitors
-          # base packages base-scan already covers; DT stays frontend-only.) Trivy was
-          # the CI CPU/IO hog — this is the sustained-cost fix.
-          # sha-pin (Decision #12): tag {name}:<short-sha> alongside :latest, push both.
           SHA_TAG="${IMG%:*}:${GITHUB_SHA:0:12}"
           docker tag "$IMG" "$SHA_TAG"
-          # Push :latest by ref (compose-independent — `docker compose push` needs a
-          # compose file; `docker push "$IMG"` is the same push and works either way).
           docker push "$IMG"
           docker push "$SHA_TAG"
           DIGEST=$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "$IMG" | grep '^forgejo.notusmi.com/' | head -1)
@@ -143,22 +104,19 @@ jobs:
           syft "$IMG" -o cyclonedx-json > /tmp/sbom.cdx.json
           cosign attest --key /tmp/cosign.key --type cyclonedx --predicate /tmp/sbom.cdx.json --yes "$DIGEST"
           cosign verify --key cosign.pub "$DIGEST"
-          # The digest is the deploy's pin target -- hephaestus/infra references @sha256:...
+          # Continuous vuln monitoring: SBOM → Dependency-Track (re-evaluated against
+          # new advisories, no rebuild). Non-fatal + self-skips until the key exists.
+          if [ -n "${DTRACK_API_KEY:-}" ]; then
+            PROJ="${IMG##*/}"; PROJ="${PROJ%:*}"
+            printf '{"projectName":"%s","projectVersion":"latest","autoCreate":true,"bom":"%s"}' "$PROJ" "$(base64 -w0 /tmp/sbom.cdx.json)" > /tmp/dt-bom.json
+            docker run --rm -i --network host curlimages/curl:latest -s -X PUT http://127.0.0.1:30181/api/v1/bom -H "Content-Type: application/json" -H "X-Api-Key: ${DTRACK_API_KEY}" --data-binary @- -o /dev/null -w 'DT upload HTTP %{http_code}\n' < /tmp/dt-bom.json || echo "DT upload failed (non-fatal)"
+          else
+            echo "DTRACK_API_KEY unset — skipping Dependency-Track upload (provision it to enable monitoring)"
+          fi
           echo "DEPLOY_DIGEST=$DIGEST" | tee /tmp/deploy-digest
           docker logout forgejo.notusmi.com
 
       - name: Open a deploy PR — auto-bump the image pin (decentralized stars)
-        # The digest just built + signed + SBOM-attested IS the deploy's pin. Instead
-        # of a human re-deriving the bump each session, write it as a machine-owned
-        # auto-tfvars on a deploy branch and open a PR — deploy.yml's plan-on-PR
-        # (paths: infra/**) is the review gate, merge applies. tofu auto-loads
-        # *.auto.tfvars.json and it OVERRIDES terraform.tfvars, so the operator's spec
-        # stays sovereign and the digest is clearly build-owned data (mirrors
-        # secrets.auto.tfvars.json). PR-gated by design — never pushes to main.
-        # Skipped for a repo with no infra/ (a non-deploying SDD star). Uses the
-        # contents API (like forgejo-put-file), not git, to sidestep the checkout
-        # auth-header dance; DEPLOY_TOKEN is a real PAT so the PR fires deploy.yml
-        # (a push made with the Actions token would be event-suppressed).
         env:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
         run: |
@@ -179,8 +137,6 @@ jobs:
           FILE_API="${APIREPO}/contents/infra/image.auto.tfvars.json"
           CONTENT_B64=$(jq -n --arg img "$DIGEST" '{image: $img}' | base64 -w0)
           MSG="deploy(${REPO}): pin image @ ${SHORT}"
-          # Create-or-update on a NEW deploy branch (contents API cuts new_branch from
-          # main); a prior deploy left the file on main -> update needs its sha.
           SHA=$(curl -sS -H "$AUTH" "${FILE_API}?ref=main" | jq -r '.sha // ""')
           if [ -n "$SHA" ]; then
             METHOD=PUT
@@ -194,7 +150,6 @@ jobs:
           wcode=$(printf '%s' "$BODY" | curl -sS -o /dev/null -w '%{http_code}' \
             -X "$METHOD" -H "$AUTH" -H "Content-Type: application/json" --data-binary @- "$FILE_API")
           case "$wcode" in 200 | 201) : ;; *) echo "pin-bump write HTTP $wcode" >&2; exit 1 ;; esac
-          # Open the deploy PR (a real PAT -> deploy.yml's pull_request trigger fires).
           PRBODY="Auto-bump the image pin to the digest just built, signed, and SBOM-attested. Merging applies — deploy.yml posts the plan on this PR. Digest: ${DIGEST}"
           jq -n --arg h "$BRANCH" --arg t "$MSG" --arg b "$PRBODY" \
              '{head: $h, base: "main", title: $t, body: $b}' \
