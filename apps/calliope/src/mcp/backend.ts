@@ -128,6 +128,13 @@ export function makeBodyClient(
  * fails the boot loudly instead of failing the first request.
  */
 export async function initBodyClient(client: BodyClient): Promise<void> {
+  // Unwrap the index-push decorator: the production pg client is ALWAYS
+  // wrapped, and the schema bootstrap must reach the bare store (found live
+  // 2026-07-12 — the A11 tombstone migration never applied at boot).
+  if (client instanceof IndexingBodyClient) {
+    await initBodyClient(client.inner);
+    return;
+  }
   if (client instanceof PgBodyClient) {
     await client.ensureSchema();
   }

@@ -114,7 +114,11 @@ export class IndexingBodyClient implements BodyClient {
   readonly applySectionOps?: BodyClient["applySectionOps"];
 
   constructor(
-    private readonly inner: BodyClient,
+    /** The wrapped client — PUBLIC so boot-time init (ensureSchema) can
+     *  unwrap the decorator (found live 2026-07-12: the pg client is ALWAYS
+     *  wrapped in production, so an instanceof check on the wrapper never
+     *  saw PgBodyClient and ensureSchema silently never ran). */
+    readonly inner: BodyClient,
     private readonly index: IndexPusher,
   ) {
     // Bind to `inner` so the extracted method keeps its receiver.
