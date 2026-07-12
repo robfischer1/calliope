@@ -1,9 +1,12 @@
 import type {
+  AppliedOp,
+  ApplySectionOpsResult,
   BlockOp,
   BlockOpEmitter,
   BodyClient,
   Section,
   SectionInput,
+  SectionOp,
 } from "./types.js";
 import { compareKeys, sequence } from "./order-key.js";
 
@@ -354,5 +357,167 @@ export class UraniaBodyClient implements BodyClient {
     });
 
     return { id, text, orderKey: target.orderKey };
+  }
+
+  /**
+   * A11 block-grain transactional apply — ONE capture batch (atomic at the
+   * substrate), the editor's ops carried as-is. Per-op substrate semantics:
+   *
+   * - `update`  — the {@link editSection} copy-on-write (fresh version node,
+   *               `hasPart` rewired; key kept unless the op carries one);
+   * - `add`     — mint a section node with the CALLER's `order_key`;
+   * - `delete`  — unwire `hasPart` (the node stays as history);
+   * - `reorder` — move the `order_key` edge in place (node id stable).
+   *
+   * Block-ops emit 1:1 with the applied ops — no derivation heuristics. A
+   * stale or duplicated `sectionId` rejects the WHOLE batch (`stale_section`
+   * / malformed), nothing captured.
+   */
+  async applySectionOps(
+    nodeId: string,
+    ops: SectionOp[],
+    authoredBy: AuthoredBy = "human",
+  ): Promise<ApplySectionOpsResult> {
+    const referenced = ops.flatMap((op) =>
+      op.op === "add" ? [] : [op.sectionId],
+    );
+    if (new Set(referenced).size !== referenced.length) {
+      throw new Error(
+        `applySectionOps: duplicate section id in batch for node ${nodeId}.`,
+      );
+    }
+    const current = await this.readBody(nodeId);
+    const byId = new Map(current.map((s) => [s.id, s]));
+    for (const id of referenced) {
+      if (!byId.has(id)) {
+        throw new Error(
+          `stale_section: section ${id} is not part of node ${nodeId}.`,
+        );
+      }
+    }
+
+    const uops: UraniaOp[] = [];
+    const applied: AppliedOp[] = [];
+    const blockOps: BlockOp[] = [];
+    const ts = this.timestamp();
+    let post = [...current];
+
+    for (const op of ops) {
+      if (op.op === "add") {
+        const id = this.capture.mintSectionId(nodeId);
+        uops.push({ op: "createNode", id, hasType: SECTION_TYPE });
+        uops.push({ op: "addEdge", from: id, predicate: TEXT, to: op.text });
+        uops.push({
+          op: "addEdge",
+          from: id,
+          predicate: ORDER_KEY,
+          to: op.orderKey,
+        });
+        uops.push({ op: "addEdge", from: nodeId, predicate: HAS_PART, to: id });
+        post.push({ id, text: op.text, orderKey: op.orderKey });
+        applied.push({ id, orderKey: op.orderKey });
+        blockOps.push({
+          block_id: id,
+          op_type: "add",
+          content_delta: op.text,
+          order_key: op.orderKey,
+          timestamp: ts,
+          authored_by: authoredBy,
+          node_id: nodeId,
+        });
+        continue;
+      }
+      const target = byId.get(op.sectionId);
+      if (target === undefined) {
+        // Unreachable (validated above); throwing keeps `applied` aligned.
+        throw new Error(
+          `stale_section: section ${op.sectionId} vanished mid-batch.`,
+        );
+      }
+      if (op.op === "update") {
+        const id = this.capture.mintSectionId(nodeId);
+        const orderKey = op.orderKey ?? target.orderKey;
+        uops.push({ op: "createNode", id, hasType: SECTION_TYPE });
+        uops.push({ op: "addEdge", from: id, predicate: TEXT, to: op.text });
+        uops.push({
+          op: "addEdge",
+          from: id,
+          predicate: ORDER_KEY,
+          to: orderKey,
+        });
+        uops.push({ op: "addEdge", from: nodeId, predicate: HAS_PART, to: id });
+        uops.push({
+          op: "removeEdge",
+          from: nodeId,
+          predicate: HAS_PART,
+          to: target.id,
+        });
+        post = post.map((s) =>
+          s.id === target.id ? { id, text: op.text, orderKey } : s,
+        );
+        applied.push({ id, orderKey });
+        blockOps.push({
+          block_id: id,
+          op_type: "update",
+          content_delta: op.text,
+          order_key: orderKey,
+          timestamp: ts,
+          authored_by: authoredBy,
+          node_id: nodeId,
+        });
+      } else if (op.op === "delete") {
+        uops.push({
+          op: "removeEdge",
+          from: nodeId,
+          predicate: HAS_PART,
+          to: target.id,
+        });
+        post = post.filter((s) => s.id !== target.id);
+        applied.push({ id: target.id, orderKey: target.orderKey });
+        blockOps.push({
+          block_id: target.id,
+          op_type: "delete",
+          content_delta: "",
+          order_key: target.orderKey,
+          timestamp: ts,
+          authored_by: authoredBy,
+          node_id: nodeId,
+        });
+      } else {
+        uops.push({
+          op: "removeEdge",
+          from: target.id,
+          predicate: ORDER_KEY,
+          to: target.orderKey,
+        });
+        uops.push({
+          op: "addEdge",
+          from: target.id,
+          predicate: ORDER_KEY,
+          to: op.orderKey,
+        });
+        post = post.map((s) =>
+          s.id === target.id ? { ...s, orderKey: op.orderKey } : s,
+        );
+        applied.push({ id: target.id, orderKey: op.orderKey });
+        blockOps.push({
+          block_id: target.id,
+          op_type: "reorder",
+          content_delta: "",
+          order_key: op.orderKey,
+          timestamp: ts,
+          authored_by: authoredBy,
+          node_id: nodeId,
+        });
+      }
+    }
+
+    await this.capture.capture(uops, authoredBy);
+    for (const blockOp of blockOps) {
+      await this.emitBlockOp(blockOp);
+    }
+
+    post.sort((a, b) => compareKeys(a.orderKey, b.orderKey));
+    return { sections: post, applied };
   }
 }

@@ -87,6 +87,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
     const names = (listed.result?.tools ?? []).map((t) => t.name).sort();
     expect(names).toEqual([
       "append_section",
+      "apply_section_ops",
       "edit_section",
       "file_revisions",
       "read_body",

@@ -109,6 +109,9 @@ export class IndexingBodyClient implements BodyClient {
    * new verbs ("no readRevisions method") while the bare-client tests passed. */
   readonly readRevisions?: BodyClient["readRevisions"];
   readonly readRevisionAt?: BodyClient["readRevisionAt"];
+  /** A11: the block-grain apply is a write — push after, same as save/edit.
+   *  Conditional assignment preserves the capability signal (the A8 lesson). */
+  readonly applySectionOps?: BodyClient["applySectionOps"];
 
   constructor(
     private readonly inner: BodyClient,
@@ -121,6 +124,14 @@ export class IndexingBodyClient implements BodyClient {
         const section = await edit(nodeId, sectionId, text);
         await this.push(nodeId);
         return section;
+      };
+    }
+    const apply = inner.applySectionOps?.bind(inner);
+    if (apply !== undefined) {
+      this.applySectionOps = async (nodeId, ops) => {
+        const result = await apply(nodeId, ops);
+        await this.push(nodeId);
+        return result;
       };
     }
     this.readRevisions = inner.readRevisions?.bind(inner);
