@@ -27,6 +27,10 @@ terraform {
       source  = "kreuzwerker/docker"
       version = "~> 3.0"
     }
+    infisical = {
+      source  = "infisical/infisical"
+      version = "~> 0.15"
+    }
   }
 }
 
@@ -38,6 +42,32 @@ variable "docker_host" {
 
 provider "docker" {
   host = var.docker_host
+}
+
+# PROVIDER PIVOT: container secrets read declaratively from Calypso
+# via the tofu Infisical provider — no bespoke curl-materialize, no boot-time fetch.
+# Zero-cred: deploy.yml mints a Forgejo OIDC id-token (aud=calypso) into
+# INFISICAL_AUTH_JWT; the provider exchanges it itself for a short-lived Calypso token.
+variable "calypso_identity_id" {
+  description = "The ci-<star> Calypso OIDC identity id (Forgejo var CI_OIDC_IDENTITY_ID). Non-secret."
+  type        = string
+}
+
+provider "infisical" {
+  host = "https://calypso.notusmi.com"
+  auth = {
+    oidc = {
+      identity_id                     = var.calypso_identity_id
+      token_environment_variable_name = "INFISICAL_AUTH_JWT"
+    }
+  }
+}
+
+# The star's own secret folder — only its keys enter this repo's state (least-privilege).
+data "infisical_secrets" "fleet" {
+  env_slug     = "prod"
+  workspace_id = "107e672d-b7bd-4f94-b181-169e02fc7253"
+  folder_path  = "/fleet/${var.name}"
 }
 
 locals {
@@ -81,7 +111,9 @@ module "star" {
   # as a plain env at create (postgres is not a Pistis client), so a DB star's
   # deploy passes it via TF_VAR_secrets (from the repo's own Actions secret) and
   # the ${..._DB_PASSWORD} refs in its tfvars resolve from here.
-  secrets = var.secrets
+  # PIVOT: secrets now come from Calypso via the Infisical provider (was var.secrets,
+  # CI-materialized). The module's ${SECRET} substitution is unchanged.
+  secrets = { for k, v in data.infisical_secrets.fleet.secrets : k => v.value }
 
   # F6: the SPIRE/Calypso identity binding. null = a legacy injected-creds star;
   # set via the foundry-owned infra/pistis.auto.tfvars overlay once the star's
@@ -237,3 +269,4 @@ variable "pistis" {
   })
   default = null
 }
+
