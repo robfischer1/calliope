@@ -5,3 +5,4 @@ export default {
   singleQuote: false,
   trailingComma: "all",
 };
+// build retrigger 2026-07-12T02:31:10Z (Cedar): BuildKit env poured
