@@ -125,6 +125,21 @@ jobs:
               -d "$(jq -nc --arg id "$CALYPSO_IDENTITY_ID" --arg jwt "$OIDC_JWT" '{identityId:$id, jwt:$jwt}')" \
               | jq -r '.accessToken')
             [ -n "$ACCESS" ] && [ "$ACCESS" != null ] || { echo "::error::Calypso oidc-auth login rejected the token"; exit 1; }
+            # PIVOT: hand the OIDC id-token + identity to the tofu Infisical provider
+            # (auth.oidc does its OWN Calypso exchange). Container secrets are read
+            # declaratively by the provider — not curl-materialized. Zero stored cred.
+            echo "::add-mask::${OIDC_JWT}"
+            { echo "INFISICAL_AUTH_JWT=${OIDC_JWT}"; echo "TF_VAR_calypso_identity_id=${CALYPSO_IDENTITY_ID}"; } >> "$GITHUB_ENV"
+            # PIVOT: route tofu provider/module fetches through the Nexus mirror
+            # (nexus.notusmi.com/repository/opentofu) — no public OpenTofu registry dep.
+            { echo 'host "registry.opentofu.org" {'
+              echo '  services = {'
+              echo '    "modules.v1"   = "https://nexus.notusmi.com/repository/opentofu/v1/modules/"'
+              echo '    "providers.v1" = "https://nexus.notusmi.com/repository/opentofu/v1/providers/"'
+              echo '  }'
+              echo '}'
+            } > "${GITHUB_WORKSPACE}/.tofurc"
+            echo "TF_CLI_CONFIG_FILE=${GITHUB_WORKSPACE}/.tofurc" >> "$GITHUB_ENV"
             # 3) read /fleet ONCE into a private 0600 file — values NEVER hit a log.
             FLEET_JSON="$(mktemp)"; chmod 600 "$FLEET_JSON"
             trap 'rm -f "$FLEET_JSON"' EXIT
@@ -259,6 +274,21 @@ jobs:
               -d "$(jq -nc --arg id "$CALYPSO_IDENTITY_ID" --arg jwt "$OIDC_JWT" '{identityId:$id, jwt:$jwt}')" \
               | jq -r '.accessToken')
             [ -n "$ACCESS" ] && [ "$ACCESS" != null ] || { echo "::error::Calypso oidc-auth login rejected the token"; exit 1; }
+            # PIVOT: hand the OIDC id-token + identity to the tofu Infisical provider
+            # (auth.oidc does its OWN Calypso exchange). Container secrets are read
+            # declaratively by the provider — not curl-materialized. Zero stored cred.
+            echo "::add-mask::${OIDC_JWT}"
+            { echo "INFISICAL_AUTH_JWT=${OIDC_JWT}"; echo "TF_VAR_calypso_identity_id=${CALYPSO_IDENTITY_ID}"; } >> "$GITHUB_ENV"
+            # PIVOT: route tofu provider/module fetches through the Nexus mirror
+            # (nexus.notusmi.com/repository/opentofu) — no public OpenTofu registry dep.
+            { echo 'host "registry.opentofu.org" {'
+              echo '  services = {'
+              echo '    "modules.v1"   = "https://nexus.notusmi.com/repository/opentofu/v1/modules/"'
+              echo '    "providers.v1" = "https://nexus.notusmi.com/repository/opentofu/v1/providers/"'
+              echo '  }'
+              echo '}'
+            } > "${GITHUB_WORKSPACE}/.tofurc"
+            echo "TF_CLI_CONFIG_FILE=${GITHUB_WORKSPACE}/.tofurc" >> "$GITHUB_ENV"
             FLEET_JSON="$(mktemp)"; chmod 600 "$FLEET_JSON"
             trap 'rm -f "$FLEET_JSON"' EXIT
             curl -sf -G "${CALYPSO_URL}/api/v3/secrets/raw" \
@@ -316,3 +346,4 @@ jobs:
             -backend-config="conn_str=${PG_CONN_STR}" \
             -backend-config="schema_name=${REPO}"
           tofu -chdir=infra apply -input=false -auto-approve -no-color
+
