@@ -22,6 +22,7 @@ import type { DocumentStore } from "../document-store.js";
 import type { RevisionStore } from "../revision-store.js";
 import {
   appendSection,
+  applySectionOps,
   editSection,
   readBody,
   readBodyAt,
@@ -163,6 +164,78 @@ export function createServer(
       return {
         content: [
           { type: "text", text: `Edited section ${result.section.id}.` },
+        ],
+        structuredContent: structured(result),
+      };
+    },
+  );
+
+  server.registerTool(
+    "apply_section_ops",
+    {
+      title: "Apply block-grain section ops",
+      description:
+        "A11: apply the editor's block-op batch in ONE transaction — add " +
+        "(caller-minted fractional order_key), update (copy-on-write, key " +
+        "kept unless order_key is supplied), delete, reorder. ALL ops apply " +
+        "or none; a stale section_id rejects the whole batch " +
+        "(stale_section) — the compare-before-write race backstop. Returns " +
+        "{ sections, applied } (applied aligned to the ops array).",
+      inputSchema: {
+        node_id: z.string().describe("The node whose body the ops target."),
+        ops: z
+          .array(
+            z.discriminatedUnion("op", [
+              z.object({
+                op: z.literal("add"),
+                text: z.string().describe("The new block's prose."),
+                order_key: z
+                  .string()
+                  .min(1)
+                  .describe(
+                    "Caller-minted fractional key (between neighbors).",
+                  ),
+              }),
+              z.object({
+                op: z.literal("update"),
+                section_id: z.string().describe("The section to rewrite."),
+                text: z.string().describe("The section's new prose."),
+                order_key: z
+                  .string()
+                  .min(1)
+                  .optional()
+                  .describe("Optional new key (an edit+move in one gesture)."),
+              }),
+              z.object({
+                op: z.literal("delete"),
+                section_id: z.string().describe("The section to remove."),
+              }),
+              z.object({
+                op: z.literal("reorder"),
+                section_id: z.string().describe("The section to move."),
+                order_key: z
+                  .string()
+                  .min(1)
+                  .describe("The new fractional key (between neighbors)."),
+              }),
+            ]),
+          )
+          .min(1)
+          .describe(
+            "The op batch, in apply order; at most one op per section.",
+          ),
+      },
+    },
+    async ({ node_id, ops }) => {
+      const result = await applySectionOps(client, node_id, ops);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Applied ${String(ops.length)} op(s); body now ${String(
+              result.sections.length,
+            )} section(s).`,
+          },
         ],
         structuredContent: structured(result),
       };

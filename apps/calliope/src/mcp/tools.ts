@@ -19,6 +19,7 @@ import type {
   RevisionMeta,
   Section,
   SectionInput,
+  SectionOp,
 } from "../types.js";
 
 /** A section as the MCP returns it (the lib {@link Section} shape, verbatim). */
@@ -48,6 +49,21 @@ export interface AppendSectionResult {
 /** `edit_section` result: the (copy-on-write) section after the edit. */
 export interface EditSectionResult {
   section: ToolSection;
+}
+
+/** One `apply_section_ops` op as it rides the wire (snake_case inputs, the
+ *  tool convention). */
+export interface WireSectionOp {
+  op: "add" | "update" | "delete" | "reorder";
+  section_id?: string;
+  text?: string;
+  order_key?: string;
+}
+
+/** `apply_section_ops` result: the post-apply body + per-op alignment. */
+export interface ApplySectionOpsToolResult {
+  sections: ToolSection[];
+  applied: { id: string; orderKey: string }[];
 }
 
 /** `read_body_revisions` result: the body's write-events, newest first. */
@@ -143,6 +159,65 @@ export async function editSection(
   }
   const section = await client.editSection(nodeId, sectionId, text);
   return { section: toToolSection(section) };
+}
+
+/** Decode one wire op into the lib {@link SectionOp}, validating shape. */
+function decodeOp(w: WireSectionOp, i: number): SectionOp {
+  const need = (field: string): never => {
+    throw new Error(
+      `apply_section_ops: op[${String(i)}] (${w.op}) is missing ${field}.`,
+    );
+  };
+  if (w.op === "add") {
+    return {
+      op: "add",
+      text: w.text ?? need("text"),
+      orderKey: w.order_key ?? need("order_key"),
+    };
+  }
+  if (w.op === "update") {
+    return {
+      op: "update",
+      sectionId: w.section_id ?? need("section_id"),
+      text: w.text ?? need("text"),
+      ...(w.order_key !== undefined ? { orderKey: w.order_key } : {}),
+    };
+  }
+  if (w.op === "delete") {
+    return { op: "delete", sectionId: w.section_id ?? need("section_id") };
+  }
+  return {
+    op: "reorder",
+    sectionId: w.section_id ?? need("section_id"),
+    orderKey: w.order_key ?? need("order_key"),
+  };
+}
+
+/**
+ * apply_section_ops(node_id, ops) -> { sections, applied } — the A11
+ * block-grain transactional write. ALL ops apply or none; per-op semantics
+ * are the `edit_section` copy-on-write engine generalized. A stale
+ * `section_id` rejects with a `stale_section` error (the editor's
+ * compare-before-write race backstop). Requires a {@link BodyClient} with
+ * the optional `applySectionOps` (both shipped backends implement it).
+ */
+export async function applySectionOps(
+  client: BodyClient,
+  nodeId: string,
+  ops: WireSectionOp[],
+): Promise<ApplySectionOpsToolResult> {
+  if (client.applySectionOps === undefined) {
+    throw new Error(
+      "apply_section_ops: the configured body backend does not support " +
+        "block-grain applies (no applySectionOps method).",
+    );
+  }
+  const decoded = ops.map((w, i) => decodeOp(w, i));
+  const result = await client.applySectionOps(nodeId, decoded);
+  return {
+    sections: result.sections.map(toToolSection),
+    applied: result.applied.map((a) => ({ id: a.id, orderKey: a.orderKey })),
+  };
 }
 
 /**

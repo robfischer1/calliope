@@ -406,3 +406,95 @@ describe("UraniaBodyClient — block-op transaction log (F3)", () => {
     ).resolves.toBeUndefined();
   });
 });
+
+describe("UraniaBodyClient — applySectionOps (A11)", () => {
+  const prev = process.env.CALLIOPE_URANIA_WIRED;
+  let fake: FakeCapture;
+  let emitter: FakeBlockOpEmitter;
+  let client: UraniaBodyClient;
+
+  beforeEach(async () => {
+    process.env.CALLIOPE_URANIA_WIRED = "1";
+    fake = new FakeCapture();
+    emitter = new FakeBlockOpEmitter();
+    client = new UraniaBodyClient(fake, emitter);
+    await client.saveBody("na", [
+      { text: "alpha" },
+      { text: "beta" },
+      { text: "gamma" },
+    ]);
+    emitter.ops.length = 0; // only observe the apply's emissions
+  });
+  afterEach(() => {
+    if (prev === undefined) delete process.env.CALLIOPE_URANIA_WIRED;
+    else process.env.CALLIOPE_URANIA_WIRED = prev;
+  });
+
+  it("applies a mixed batch in ONE capture; block-ops emit 1:1", async () => {
+    const before = await client.readBody("na");
+    const [alpha, beta, gamma] = before;
+    if (!alpha || !beta || !gamma) throw new Error("fixture body missing");
+    const captureCalls = fake.capturedProvenance.length;
+
+    const { sections, applied } = await client.applySectionOps("na", [
+      { op: "update", sectionId: beta.id, text: "beta edited" },
+      { op: "add", text: "wedged", orderKey: "015" },
+      { op: "reorder", sectionId: gamma.id, orderKey: "005" },
+      { op: "delete", sectionId: alpha.id },
+    ]);
+
+    // ONE capture batch (atomic at the substrate).
+    expect(fake.capturedProvenance.length).toBe(captureCalls + 1);
+    expect(sections.map((s) => s.text)).toEqual([
+      "gamma",
+      "wedged",
+      "beta edited",
+    ]);
+    // Reorder keeps the node id (the edge moves, not the node).
+    expect(applied.at(2)?.id).toBe(gamma.id);
+    // Update mints a fresh version node; delete reports the removed id.
+    expect(applied.at(0)?.id).not.toBe(beta.id);
+    expect(applied.at(3)?.id).toBe(alpha.id);
+    // Block-ops 1:1 with the submitted ops, in order.
+    expect(emitter.ops.map((o) => o.op_type)).toEqual([
+      "update",
+      "add",
+      "reorder",
+      "delete",
+    ]);
+    expect(emitter.ops.at(1)?.content_delta).toBe("wedged");
+    expect(emitter.ops.at(2)?.order_key).toBe("005");
+  });
+
+  it("a stale id rejects the whole batch — nothing captured, nothing emitted", async () => {
+    const before = await client.readBody("na");
+    const alpha = before.at(0);
+    if (alpha === undefined) throw new Error("fixture body missing");
+    const captureCalls = fake.capturedProvenance.length;
+    await expect(
+      client.applySectionOps("na", [
+        { op: "update", sectionId: alpha.id, text: "x" },
+        { op: "reorder", sectionId: "nope", orderKey: "9" },
+      ]),
+    ).rejects.toThrow(/stale_section/);
+    expect(fake.capturedProvenance.length).toBe(captureCalls);
+    expect(emitter.ops).toHaveLength(0);
+    expect((await client.readBody("na")).map((s) => s.text)).toEqual([
+      "alpha",
+      "beta",
+      "gamma",
+    ]);
+  });
+
+  it("a duplicate section id in one batch is rejected as malformed", async () => {
+    const before = await client.readBody("na");
+    const alpha = before.at(0);
+    if (alpha === undefined) throw new Error("fixture body missing");
+    await expect(
+      client.applySectionOps("na", [
+        { op: "update", sectionId: alpha.id, text: "x" },
+        { op: "delete", sectionId: alpha.id },
+      ]),
+    ).rejects.toThrow(/duplicate/);
+  });
+});

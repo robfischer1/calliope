@@ -18,10 +18,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import type {
+  AppliedOp,
+  ApplySectionOpsResult,
   BodyClient,
   RevisionMeta,
   Section,
   SectionInput,
+  SectionOp,
 } from "./types.js";
 import type { AuthoredBy } from "./urania-client.js";
 import { sequence } from "./order-key.js";
@@ -44,6 +47,11 @@ CREATE TABLE IF NOT EXISTS sections (
 );
 CREATE INDEX IF NOT EXISTS sections_node_active
   ON sections (node_id, order_key COLLATE "C") WHERE active;
+-- A11 lineage metadata: a delete op writes a tombstone row (supersedes = the
+-- removed id) so as-of reconstruction sees the removal; tombstones carry no
+-- content and never surface in reads. Idempotent, default false — every
+-- pre-A11 row is a content row.
+ALTER TABLE sections ADD COLUMN IF NOT EXISTS tombstone boolean NOT NULL DEFAULT false;
 `;
 
 /** Mint a section placement id: 64-hex, collision-safe via a random nonce. */
@@ -173,6 +181,125 @@ export class PgBodyClient implements BodyClient {
   }
 
   /**
+   * A11 block-grain transactional apply — ALL ops or none, one write-event
+   * (`now()` is transaction-stable, so every row shares the event stamp).
+   *
+   * Per-op persistence in the sovereign store's lineage model:
+   * - `update`  — the {@link editSection} copy-on-write (fresh id, supersedes
+   *               the old row; key kept unless the op carries one);
+   * - `reorder` — copy-on-write re-placement (same prose, new key, fresh id —
+   *               a placement id names a placement, and a reorder IS one);
+   * - `add`     — a new row with `supersedes = ''` (a lineage row that is NOT
+   *               a generation marker, so as-of reconstruction keeps earlier
+   *               sections);
+   * - `delete`  — deactivate + a TOMBSTONE row superseding the removed id, so
+   *               reconstruction sees the removal at this event.
+   *
+   * A `sectionId` that is not currently active rejects the whole batch with
+   * a `stale_section` error; a duplicate `sectionId` in one batch rejects as
+   * malformed. Nothing is applied on either.
+   */
+  async applySectionOps(
+    nodeId: string,
+    ops: SectionOp[],
+  ): Promise<ApplySectionOpsResult> {
+    const referenced = ops.flatMap((op) =>
+      op.op === "add" ? [] : [op.sectionId],
+    );
+    if (new Set(referenced).size !== referenced.length) {
+      throw new Error(
+        `applySectionOps: duplicate section id in batch for node ${nodeId}.`,
+      );
+    }
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN");
+      const cur = await client.query<SectionRow>(
+        `SELECT id, text, order_key FROM sections
+          WHERE node_id = $1 AND active
+          FOR UPDATE`,
+        [nodeId],
+      );
+      const byId = new Map(cur.rows.map((r) => [r.id, r]));
+      for (const id of referenced) {
+        if (!byId.has(id)) {
+          throw new Error(
+            `stale_section: section ${id} is not part of node ${nodeId}.`,
+          );
+        }
+      }
+
+      const applied: AppliedOp[] = [];
+      for (const op of ops) {
+        if (op.op === "add") {
+          const id = mintSectionId(nodeId, op.text, op.orderKey);
+          await client.query(
+            `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
+             VALUES ($1, $2, $3, $4, $5, '')`,
+            [id, nodeId, op.text, op.orderKey, this.#authoredBy],
+          );
+          applied.push({ id, orderKey: op.orderKey });
+          continue;
+        }
+        const target = byId.get(op.sectionId);
+        if (target === undefined) {
+          // Unreachable (validated above); throwing keeps `applied` aligned
+          // and rolls the transaction back rather than misapplying.
+          throw new Error(
+            `stale_section: section ${op.sectionId} vanished mid-batch.`,
+          );
+        }
+        await client.query(
+          `UPDATE sections SET active = false WHERE node_id = $1 AND id = $2`,
+          [nodeId, op.sectionId],
+        );
+        if (op.op === "delete") {
+          const stone = mintSectionId(nodeId, "", target.order_key);
+          await client.query(
+            `INSERT INTO sections
+               (id, node_id, text, order_key, authored_by, supersedes, active, tombstone)
+             VALUES ($1, $2, '', $3, $4, $5, false, true)`,
+            [stone, nodeId, target.order_key, this.#authoredBy, op.sectionId],
+          );
+          applied.push({ id: target.id, orderKey: target.order_key });
+          continue;
+        }
+        const text = op.op === "update" ? op.text : target.text;
+        const orderKey =
+          op.op === "reorder" ? op.orderKey : (op.orderKey ?? target.order_key);
+        const nextId = mintSectionId(nodeId, text, orderKey);
+        await client.query(
+          `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [nextId, nodeId, text, orderKey, this.#authoredBy, op.sectionId],
+        );
+        applied.push({ id: nextId, orderKey });
+      }
+
+      const post = await client.query<SectionRow>(
+        `SELECT id, text, order_key FROM sections
+          WHERE node_id = $1 AND active
+          ORDER BY order_key COLLATE "C", id`,
+        [nodeId],
+      );
+      await client.query("COMMIT");
+      return {
+        sections: post.rows.map((r) => ({
+          id: r.id,
+          text: r.text,
+          orderKey: r.order_key,
+        })),
+        applied,
+      };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
    * List the body's write-events, newest first (A8 — the history surface).
    * One event = one distinct `created_at` (rows written in one transaction
    * share it). `kind` is `"save"` when the event minted a fresh generation
@@ -184,12 +311,18 @@ export class PgBodyClient implements BodyClient {
     const res = await this.#pool.query<{
       revision: string;
       is_save: boolean;
+      is_ops: boolean;
       authored_by: string;
       sections: number;
     }>(
       `SELECT to_char(created_at AT TIME ZONE 'UTC',
                       'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS revision,
               bool_or(supersedes IS NULL) AS is_save,
+              -- A11 batch signature: any add ('' supersedes), any tombstone,
+              -- or several rows in one non-generation event.
+              (count(*) > 1
+               OR bool_or(tombstone)
+               OR bool_or(supersedes = '')) AS is_ops,
               max(authored_by) AS authored_by,
               count(*)::int AS sections
          FROM sections
@@ -201,7 +334,7 @@ export class PgBodyClient implements BodyClient {
     );
     return res.rows.map((r) => ({
       revision: r.revision,
-      kind: r.is_save ? "save" : "edit",
+      kind: r.is_save ? "save" : r.is_ops ? "ops" : "edit",
       authoredBy: r.authored_by,
       sections: r.sections,
     }));
@@ -225,6 +358,7 @@ export class PgBodyClient implements BodyClient {
         WHERE s.node_id = $1
           AND s.created_at <= $2
           AND s.created_at >= gen.t0
+          AND NOT s.tombstone
           AND NOT EXISTS (
             SELECT 1 FROM sections r
              WHERE r.node_id = $1 AND r.supersedes = s.id

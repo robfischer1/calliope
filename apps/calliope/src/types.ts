@@ -36,6 +36,44 @@ export interface SectionInput {
 }
 
 /**
+ * One block-grain write op (A11) — the editor's diff carried as-is through
+ * the wire, the store write, the block-op log, and the revision surface.
+ *
+ * - `add`     — mint a new section with the CALLER's fractional `orderKey`
+ *               (client-minted between-neighbors; sibling keys never move).
+ * - `update`  — single-section copy-on-write (the `edit_section` semantics):
+ *               fresh placement id, `order_key` preserved unless `orderKey`
+ *               is supplied (an edit+move in one gesture).
+ * - `delete`  — the section leaves the body; its history is preserved.
+ * - `reorder` — the section moves to the caller's `orderKey`; prose
+ *               unchanged. (Placement identity is backend-defined: the
+ *               substrate moves the `order_key` edge in place; the sovereign
+ *               store re-places via copy-on-write.)
+ *
+ * Batch rules: at most ONE op per `sectionId`; any stale `sectionId` rejects
+ * the WHOLE batch (`stale_section`) — nothing is applied.
+ */
+export type SectionOp =
+  | { op: "add"; text: string; orderKey: string }
+  | { op: "update"; sectionId: string; text: string; orderKey?: string }
+  | { op: "delete"; sectionId: string }
+  | { op: "reorder"; sectionId: string; orderKey: string };
+
+/** Per-op result, aligned to the ops array: the section's post-apply
+ *  placement id + order key (for `delete`, the removed id + last key). */
+export interface AppliedOp {
+  id: string;
+  orderKey: string;
+}
+
+/** The {@link BodyClient.applySectionOps} result: the full post-apply body
+ *  (sorted) + the per-op alignment. */
+export interface ApplySectionOpsResult {
+  sections: Section[];
+  applied: AppliedOp[];
+}
+
+/**
  * The semantic op type emitted into the block-op transaction log (F3).
  *
  * Each editor transaction produces one or more `BlockOp` records that describe
@@ -131,6 +169,21 @@ export interface BodyClient {
   ): Promise<Section>;
 
   /**
+   * A11 block-grain transactional write: apply the editor's {@link SectionOp}
+   * batch — ALL ops or none. Per-op semantics are the {@link editSection}
+   * copy-on-write engine generalized (see {@link SectionOp}); an op whose
+   * `sectionId` is not a current section rejects the whole batch with a
+   * `stale_section` error — the caller's compare-before-write race backstop.
+   * One revision event (`kind: "ops"`) and one block-op per applied op.
+   *
+   * Optional for backward compatibility, like {@link editSection}.
+   */
+  applySectionOps?(
+    nodeId: string,
+    ops: SectionOp[],
+  ): Promise<ApplySectionOpsResult>;
+
+  /**
    * List the body's stored revisions — the write-events of its copy-on-write
    * lineage, newest first. Each coarse save and each single-section edit is
    * one event. Optional for backward compatibility, like {@link editSection}:
@@ -152,15 +205,16 @@ export interface BodyClient {
  * - `revision`    — the event's identity: its `created_at` as an ISO-8601 UTC
  *                   string (one transaction = one event; rows written together
  *                   share it).
- * - `kind`        — `"save"` (a coarse save minted a fresh generation) or
- *                   `"edit"` (a single-section copy-on-write edit).
+ * - `kind`        — `"save"` (a coarse save minted a fresh generation),
+ *                   `"edit"` (a single-section copy-on-write edit), or
+ *                   `"ops"` (an A11 block-grain batch).
  * - `authoredBy`  — the provenance persisted with the event's rows.
  * - `sections`    — how many section rows the event wrote (a save writes the
- *                   whole body; an edit writes one).
+ *                   whole body; an edit writes one; an ops batch one per op).
  */
 export interface RevisionMeta {
   revision: string;
-  kind: "save" | "edit";
+  kind: "save" | "edit" | "ops";
   authoredBy: string;
   sections: number;
 }

@@ -1,8 +1,11 @@
 import type {
+  AppliedOp,
+  ApplySectionOpsResult,
   BodyClient,
   RevisionMeta,
   Section,
   SectionInput,
+  SectionOp,
 } from "./types.js";
 import { compareKeys, sequence } from "./order-key.js";
 
@@ -16,7 +19,7 @@ interface FixtureSection {
 /** One recorded write-event: the body snapshot after it landed (A8 history). */
 interface FixtureRevision {
   revision: string;
-  kind: "save" | "edit";
+  kind: "save" | "edit" | "ops";
   sections: number;
   snapshot: FixtureSection[];
 }
@@ -100,6 +103,77 @@ export class FixtureBodyClient implements BodyClient {
     });
   }
 
+  /**
+   * A11 block-grain transactional apply — the fixture half of the
+   * `apply_section_ops` contract. Validates EVERY referenced id first (a
+   * stale id rejects the whole batch), then applies with the store
+   * semantics: `update` mints a fresh placement id keeping the key unless
+   * the op carries one; `add` uses the caller's key; `delete` removes the
+   * row; `reorder` moves the key. One `"ops"` revision event per batch.
+   */
+  applySectionOps(
+    nodeId: string,
+    ops: SectionOp[],
+  ): Promise<ApplySectionOpsResult> {
+    const rows = [...(this.bodies.get(nodeId) ?? [])];
+    for (const op of ops) {
+      if (op.op === "add") continue;
+      if (!rows.some((r) => r.id === op.sectionId)) {
+        return Promise.reject(
+          new Error(
+            `stale_section: section ${op.sectionId} is not part of node ${nodeId}.`,
+          ),
+        );
+      }
+    }
+    const applied: AppliedOp[] = [];
+    let next = rows;
+    for (const op of ops) {
+      if (op.op === "add") {
+        const row: FixtureSection = {
+          id: `${nodeId}#${String(this.seq++)}`,
+          text: op.text,
+          orderKey: op.orderKey,
+        };
+        next = [...next, row];
+        applied.push({ id: row.id, orderKey: row.orderKey });
+        continue;
+      }
+      const target = next.find((r) => r.id === op.sectionId);
+      if (target === undefined) {
+        // Malformed batch (two ops on one id — the contract forbids it).
+        return Promise.reject(
+          new Error(
+            `stale_section: section ${op.sectionId} was consumed earlier in the batch.`,
+          ),
+        );
+      }
+      if (op.op === "update") {
+        const row: FixtureSection = {
+          id: `${nodeId}#${String(this.seq++)}`,
+          text: op.text,
+          orderKey: op.orderKey ?? target.orderKey,
+        };
+        next = next.map((r) => (r.id === op.sectionId ? row : r));
+        applied.push({ id: row.id, orderKey: row.orderKey });
+      } else if (op.op === "delete") {
+        next = next.filter((r) => r.id !== op.sectionId);
+        applied.push({ id: target.id, orderKey: target.orderKey });
+      } else {
+        next = next.map((r) =>
+          r.id === op.sectionId ? { ...r, orderKey: op.orderKey } : r,
+        );
+        applied.push({ id: target.id, orderKey: op.orderKey });
+      }
+    }
+    this.bodies.set(nodeId, next);
+    this.record(nodeId, "ops", ops.length);
+    const sections = [...next]
+      .sort((a, b) => compareKeys(a.orderKey, b.orderKey))
+      .map((r) => ({ id: r.id, text: r.text, orderKey: r.orderKey }));
+    return Promise.resolve({ sections, applied });
+  }
+
   /** List write-events newest first — the fixture half of the A8 contract. */
   readRevisions(nodeId: string, limit = 50): Promise<RevisionMeta[]> {
     const events = this.revisions.get(nodeId) ?? [];
@@ -134,7 +208,11 @@ export class FixtureBodyClient implements BodyClient {
   }
 
   /** Record a write-event with a strictly-increasing ISO timestamp. */
-  private record(nodeId: string, kind: "save" | "edit"): void {
+  private record(
+    nodeId: string,
+    kind: "save" | "edit" | "ops",
+    opCount?: number,
+  ): void {
     const now = Math.max(Date.now(), this.lastEventMs + 1);
     this.lastEventMs = now;
     const snapshot = (this.bodies.get(nodeId) ?? []).map((r) => ({ ...r }));
@@ -142,7 +220,8 @@ export class FixtureBodyClient implements BodyClient {
     events.push({
       revision: new Date(now).toISOString(),
       kind,
-      sections: kind === "edit" ? 1 : snapshot.length,
+      sections:
+        kind === "edit" ? 1 : kind === "ops" ? (opCount ?? 0) : snapshot.length,
       snapshot,
     });
     this.revisions.set(nodeId, events);

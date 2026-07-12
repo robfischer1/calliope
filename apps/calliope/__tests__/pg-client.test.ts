@@ -196,6 +196,94 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     ).toEqual([]);
   });
 
+  it("applySectionOps: a mixed batch applies transactionally at block grain (A11)", async () => {
+    await client.saveBody("node-ops", [
+      { text: "alpha" },
+      { text: "beta" },
+      { text: "gamma" },
+    ]);
+    const before = await client.readBody("node-ops");
+    const [alpha, beta, gamma] = before;
+    if (!alpha || !beta || !gamma) throw new Error("fixture body missing");
+
+    const { sections, applied } = await client.applySectionOps("node-ops", [
+      { op: "update", sectionId: beta.id, text: "beta edited" },
+      { op: "add", text: "wedged", orderKey: "015" },
+      { op: "reorder", sectionId: gamma.id, orderKey: "005" },
+    ]);
+    // Byte order: "005" < "01" (alpha) < "015" < "02" (beta's kept key).
+    expect(sections.map((s) => s.text)).toEqual([
+      "gamma",
+      "alpha",
+      "wedged",
+      "beta edited",
+    ]);
+    expect(applied).toHaveLength(3);
+    // Untouched alpha keeps id AND key; update/reorder remint (CoW placement).
+    const alphaNow = sections.find((s) => s.text === "alpha");
+    expect(alphaNow?.id).toBe(alpha.id);
+    expect(alphaNow?.orderKey).toBe(alpha.orderKey);
+    expect(applied.at(0)?.id).not.toBe(beta.id);
+    expect(applied.at(0)?.orderKey).toBe(beta.orderKey);
+
+    // One "ops" revision event, sections = op count.
+    const revs = await client.readRevisions("node-ops");
+    expect(revs.at(0)).toMatchObject({ kind: "ops", sections: 3 });
+  });
+
+  it("applySectionOps: a stale id rejects the WHOLE batch (nothing applied)", async () => {
+    await client.saveBody("node-stale", [{ text: "one" }, { text: "two" }]);
+    const body = await client.readBody("node-stale");
+    const one = body.at(0);
+    if (one === undefined) throw new Error("fixture body missing");
+    await expect(
+      client.applySectionOps("node-stale", [
+        { op: "update", sectionId: one.id, text: "one edited" },
+        { op: "delete", sectionId: "not-a-section" },
+      ]),
+    ).rejects.toThrow(/stale_section/);
+    expect((await client.readBody("node-stale")).map((s) => s.text)).toEqual([
+      "one",
+      "two",
+    ]);
+  });
+
+  it("readRevisionAt reconstructs across mixed save/edit/ops lineages incl. deletes", async () => {
+    await client.saveBody("node-mix", [
+      { text: "m1" },
+      { text: "m2" },
+      { text: "m3" },
+    ]);
+    const body = await client.readBody("node-mix");
+    const [m1, m2] = body;
+    if (!m1 || !m2) throw new Error("fixture body missing");
+    await client.applySectionOps("node-mix", [
+      { op: "delete", sectionId: m2.id },
+      { op: "add", text: "m4", orderKey: "09" },
+      { op: "update", sectionId: m1.id, text: "m1 edited" },
+    ]);
+    const revs = await client.readRevisions("node-mix");
+    const [atOps, atSave] = revs;
+    if (!atOps || !atSave) throw new Error("missing revisions");
+    expect(atOps.kind).toBe("ops");
+    // Before the ops batch: the original save.
+    expect(
+      (await client.readRevisionAt("node-mix", atSave.revision)).map(
+        (s) => s.text,
+      ),
+    ).toEqual(["m1", "m2", "m3"]);
+    // At the ops batch: delete honored (tombstone), add included, edit applied.
+    expect(
+      (await client.readRevisionAt("node-mix", atOps.revision)).map(
+        (s) => s.text,
+      ),
+    ).toEqual(["m1 edited", "m3", "m4"]);
+    // The latest revision reconstructs to the live body.
+    expect(await client.readRevisionAt("node-mix", atOps.revision)).toEqual(
+      await client.readBody("node-mix"),
+    );
+  });
+
   it("importSection preserves ids and is idempotent; retainOnly converges", async () => {
     const sec = { id: "f".repeat(64), text: "migrated", orderKey: "01" };
     await client.importSection("node-m", sec);
