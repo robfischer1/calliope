@@ -20,4 +20,6 @@ jobs:
   deploy:
     enable-openid-connect: true
     uses: foundry/foundry-stocks/.forgejo/workflows/deploy.yml@main
-    secrets: inherit
+    # pragma comment: detect-secrets flags the word 'secrets' as a Secret Keyword,
+    # and `secrets: inherit` is the reusable-workflow idiom, not a credential.
+    secrets: inherit  # pragma: allowlist secret
