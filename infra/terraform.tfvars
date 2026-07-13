@@ -26,12 +26,17 @@ env = {
   CHAOS_URL  = "http://chaos:8206"
   URANIA_URL = "http://urania:8202"
 
-  # Pistis boot-fetch: stellar-boot logs into Calypso with the JWT-SVID, reads
-  # CALLIOPE_DB_PASSWORD from /fleet, materializes DATABASE_URL from the template.
+  # Pistis boot-fetch: stellar-boot logs into Calypso with the JWT-SVID and
+  # `infisical run`s the per-star folder — SELECTION and ASSEMBLY both live in
+  # Calypso now. /fleet/calliope holds CALLIOPE_DB_PASSWORD (a cross-folder
+  # reference to the flat /fleet value, so rotation still flows) and DATABASE_URL
+  # (a folder-local reference that --expand resolves) — the composite the retired
+  # STELLAR_ENV_TEMPLATE used to render. The app reads a bare DATABASE_URL
+  # (apps/calliope/src/mcp/backend.ts), so the folder key carries that exact name.
+  # STELLAR_SECRET_MAP / STELLAR_ENV_TEMPLATE are RETIRED — the new stellar-boot
+  # FAIL-CLOSES if either is set. star-calliope is SPIRE-bound (Pistis F3).
   CALYPSO_IDENTITY_ID  = "e85c0a9c-f412-4cce-8e53-3dc8c7df92e5"
   CALYPSO_URL          = "https://calypso.notusmi.com"
   CALYPSO_WORKSPACE_ID = "107e672d-b7bd-4f94-b181-169e02fc7253"
-  STELLAR_SECRET_PATH  = "/fleet"
-  STELLAR_SECRET_MAP   = "{\"CALLIOPE_DB_PASSWORD\":\"CALLIOPE_DB_PASSWORD\"}"
-  STELLAR_ENV_TEMPLATE = "{\"DATABASE_URL\":\"postgresql://calliope:{CALLIOPE_DB_PASSWORD}@postgres-postgres-1:5432/calliope\"}"
+  STELLAR_SECRET_PATH  = "/fleet/calliope"
 }
