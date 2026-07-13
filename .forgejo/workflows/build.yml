@@ -1,16 +1,15 @@
-# MANAGED BY FOUNDRY (infra/ci.tf, kind=bun-star) — do not hand-edit.
-# Central definition: foundry/infra/ci-templates/bun/build.yml. A hand edit is
-# drift; the next core apply restores this file.
+# Caller stub (Flame pull-CI) — logic in foundry/foundry-stocks; invariant, copier-shipped.
 #
-# The BUN star build pipeline (the bun-star lane, 2026-07-11): the gate runs as
-# its own job in stellar_core:frontend-ci (bun + the FE toolchain baked — the
-# python-ci image bakes uv, NOT bun; the standard build.yml's language-detected
-# bun lane dies there with `bun: command not found`, found on calliope's first
-# post-pour build), then the language-agnostic publish half (build → label →
-# sha-pin → push → cosign sign → SBOM attest → Dependency-Track → auto-bump
-# deploy PR) runs gated on it, byte-carried from ci-templates/go/build.yml.
-
+# build.yml is LANGUAGE-AGNOSTIC (it runs `docker build .`; the Dockerfile does the language
+# work), so a go star calls exactly the same reusable build every python/rust/bun star does.
+#
+# enable-openid-connect at WORKFLOW level (and on the uses: job): the build's pin-bump
+# resolves a write-capable token from Calypso /fleet over Forgejo-OIDC. Forgejo silently
+# ignores a job-level-only declaration anywhere in the reusable path — the run then gets no
+# ACTIONS_ID_TOKEN_REQUEST_* and the zero-credential path dies.
 name: build
+
+enable-openid-connect: true
 
 on:
   push:
@@ -19,145 +18,8 @@ on:
       - "**.md"
       - ".forgejo/**"
       - "infra/**"
-
 jobs:
-  gate:
-    name: bun gate (format / lint / typecheck / test / build / audit)
-    runs-on: nas01
-    defaults:
-      run:
-        shell: bash
-    container:
-      image: forgejo.notusmi.com/rob/stellar_core:frontend-ci
-    steps:
-      - uses: https://github.com/actions/checkout@v4
-
-      # `bun run gate` is the SAME script the husky pre-commit hook runs, so
-      # the local gate and CI can't drift.
-      - name: Gate — format / lint / typecheck / test / build
-        run: |
-          bun install --frozen-lockfile
-          bun run gate
-
-      # bun audit BLOCKS on a HIGH+ advisory (scans dev deps too — bun has no
-      # prod-only scope).
-      - name: Dependency vuln scan (bun audit)
-        run: bun audit --audit-level=high
-
   build:
-    name: Build, sha-pin, sign, publish
-    needs: gate
-    runs-on: nas01
-    defaults:
-      run:
-        shell: bash
-    container:
-      image: forgejo.notusmi.com/rob/stellar_core:python-ci
-      options: --network host
-      volumes:
-        - /var/run/docker.sock:/var/run/docker.sock
-    steps:
-      - uses: https://github.com/actions/checkout@v4
-
-      - name: Load tool versions
-        run: grep -E '^[A-Z_]+=' .forgejo/versions.env >> "$GITHUB_ENV"
-
-      - name: SAST (opengrep, scoped taint rules)
-        run: |
-          export LANG=C.UTF-8 LC_ALL=C.UTF-8
-          opengrep scan --config rules/sast --error .
-
-      - name: Publish (sha-pinned) + sign + SBOM
-        env:
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          # nas01 docker (29.6.1, no buildx plugin) defaults to the legacy
-          # builder - star Dockerfiles use RUN --mount caches, which need BuildKit
-          # asked for explicitly (found 2026-07-11: the poured template's first
-          # aglaia build died on it; the pre-pour repo workflows had set this).
-          DOCKER_BUILDKIT: "1"
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-          DTRACK_API_KEY: ${{ secrets.DTRACK_API_KEY }}
-        run: |
-          set -euo pipefail
-          echo "${REGISTRY_TOKEN}" | docker login forgejo.notusmi.com -u rob --password-stdin
-          # A decentralized Go star's runtime source of truth is infra/terraform.tfvars
-          # — no compose file; the image is the fleet-invariant name, context '.'.
-          IMG="forgejo.notusmi.com/rob/${GITHUB_REPOSITORY##*/}:latest"
-          docker build --network=host -t "$IMG" .
-          # Stamp standard OCI provenance labels (a labels-only layer) — without a
-          # tagged, labelled image the registry blob-GC reaps untagged manifests.
-          CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          SRC="${GITHUB_SERVER_URL:-https://forgejo.notusmi.com}/${GITHUB_REPOSITORY}"
-          echo "FROM $IMG" | docker build -t "$IMG" \
-            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            --label "org.opencontainers.image.created=${CREATED}" \
-            --label "org.opencontainers.image.source=${SRC}" \
-            --label "org.opencontainers.image.version=${GITHUB_SHA:0:12}" \
-            --label "org.opencontainers.image.title=${GITHUB_REPOSITORY##*/}" \
-            --label "org.opencontainers.image.url=${SRC}" \
-            -
-          SHA_TAG="${IMG%:*}:${GITHUB_SHA:0:12}"
-          docker tag "$IMG" "$SHA_TAG"
-          docker push "$IMG"
-          docker push "$SHA_TAG"
-          DIGEST=$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "$IMG" | grep '^forgejo.notusmi.com/' | head -1)
-          test -n "$DIGEST"
-          printf '%s' "${COSIGN_PRIVATE_KEY}" | base64 -d > /tmp/cosign.key
-          trap 'rm -f /tmp/cosign.key' EXIT
-          cosign sign --key /tmp/cosign.key --yes "$DIGEST"
-          syft "$IMG" -o cyclonedx-json > /tmp/sbom.cdx.json
-          cosign attest --key /tmp/cosign.key --type cyclonedx --predicate /tmp/sbom.cdx.json --yes "$DIGEST"
-          cosign verify --key cosign.pub "$DIGEST"
-          # Continuous vuln monitoring: SBOM → Dependency-Track (re-evaluated against
-          # new advisories, no rebuild). Non-fatal + self-skips until the key exists.
-          if [ -n "${DTRACK_API_KEY:-}" ]; then
-            PROJ="${IMG##*/}"; PROJ="${PROJ%:*}"
-            printf '{"projectName":"%s","projectVersion":"latest","autoCreate":true,"bom":"%s"}' "$PROJ" "$(base64 -w0 /tmp/sbom.cdx.json)" > /tmp/dt-bom.json
-            docker run --rm -i --network host curlimages/curl:latest -s -X PUT http://127.0.0.1:30181/api/v1/bom -H "Content-Type: application/json" -H "X-Api-Key: ${DTRACK_API_KEY}" --data-binary @- -o /dev/null -w 'DT upload HTTP %{http_code}\n' < /tmp/dt-bom.json || echo "DT upload failed (non-fatal)"
-          else
-            echo "DTRACK_API_KEY unset — skipping Dependency-Track upload (provision it to enable monitoring)"
-          fi
-          echo "DEPLOY_DIGEST=$DIGEST" | tee /tmp/deploy-digest
-          docker logout forgejo.notusmi.com
-
-      - name: Open a deploy PR — auto-bump the image pin (decentralized stars)
-        env:
-          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-        run: |
-          set -euo pipefail
-          [ -d infra ] || { echo "no infra/ — not a decentralized deploy star; skipping pin-bump"; exit 0; }
-          DIGEST=$(sed -n 's/^DEPLOY_DIGEST=//p' /tmp/deploy-digest)
-          test -n "$DIGEST"
-          REPO="${GITHUB_REPOSITORY##*/}"
-          SHORT="${GITHUB_SHA:0:12}"
-          BRANCH="deploy/${SHORT}"
-          AUTH="Authorization: token ${DEPLOY_TOKEN}"
-          APIREPO="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}"
-          # Re-run guard: the same commit already opened its bump PR.
-          if [ "$(curl -sS -o /dev/null -w '%{http_code}' -H "$AUTH" "${APIREPO}/branches/${BRANCH}")" = "200" ]; then
-            echo "deploy branch ${BRANCH} already exists — pin-bump already opened; skipping"
-            exit 0
-          fi
-          FILE_API="${APIREPO}/contents/infra/image.auto.tfvars.json"
-          CONTENT_B64=$(jq -n --arg img "$DIGEST" '{image: $img}' | base64 -w0)
-          MSG="deploy(${REPO}): pin image @ ${SHORT}"
-          SHA=$(curl -sS -H "$AUTH" "${FILE_API}?ref=main" | jq -r '.sha // ""')
-          if [ -n "$SHA" ]; then
-            METHOD=PUT
-            BODY=$(jq -n --arg c "$CONTENT_B64" --arg m "$MSG" --arg s "$SHA" --arg nb "$BRANCH" \
-              '{content:$c, message:$m, sha:$s, branch:"main", new_branch:$nb}')
-          else
-            METHOD=POST
-            BODY=$(jq -n --arg c "$CONTENT_B64" --arg m "$MSG" --arg nb "$BRANCH" \
-              '{content:$c, message:$m, branch:"main", new_branch:$nb}')
-          fi
-          wcode=$(printf '%s' "$BODY" | curl -sS -o /dev/null -w '%{http_code}' \
-            -X "$METHOD" -H "$AUTH" -H "Content-Type: application/json" --data-binary @- "$FILE_API")
-          case "$wcode" in 200 | 201) : ;; *) echo "pin-bump write HTTP $wcode" >&2; exit 1 ;; esac
-          PRBODY="Auto-bump the image pin to the digest just built, signed, and SBOM-attested. Merging applies — deploy.yml posts the plan on this PR. Digest: ${DIGEST}"
-          jq -n --arg h "$BRANCH" --arg t "$MSG" --arg b "$PRBODY" \
-             '{head: $h, base: "main", title: $t, body: $b}' \
-          | curl -sS -X POST "${APIREPO}/pulls" \
-             -H "$AUTH" -H "Content-Type: application/json" \
-             --data-binary @- -o /dev/null -w 'deploy PR HTTP %{http_code}\n'
+    enable-openid-connect: true
+    uses: foundry/foundry-stocks/.forgejo/workflows/build.yml@main
+    secrets: inherit  # pragma: allowlist secret
