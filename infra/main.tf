@@ -82,7 +82,7 @@ locals {
 }
 
 module "star" {
-  source = "git::https://forgejo.notusmi.com/rob/foundry.git//infra/star?ref=52cf9c84ee3c5a94a3a2aed4637263591c65bd76"
+  source = "git::https://forgejo.notusmi.com/rob/infra.git//star?ref=9f57fdfd7a425ccacab82925b8aefe7ee29745d1"
 
   name             = var.name
   container_name   = var.container_name
