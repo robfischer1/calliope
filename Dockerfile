@@ -12,9 +12,26 @@
 FROM forgejo.notusmi.com/rob/stellar_core:bun-mcp@sha256:a8d21e4ae94191e03d7d83f23f8456c60122163c4345d4d3b215074a2a533b91 AS builder
 ENV CI=1
 WORKDIR /app
-COPY . /app
+
+# MANIFESTS FIRST, THEN INSTALL, THEN SOURCE. This used to be `COPY . /app` followed by
+# `bun install`, which puts the ENTIRE SOURCE TREE in the install layer's cache key: every
+# one-character source change invalidated it and re-ran the full install. The BuildKit cache
+# mount below saved the DOWNLOADS, so it looked cheap and wasn't — bun still re-resolved and
+# re-linked 612 packages on every build.
+#
+# Split this way, the install layer's key is just the manifests, so it is reused until a
+# DEPENDENCY actually changes. (It only started paying off once the vestigial --no-cache
+# came off the frontend build lane — with that flag there was no layer cache to hit.)
+#
+# The workspace manifests must be copied too (workspaces: apps/*, packages/*) or
+# `--frozen-lockfile` cannot resolve the graph. Adding a workspace means adding it here;
+# forget, and the install fails LOUDLY on the lockfile check rather than silently.
+COPY package.json bun.lock ./
+COPY apps/calliope/package.json apps/calliope/
 RUN --mount=type=cache,id=bun,target=/root/.bun/install/cache \
     bun install --frozen-lockfile
+
+COPY . /app
 # Bundle the streamable-HTTP entry + deps into ONE bun-target file (no
 # node_modules shipped — smaller image + CVE surface). The monorepo roots the
 # entry at apps/calliope/src/mcp/http.ts.
