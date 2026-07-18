@@ -29,6 +29,7 @@ import {
   readBodyRevisions,
   writeBody,
 } from "./tools.js";
+import { readPlan, isReadPlanError } from "./plan-ingest.js";
 
 /**
  * Adapt a typed tool result to the MCP SDK's `structuredContent` slot, which
@@ -411,6 +412,71 @@ export function createServer(
             { type: "text", text: `${String(rows.length)} document(s).` },
           ],
           structuredContent: { documents: rows },
+        };
+      },
+    );
+
+    server.registerTool(
+      "read_plan",
+      {
+        title: "Read a plan by reference (block-addressable)",
+        description:
+          "C7 projection-shaped ingest: resolve a plan document BY REFERENCE " +
+          "(a handle — `document` id or `source_path`, newest version wins) and " +
+          "serve it block-granular, so a prose->graph consumer (athena " +
+          "orchestrate_plan) never loads the whole plan_text into its context. " +
+          "Whole-plan read (no `block`): returns { handle, title, block_count, " +
+          "blocks:[{id,title,size,order}], body_text? } — the feature-block index " +
+          "(the addresses) plus the body unless omit_body. Single-block read " +
+          "(`block` = a feature id like C7): returns { handle, block:{id,title," +
+          "size,order,text} } — just that feature's markdown; the block ref is a " +
+          "Calliope handle a conflict payload can return. Misses are structured: " +
+          "document_not_found / block_not_found.",
+        inputSchema: {
+          document: z
+            .number()
+            .int()
+            .optional()
+            .describe("The plan document id (the primary handle)."),
+          source_path: z
+            .string()
+            .optional()
+            .describe(
+              "The plan's source path (resolves to the newest version).",
+            ),
+          block: z
+            .string()
+            .optional()
+            .describe("A feature-id block address (e.g. C7) — serve just it."),
+          omit_body: z
+            .boolean()
+            .optional()
+            .describe("Whole-plan read: omit body_text (index-only)."),
+        },
+      },
+      async ({ document, source_path, block, omit_body }) => {
+        const result = await readPlan(documents, {
+          ...(document !== undefined ? { document } : {}),
+          ...(source_path !== undefined ? { source_path } : {}),
+          ...(block !== undefined ? { block } : {}),
+          ...(omit_body !== undefined ? { omit_body } : {}),
+        });
+        if (isReadPlanError(result)) {
+          return {
+            content: [
+              { type: "text", text: `${result.error}: ${result.detail}` },
+            ],
+            structuredContent: structured(result),
+            isError: true,
+          };
+        }
+        const summary =
+          "block" in result
+            ? `Block ${result.block.id} (${String(result.block.text.length)} chars).`
+            : `${String(result.block_count)} feature block(s).`;
+        return {
+          content: [{ type: "text", text: summary }],
+          structuredContent: structured(result),
         };
       },
     );

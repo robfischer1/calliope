@@ -94,6 +94,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "read_body_at",
       "read_body_revisions",
       "read_documents",
+      "read_plan",
       "revision_deltas",
       "write_body",
       "write_document",
