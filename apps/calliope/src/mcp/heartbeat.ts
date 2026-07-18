@@ -59,11 +59,17 @@ export function heartbeatPayload(now: Date): HeartbeatPayload {
 }
 
 /**
- * Resolve the broker bootstrap: `PONTUS_BOOTSTRAP`, else `KAFKA_BOOTSTRAP`, else
- * the pantheon-net default (`pontus:29092`). Pure — the env is injected.
+ * Resolve the broker bootstrap: `KAFKA_BOOTSTRAP` — the canonical unprefixed
+ * fleet key the services catalog injects — else the pantheon-net default
+ * (`pontus:29092`). Pure — the env is injected.
+ *
+ * `PONTUS_BOOTSTRAP` was a second definition of the same fleet fact that
+ * OUTRANKED the canonical key (one-definition F3). Nothing ever set it — not the
+ * infra catalog, not any container — so it was a dead alias whose only possible
+ * effect was to let a stray value silently beat the fleet's definition.
  */
 export function resolveBootstrap(env: NodeJS.ProcessEnv = process.env): string {
-  const raw = env.PONTUS_BOOTSTRAP ?? env.KAFKA_BOOTSTRAP;
+  const raw = env.KAFKA_BOOTSTRAP;
   return raw !== undefined && raw.trim() !== ""
     ? raw.trim()
     : DEFAULT_BOOTSTRAP;

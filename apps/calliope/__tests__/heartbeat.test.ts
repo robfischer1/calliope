@@ -44,25 +44,24 @@ describe("DEFAULT_INTERVAL_MS", () => {
 });
 
 describe("resolveBootstrap", () => {
-  it("prefers PONTUS_BOOTSTRAP", () => {
-    expect(resolveBootstrap({ PONTUS_BOOTSTRAP: "broker-a:9092" })).toBe(
-      "broker-a:9092",
-    );
-  });
-
-  it("falls back to KAFKA_BOOTSTRAP", () => {
+  it("reads the canonical KAFKA_BOOTSTRAP", () => {
     expect(resolveBootstrap({ KAFKA_BOOTSTRAP: "broker-b:9092" })).toBe(
       "broker-b:9092",
     );
   });
 
-  it("prefers PONTUS_BOOTSTRAP over KAFKA_BOOTSTRAP when both set", () => {
+  it("ignores the retired PONTUS_BOOTSTRAP alias", () => {
+    // One-definition F3: the canonical key is the ONLY definition. A stray
+    // PONTUS_BOOTSTRAP must never beat (or stand in for) the fleet's value.
     expect(
       resolveBootstrap({
         PONTUS_BOOTSTRAP: "pontus-x:29092",
         KAFKA_BOOTSTRAP: "other:9092",
       }),
-    ).toBe("pontus-x:29092");
+    ).toBe("other:9092");
+    expect(resolveBootstrap({ PONTUS_BOOTSTRAP: "pontus-x:29092" })).toBe(
+      "pontus:29092",
+    );
   });
 
   it("defaults to the pantheon-net Pontus listener when unset", () => {
@@ -70,11 +69,11 @@ describe("resolveBootstrap", () => {
   });
 
   it("treats a blank value as unset", () => {
-    expect(resolveBootstrap({ PONTUS_BOOTSTRAP: "   " })).toBe("pontus:29092");
+    expect(resolveBootstrap({ KAFKA_BOOTSTRAP: "   " })).toBe("pontus:29092");
   });
 
   it("trims surrounding whitespace", () => {
-    expect(resolveBootstrap({ PONTUS_BOOTSTRAP: "  pontus:29092  " })).toBe(
+    expect(resolveBootstrap({ KAFKA_BOOTSTRAP: "  pontus:29092  " })).toBe(
       "pontus:29092",
     );
   });
