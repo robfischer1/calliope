@@ -31,7 +31,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "kafkajs": "^2.2.4",
     "pg": "^8.22.0",
-    "zod": "^3.25.0"
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
