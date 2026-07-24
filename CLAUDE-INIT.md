@@ -2,10 +2,12 @@ Codebase orientation for AI sessions. Posture and governance live in
 AGENTS.md (furnace-compiled); this file is the repo-specific map, read on
 demand.
 
-Note: this repo has no `AGENTS.md`/`CLAUDE.md` of its own in this worktree —
-the fleet-level governance that normally layers on top isn't present here.
-Fleet role below is inferred from source + package.json, not read from a
-governance doc.
+Note: `AGENTS.md` and `CLAUDE.md` now exist in this worktree — both are
+furnace-provisioned (`furnace pour`) and gitignored (`.gitignore`'s
+"furnace-provisioned" block), so they won't show up in a bare `git status`
+or a fresh clone until poured. Don't hand-edit them; run `furnace stoke` to
+regenerate. Fleet role below still leans on source + package.json where the
+governance doc doesn't cover repo-specific structure.
 
 ## Overview
 
@@ -21,11 +23,20 @@ owns every body (prose notes AND work-node plan prose) [Rob's decision,
 editor component (`NodeBodyEditor`). That UI moved to `@forge/aglaia`; this
 repo kept only the verbs. Any doc, memory, or old commit describing Calliope
 as "the editor" is describing the pre-split state — treat as historical, not
-current. Current identity: service-only, `src/mcp/` is the whole product
-surface.
+current. Current identity: service-only, `apps/calliope/src/mcp/` is the
+whole product surface.
 
-Since then the repo has taken on three more cuts, each carving something out
-of the legacy monolith (`phdb`) onto this star:
+**Critical context: the repo became a turbo monorepo on 2026-07-10**
+(`chore/adopt-frontend-template`, flat → monorepo). Any doc, memory, or old
+commit referencing bare `src/...` paths at the repo root is describing the
+pre-adoption layout — the package now lives at `apps/calliope/`; root
+`package.json` only has `turbo run <task>` delegating scripts. Workspaces are
+`apps/*` (just `calliope` today) and `packages/*` (reserved by the template,
+unused).
+
+Since the Muse-sheds-UI split the repo has taken on several more cuts, each
+carving something out of the legacy monolith (`phdb`) onto this star, plus a
+few smaller additions that never got their own spec-kit dir:
 
 - **C2** (`specs/002-facet-carve-sovereign-store`) — bodies move off the
   shared graph substrate (`chaos`/`urania`) into Calliope's own Postgres
@@ -39,128 +50,216 @@ of the legacy monolith (`phdb`) onto this star:
   stream).
 - **C5** (`specs/005-dissolution-residuals.md`) — archives the now-retired
   dissolution-bridge's bookkeeping tables as frozen historical record.
+- **A11** (no spec dir) — `apply_section_ops`: the block-grain transactional
+  write (add/update/delete/reorder in one all-or-nothing batch).
+- **A8** (no spec dir) — `read_body_revisions` / `read_body_at`: the
+  copy-on-write history reads.
+- **B** (no spec dir) — the write-side push of assembled body prose to
+  urania's similarity index (`mcp/index-push.ts`), plus a one-off
+  `mcp/backfill-index.ts` sweep for bodies that predate the push.
+- **C7** (no spec dir, this branch: `feat/c7-plan-ingest-block-addressable`)
+  — `read_plan`: resolve a plan document by reference and serve it
+  block-granular (`plan-blocks.ts` + `mcp/plan-ingest.ts`), so athena's
+  `orchestrate_plan` never loads a whole `plan_text` into context.
+
+There's also an op-contract heartbeat publisher (`mcp/heartbeat.ts`, no
+C-number) publishing this star's liveness to Pontus.
 
 ## Architecture / module map
 
+Repo root is a turbo monorepo; everything below is under `apps/calliope/`
+unless marked otherwise.
+
 ```
-src/
-  types.ts            Section, SectionInput, BodyClient (the transport contract),
-                       BlockOp / BlockOpEmitter (append-only op-log side channel)
-  index.ts            package's public export surface (@forge/calliope)
-  order-key.ts        fractional order-key scheme: between(a,b), sequence(n),
-                       compareKeys() — byte-wise COLLATE "C" semantics
-  fixture-client.ts   FixtureBodyClient: in-memory BodyClient, no copy-on-write
-                       modeling (not observable through the contract)
-  urania-client.ts    UraniaBodyClient: substrate-triple body model
-                       (note --hasPart--> section --text/order_key-->) over an
-                       injected UraniaCapture transport. Guarded by
-                       CALLIOPE_URANIA_WIRED. Also exports SECTION_TYPE/HAS_PART/
-                       TEXT/ORDER_KEY predicate constants and AuthoredBy type.
-  pg-client.ts        PgBodyClient: the sovereign-store backend. One `sections`
-                       table, PK (node_id, id) — NOT id alone (a section can be
-                       hasPart of >1 owner; found by the C2 parity gate on 15
-                       "twin owner" rows). ensureSchema() bootstraps idempotently.
-  document-store.ts   DocumentStore (C3): PgDocumentStore + FixtureDocumentStore.
-                       Dedup key (source_path, raw_hash); mirrors the phdb HTTP
-                       /write/document wire contract verbatim so vault-mcp's
-                       dissolve payloads pass through unchanged.
-  revision-store.ts   RevisionStore (C4): PgRevisionStore + FixtureRevisionStore.
-                       file_revisions + revision_triple_deltas, ids preserved
-                       verbatim from phdb. Blob shas are POINTERS ONLY — blob
-                       content lives in the vault's own git repo, never here.
-  mcp/
-    backend.ts         env -> BackendKind ("pg"|"hades"|"urania"|"fixture") ->
-                        BodyClient (+ optional documents/revisions). backendKind()
-                        and makeBackend()/makeBodyClient() are the seam every
-                        entrypoint calls through. initBackend() bootstraps pg
-                        schemas async, before serving.
-    server.ts          createServer(client, {documents?, revisions?}) ->
-                        McpServer. Registers read_body/write_body/
-                        append_section/edit_section always; write_document/
-                        read_documents iff documents given; file_revisions/
-                        revision_deltas iff revisions given.
-    tools.ts           Pure handler functions (readBody/writeBody/
-                        appendSection/editSection) — the thing server.ts wraps
-                        and __tests__/mcp-tools.test.ts drives directly against
-                        FixtureBodyClient.
-    main.ts            calliope-mcp bin: stdio transport.
-    http.ts             calliope-mcp-http bin: StreamableHTTPServerTransport,
-                        stateless (sessionIdGenerator: undefined), POST /mcp
-                        only (GET/DELETE not offered — no SSE, no sessions).
-                        resolvePort(): PORT || CALLIOPE_MCP_PORT || 8204.
-    hades-capture.ts    HadesCapture: gateway-auth transport (CHARON_URL) — the
-                        F2 path; writes get authored_by="human" via the
-                        gateway's SET ROLE human seam. hadesEnabled(env) gate.
-    live-capture.ts     LiveUraniaCapture: direct chaos/urania engine-service
-                        transport (CHAOS_URL, legacy URANIA_URL) — clotho-parity.
-    migrate.ts          C2 tool: chaos hasPart-carrying subjects -> calliope-db,
-                        preserving section ids/text/order_key. Modes: default
-                        (migrate+parity+export), --probe (drift count only),
-                        --retract (post-cutover Chaos cleanup; refuses without
-                        a prior export file).
-    migrate-documents.ts    C3 tool: phdb history.documents -> calliope
-                        documents. PHDB_DATABASE_URL (source) + DATABASE_URL
-                        (dest). --probe for counts/parity only.
-    migrate-revisions.ts    C4 tool: phdb file_revisions +
-                        revision_triple_deltas -> calliope revisions. Denormalizes
-                        (subject,predicate,object) dictionary pks to labels.
-    migrate-dissolution-archive.ts   C5 tool: copies dissolutions /
-                        file_revision_dissolutions / materialization_events into
-                        archive_*-prefixed tables. Row-count parity is the gate.
+apps/calliope/
+  src/
+    types.ts            Section, SectionInput, BodyClient (the transport contract),
+                         BlockOp / BlockOpEmitter (append-only op-log side channel)
+    index.ts            package's public export surface (@forge/calliope) — exports
+                         UraniaBodyClient + FixtureBodyClient, NOT PgBodyClient (that
+                         stays mcp-internal; see backend.ts)
+    order-key.ts        fractional order-key scheme: between(a,b), sequence(n),
+                         compareKeys() — byte-wise COLLATE "C" semantics
+    fixture-client.ts   FixtureBodyClient: in-memory BodyClient, no copy-on-write
+                         modeling (not observable through the contract)
+    urania-client.ts    UraniaBodyClient: substrate-triple body model
+                         (note --hasPart--> section --text/order_key-->) over an
+                         injected UraniaCapture transport. Guarded by
+                         CALLIOPE_URANIA_WIRED. Also exports SECTION_TYPE/HAS_PART/
+                         TEXT/ORDER_KEY predicate constants and AuthoredBy type.
+    pg-client.ts        PgBodyClient: the sovereign-store backend. One `sections`
+                         table, PK (node_id, id) — NOT id alone (a section can be
+                         hasPart of >1 owner; found by the C2 parity gate on 15
+                         "twin owner" rows). ensureSchema() bootstraps idempotently.
+    document-store.ts   DocumentStore (C3): PgDocumentStore + FixtureDocumentStore.
+                         Dedup key (source_path, raw_hash); mirrors the phdb HTTP
+                         /write/document wire contract verbatim so vault-mcp's
+                         dissolve payloads pass through unchanged.
+    revision-store.ts   RevisionStore (C4): PgRevisionStore + FixtureRevisionStore.
+                         file_revisions + revision_triple_deltas, ids preserved
+                         verbatim from phdb. Blob shas are POINTERS ONLY — blob
+                         content lives in the vault's own git repo, never here.
+    plan-blocks.ts       Plan block-addressing (C7): parsePlanBlocks()/sliceBlock()/
+                         toBlockRef(). Pure — no I/O, no store. Parses feature
+                         headings (`### FN — Title · Size`, depth 2-4, id token =
+                         1-6 letters + digits) into addressable PlanBlocks; a block
+                         runs to the next same-or-shallower heading or EOF.
+    mcp/
+      backend.ts         env -> BackendKind ("pg"|"hades"|"urania"|"fixture") ->
+                          BodyClient (+ optional documents/revisions). backendKind()
+                          and makeBackend()/makeBodyClient() are the seam every
+                          entrypoint calls through. initBackend() bootstraps pg
+                          schemas async, before serving. withIndexPush() wraps
+                          pg/urania clients with the similarity-index push (below);
+                          hades is NOT wrapped (the gateway does its own push).
+      server.ts          createServer(client, {documents?, revisions?}) ->
+                          McpServer. Registers read_body/write_body/
+                          append_section/edit_section/apply_section_ops/
+                          read_body_revisions/read_body_at always; write_document/
+                          read_documents/read_plan iff documents given;
+                          file_revisions/revision_deltas iff revisions given.
+      tools.ts           Pure handler functions (readBody/writeBody/appendSection/
+                          editSection/applySectionOps/readBodyRevisions/
+                          readBodyAt) — the thing server.ts wraps and
+                          __tests__/mcp-tools.test.ts (+ apply-section-ops.test.ts,
+                          body-revisions.test.ts) drive directly against
+                          FixtureBodyClient. Each optional-capability handler
+                          (editSection, applySectionOps, the revision reads)
+                          throws a named "backend does not support X" error when
+                          the configured BodyClient lacks the method — no silent
+                          fallback.
+      main.ts            calliope-mcp bin: stdio transport.
+      http.ts             calliope-mcp-http bin: StreamableHTTPServerTransport,
+                          stateless (sessionIdGenerator: undefined), POST /mcp
+                          only (GET/DELETE not offered — no SSE, no sessions).
+                          resolvePort(): PORT || CALLIOPE_MCP_PORT || 8204.
+      hades-capture.ts    HadesCapture: gateway-auth transport (CHARON_URL) — the
+                          F2 path; writes get authored_by="human" via the
+                          gateway's SET ROLE human seam. hadesEnabled(env) gate.
+      live-capture.ts     LiveUraniaCapture: direct chaos/urania engine-service
+                          transport (CHAOS_URL, legacy URANIA_URL) — clotho-parity.
+      index-push.ts       IndexingBodyClient (B): decorates ANY BodyClient so every
+                          write also pushes the assembled prose to urania's
+                          `index_document` verb. Best-effort — a push failure never
+                          fails the body write; the index is derived state that
+                          re-syncs on the next write or backfill-index.ts.
+      backfill-index.ts   One-off CLI (B): sweeps every body-bearing node in the
+                          sovereign store and pushes it to urania's index, closing
+                          the gap for bodies written before the push shipped.
+                          `--probe` counts only. Needs DATABASE_URL +
+                          CALLIOPE_INDEX_URL (or URANIA_URL/CHAOS_URL).
+      heartbeat.ts        Bun-side mirror of stellar_core.AsyncHeartbeatPublisher:
+                          publishes {star,live,ready,metrics,ts} to
+                          calliope._ops.heartbeat on Pontus every interval.
+                          Degrades gracefully — a broker that never connects logs
+                          once per beat; never throws into the request path.
+      plan-ingest.ts      readPlan()/isReadPlanError() (C7): resolve a plan
+                          DocumentStore row by reference (document id or
+                          source_path, newest version wins), then either return
+                          the block index (+ body_text unless omit_body) or slice
+                          one block by id via plan-blocks.ts. Structured misses
+                          (document_not_found/block_not_found/bad_handle), never
+                          thrown. Registered as the read_plan tool only when a
+                          documents store is present.
+      migrate.ts          C2 tool: chaos hasPart-carrying subjects -> calliope-db,
+                          preserving section ids/text/order_key. Modes: default
+                          (migrate+parity+export), --probe (drift count only),
+                          --retract (post-cutover Chaos cleanup; refuses without
+                          a prior export file). Run from a checkout with
+                          reachability to both stores — NOT the deployed image
+                          (see Deploy below).
+      migrate-documents.ts    C3 tool: phdb history.documents -> calliope
+                          documents. PHDB_DATABASE_URL (source) + DATABASE_URL
+                          (dest). --probe for counts/parity only.
+      migrate-revisions.ts    C4 tool: phdb file_revisions +
+                          revision_triple_deltas -> calliope revisions. Denormalizes
+                          (subject,predicate,object) dictionary pks to labels.
+      migrate-dissolution-archive.ts   C5 tool: copies dissolutions /
+                          file_revision_dissolutions / materialization_events into
+                          archive_*-prefixed tables. Row-count parity is the gate.
+  __tests__/            vitest, one spec file per src module (22 total):
+                        apply-section-ops, backend, backfill-index, body-revisions,
+                        document-store, edit-section, fixture-client, hades-capture,
+                        heartbeat, index-push, live-capture, mcp-documents,
+                        mcp-http, mcp-plan-ingest, mcp-tools, migrate, order-key,
+                        pg-client, plan-blocks, plan-ingest, revision-store,
+                        urania-client.
 docs/body-facet.md    C2 ownership/definition record — read this before
                        touching anything about what a "body" is or who owns it.
-specs/                 spec-kit feature specs, one dir per cut:
+specs/                 spec-kit feature specs, one dir per cut (only the earliest
+                       five cuts got a spec-kit dir; A8/A11/B/C7 shipped
+                       docstring-only):
   001-muse-sheds-ui/            the editor-UI split (mirrors aglaia's 001-the-split)
   002-facet-carve-sovereign-store/   the pg carve (C2)
   003-prose-strangle-move/      the document strangle (C3)
   004-notes-and-revision/       the revision re-home (C4)
   005-dissolution-residuals.md  the dissolution-bridge archive (C5, spec-lite)
 rules/sast/dataflow.yml   opengrep vendored taint ruleset — the CI SAST gate
-__tests__/              vitest, one spec file per src module (14 total):
-                        backend, document-store, edit-section, fixture-client,
-                        hades-capture, live-capture, mcp-documents, mcp-http,
-                        mcp-tools, migrate, order-key, pg-client,
-                        revision-store, urania-client.
-compose.yaml           nas01 deploy: calliope-mcp + calliope-db (pgvector/pg17)
-Dockerfile             multi-stage bun build; bun bundles http.ts --target=bun,
-                       no node_modules shipped; apt upgrade for base-CVE fixes;
-                       HEALTHCHECK via bun fetch against /mcp (expects 405)
-.forgejo/workflows/deploy.yml   push-to-main gate + build + Trivy + publish +
-                       deploy (nas01 runner) + cosign sign/attest
+turbo.json              root task graph: lint/typecheck/test depend on ^build;
+                       build outputs .next/**, dist/**
+star.toml                DERIVED by the Hephaestus foundry — do not hand-edit.
+                       Conformance target for the shared admission gate: image
+                       ref, entrypoint (apps/calliope/src/mcp/http.ts), policy bundle.
+Dockerfile             multi-stage bun build on stellar_core:bun-mcp (digest-pinned);
+                       manifests copied + `bun install --frozen-lockfile` BEFORE
+                       source (cache-layer ordering, see the file's own comment);
+                       bundles apps/calliope/src/mcp/http.ts --target=bun into
+                       ONE server.js — the runtime stage ships no node_modules AND
+                       no source tree; HEALTHCHECK via bun fetch against /mcp
+                       (expects 405, proving the server answers).
+.forgejo/workflows/build.yml   caller stub -> foundry-stocks' shared,
+                       language-agnostic build workflow (push to main).
+.forgejo/workflows/ci.yml      caller stub -> foundry-stocks' shared
+                       frontend-ci.yml (pull_request).
 ```
+
+**Retired, do not look for:** `compose.yaml` and `.forgejo/workflows/deploy.yml`
+— both dropped when deploy moved to the shared services lane (2026-07,
+"services lane owns deploy now"). There is no local `infra/` either.
 
 ## Entry points
 
-- **`calliope-mcp`** bin -> `src/mcp/main.ts` -> stdio MCP server. Run
-  locally: `bun run start` (equivalently `bun run src/mcp/main.ts`).
-- **`calliope-mcp-http`** bin -> `src/mcp/http.ts` -> streamable-HTTP MCP
-  server on `POST /mcp`, port `8204` default. Run locally: `bun run
-  start:http`. This is what the deployed container runs (`Dockerfile` CMD).
-- **Library** — `src/index.ts`, consumed as `@forge/calliope` (a source
-  import via `file:../calliope`, no build step). Exports the `Section` /
-  `BodyClient` contract, both service backends, `order-key` helpers, and the
-  C3/C4 store classes.
-- **Migration CLIs** — the four `src/mcp/migrate*.ts` scripts, each a
-  standalone `bun run src/mcp/migrate*.ts [--probe|--retract]` invocation
-  meant to run inside the deployed container (needs both `DATABASE_URL` and,
-  for C3/C4/C5, `PHDB_DATABASE_URL`).
+- **`calliope-mcp`** bin -> `apps/calliope/src/mcp/main.ts` -> stdio MCP
+  server. Run locally (from `apps/calliope/`): `bun run start` (equivalently
+  `bun run src/mcp/main.ts`).
+- **`calliope-mcp-http`** bin -> `apps/calliope/src/mcp/http.ts` ->
+  streamable-HTTP MCP server on `POST /mcp`, port `8204` default. Run
+  locally: `bun run start:http`. This is what the deployed image's bundled
+  `server.js` runs (`Dockerfile` CMD) — the image does NOT run this file
+  directly; it runs the `bun build --target=bun` output.
+- **Library** — `apps/calliope/src/index.ts`, consumed as `@forge/calliope`
+  (a source import via `file:../calliope`, no build step in dev). Exports
+  the `Section`/`BodyClient` contract, the Urania and Fixture backends
+  (PgBodyClient is NOT re-exported — mcp-internal only, reached via
+  `mcp/backend.ts`), `order-key` helpers, and the C3/C4 store classes.
+- **Migration + ops CLIs** — the four `mcp/migrate*.ts` scripts plus
+  `mcp/backfill-index.ts`, each a standalone `bun run src/mcp/<name>.ts
+  [--probe|--retract]` invocation. Run from a checkout with network
+  reachability to the needed stores (`DATABASE_URL` always; `PHDB_DATABASE_URL`
+  for C3/C4/C5; `CALLIOPE_INDEX_URL`/`URANIA_URL`/`CHAOS_URL` for the
+  backfill) — **not** the deployed runtime image, which ships only the
+  bundled `server.js` with no source tree and no `bun install`.
 
 ## Build / Test / Run
 
-All commands from `package.json` scripts — bun runs TypeScript directly, no
-build step, no `dist/`:
+From the repo root, `package.json` scripts delegate to `turbo run <task>`,
+which fans out to the one workspace (`apps/calliope`); bun runs TypeScript
+directly in dev/test, no build step, no `dist/` until `bun run build`:
 
 ```sh
 bun install                # deps (packageManager: bun@1.3.14, engines.node >=22.13)
-bun run lint                # eslint . (typescript-eslint strictTypeChecked + stylisticTypeChecked)
-bun run typecheck           # tsc --noEmit
-bun run test                # vitest run
-bun run test:watch          # vitest
-bun run format              # prettier --write "**/*.{ts,tsx,md,json,css}"
+bun run lint                # turbo run lint -> eslint . (strictTypeChecked + stylisticTypeChecked)
+bun run typecheck           # turbo run typecheck -> tsc --noEmit
+bun run test                # turbo run test -> vitest run
+bun run format              # prettier --write "**/*.{ts,tsx,json,css}" — .md excluded (see prettierignore/CI note below)
 bun run format:check
-bun run start                # calliope-mcp (stdio)
-bun run start:http           # calliope-mcp-http (:8204)
+bun run gate                # format:check && turbo run lint typecheck test build
 ```
+
+From `apps/calliope/` directly: `bun run test:watch` (vitest), `bun run
+start` (calliope-mcp, stdio), `bun run start:http` (calliope-mcp-http,
+:8204), `bun run dev` (`--watch` http.ts), `bun run build` (bundles
+http.ts to `dist/server.js`).
 
 Local dev backend defaults to `urania`/`chaos` reads unless you set
 `CALLIOPE_MCP_BACKEND=fixture` (safe, in-memory) or `DATABASE_URL` (real
@@ -168,12 +267,14 @@ Local dev backend defaults to `urania`/`chaos` reads unless you set
 `FixtureBodyClient`/`FixtureDocumentStore`/`FixtureRevisionStore` — no live
 network or DB needed to run `bun run test`.
 
-CI (`.forgejo/workflows/deploy.yml`, on push to `main`, non-docs paths):
-format:check → lint → typecheck → test → `bun audit --audit-level=high` →
-opengrep SAST (`rules/sast/`, blocking) → `docker compose build --no-cache` →
-Trivy image scan (blocking on fixable HIGH/CRITICAL) → registry publish →
-`docker compose up -d` on the `nas01` runner → cosign sign + SBOM attest →
-Dependency-Track upload (non-fatal).
+CI is two Forgejo Actions caller stubs, NOT a local `deploy.yml` (that file
+is retired — deploy now lives in the shared services lane, out of this
+repo): `.forgejo/workflows/ci.yml` (on `pull_request`) delegates to
+foundry-stocks' `frontend-ci.yml` (bun install + `bun run gate` + audit +
+opengrep); `.forgejo/workflows/build.yml` (push to `main`, non-docs/non-infra
+paths) delegates to foundry-stocks' language-agnostic build workflow
+(`docker build .`). Publish/sign/scan/deploy mechanics live in those shared
+workflows, not here.
 
 ## Conventions and gotchas
 
@@ -196,19 +297,22 @@ Dependency-Track upload (non-fatal).
   id-only PK silently drops twin-owner rows on read. This was found live by
   the C2 parity gate (15 affected owners) — don't "simplify" the PK back to
   `id` alone.
-- **`editSection` is optional on `BodyClient`** for backward compatibility,
-  but both shipped clients (`FixtureBodyClient`, `UraniaBodyClient`,
-  `PgBodyClient`) implement it. `editSection`/`edit_section` REJECTS loudly
-  if a configured backend lacks it — no silent fallback to a coarse rewrite.
+- **`editSection`/`applySectionOps`/`readRevisions`/`readRevisionAt` are all
+  optional on `BodyClient`** for backward compatibility, but all three
+  shipped clients (`FixtureBodyClient`, `UraniaBodyClient`, `PgBodyClient`)
+  implement them. Each corresponding tool handler (`edit_section`,
+  `apply_section_ops`, `read_body_revisions`, `read_body_at`) REJECTS loudly
+  if a configured backend lacks the method — no silent fallback to a coarse
+  rewrite.
 - **`CALLIOPE_URANIA_WIRED` gates the live substrate transport** inside
   `UraniaBodyClient`; `backend.ts` sets it on for both live substrate
   backends (`urania`, `hades`) — if you construct a `UraniaBodyClient`
   directly outside that factory, you must set the flag yourself or writes
   silently no-op.
 - **`CHAOS_URL` is legacy-`URANIA_URL`-compatible** — both env vars are
-  honored for the same setting throughout (`live-capture.ts`, `compose.yaml`
-  comments). Post-C2, this path is migration/retraction reads ONLY; the
-  serving path is `pg`.
+  honored for the same setting throughout (`backend.ts`, `live-capture.ts`).
+  Post-C2, this path is migration/retraction reads ONLY; the serving path is
+  `pg`.
 - **Migration scripts are idempotent and parity-gated**, not fire-and-forget:
   each does per-row/per-node hash comparison between source and destination
   and exits nonzero on mismatch. `--retract` (C2 only) refuses to run without
@@ -219,14 +323,16 @@ Dependency-Track upload (non-fatal).
   on planning-graph section-nodes — a different mechanism, different grain,
   no section tree. Don't conflate the two when reasoning about "who owns
   this prose."
-- **`compose.yaml` interpolates `${CALLIOPE_DB_PASSWORD}` at deploy time** —
-  an unset var ships the literal string as the real credential. The deploy
-  workflow explicitly guards this (`test -n "$CALLIOPE_DB_PASSWORD"` before
-  `docker compose up`); preserve that guard in any workflow edit.
+- **The old `compose.yaml`-based deploy is retired** (see the Deploy note at
+  the end of the module map) — deploy secrets/interpolation guards for
+  `calliope-db`'s password now live in the shared services-lane pipeline,
+  not in this repo. Don't go looking for a local `docker compose up` guard;
+  it isn't here anymore.
 - **`eslint.config.mjs` ignores `**/*.config.*`** including itself and
   `vitest.config.ts` — don't expect lint to catch issues in those files.
-- No `AGENTS.md`/`CLAUDE.md` exists in this repo as of this writing — fleet
-  governance that normally layers on top isn't present in this worktree.
+- `AGENTS.md`/`CLAUDE.md` DO exist in this worktree (furnace-poured,
+  gitignored) — see the top-of-file note. A fresh clone won't have them
+  until `furnace pour` runs.
 
 ## Related repos
 
@@ -241,10 +347,16 @@ Dependency-Track upload (non-fatal).
 - **`tantalus`** — the render surface for clotho's graph; imports the
   (now-Aglaia) editor for body text and/or calls Calliope's MCP tools.
 - **`urania`/`chaos`** — the shared graph-substrate engine service. Pre-C2,
-  the only home for bodies; post-C2, migration-read-only for Calliope.
+  the only home for bodies; post-C2, migration/retraction-read-only for the
+  body model itself, PLUS a new write relationship since B: Calliope's
+  `index-push.ts` pushes assembled body prose to urania's `index_document`
+  verb on every write (best-effort; urania re-embeds without decoding the
+  section model).
 - **`athena`** — the planning-graph facet; a consumer of Calliope's body
-  verbs (`revise_section_node`), and the owner of the unrelated `hasBody`
-  literal (see gotchas).
+  verbs (`revise_section_node`), the owner of the unrelated `hasBody`
+  literal (see gotchas), AND (since C7) the caller of `read_plan` —
+  `orchestrate_plan` takes a plan by reference (a `PlanHandle`) instead of
+  loading the whole `plan_text` into its context.
 - **`vault-mcp`** — the vault write-gate; its dissolve path is the one live
   caller of `write_document` (step 2, `/dissolution/declare`, C5).
 - **`phdb`** — the legacy monolith being strangled. `history.documents`
