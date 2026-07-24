@@ -34,6 +34,7 @@ import type { RevisionStore } from "../revision-store.js";
 import { backendKind, initBackend, makeBackend } from "./backend.js";
 import { createServer } from "./server.js";
 import type { ChaosFacet } from "../chaos-client.js";
+import type { TagStore } from "../tag-store.js";
 import { startHeartbeat } from "./heartbeat.js";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
@@ -78,11 +79,13 @@ async function handleMcp(
   documents?: DocumentStore,
   revisions?: RevisionStore,
   chaos?: ChaosFacet,
+  tags?: TagStore,
 ): Promise<void> {
   const server = createServer(client, {
     ...(documents !== undefined ? { documents } : {}),
     ...(revisions !== undefined ? { revisions } : {}),
     ...(chaos !== undefined ? { chaos } : {}),
+    ...(tags !== undefined ? { tags } : {}),
   });
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session id, no server-initiated streams to keep alive.
@@ -104,6 +107,7 @@ export function createCalliopeHttpServer(
   documents?: DocumentStore,
   revisions?: RevisionStore,
   chaos?: ChaosFacet,
+  tags?: TagStore,
 ): ReturnType<typeof createHttpServer> {
   // One backend for the server's lifetime: the store (or fixture memory)
   // is shared across every stateless request. A caller that needs async
@@ -113,6 +117,7 @@ export function createCalliopeHttpServer(
   let docStore = documents;
   let revStore = revisions;
   let chaosFacet = chaos;
+  let tagStore = tags;
   let client = prebuilt;
   if (client === undefined) {
     const backend = makeBackend(kind);
@@ -120,6 +125,7 @@ export function createCalliopeHttpServer(
     docStore ??= backend.documents;
     revStore ??= backend.revisions;
     chaosFacet ??= backend.chaos;
+    tagStore ??= backend.tags;
   }
   return createHttpServer((req, res) => {
     const url = req.url ?? "";
@@ -140,7 +146,7 @@ export function createCalliopeHttpServer(
       return;
     }
 
-    handleMcp(req, res, client, docStore, revStore, chaosFacet).catch(
+    handleMcp(req, res, client, docStore, revStore, chaosFacet, tagStore).catch(
       (err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
         process.stderr.write(`calliope-mcp-http: request error: ${message}\n`);
@@ -173,6 +179,7 @@ async function main(): Promise<void> {
     backend.documents,
     backend.revisions,
     backend.chaos,
+    backend.tags,
   );
 
   await new Promise<void>((resolve) => {

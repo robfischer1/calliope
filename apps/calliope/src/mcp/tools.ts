@@ -28,7 +28,10 @@ import {
   isNodeToken,
   opAdd,
   opCreate,
+  opRemove,
 } from "../chaos-client.js";
+import { computeTagDelta, extractInlineTags, normalizeTag } from "../tags.js";
+import type { TagCount, TagStore } from "../tag-store.js";
 
 /** A section as the MCP returns it (the lib {@link Section} shape, verbatim). */
 export interface ToolSection {
@@ -310,6 +313,7 @@ export async function createNote(
   dial: ChaosDial,
   scope: string,
   input: { title: string; parent?: string; tags?: string[] },
+  tagStore?: TagStore,
 ): Promise<CreateNoteResult | CreateNoteError> {
   const title = input.title.trim();
   if (title.length === 0) {
@@ -381,6 +385,11 @@ export async function createNote(
         };
       }
     }
+    if (tagStore !== undefined && input.tags !== undefined) {
+      await reconcileNoteTags(dial, scope, tagStore, node, {
+        explicit: input.tags,
+      });
+    }
     return { node_id: node, created: false };
   }
 
@@ -418,5 +427,102 @@ export async function createNote(
     };
   }
 
+  if (tagStore !== undefined && input.tags !== undefined) {
+    await reconcileNoteTags(dial, scope, tagStore, token, {
+      explicit: input.tags,
+    });
+  }
+
   return { node_id: token, created: true };
+}
+
+// ── C9: the tag path ─────────────────────────────────────────────────────────
+
+/** The graph predicate a note's tags ride. */
+export const HAS_TAG = "hasTag";
+
+/**
+ * Reconcile a note's `hasTag` edges + mirror rows against the given sets.
+ * The graph writes first (it is the truth); the mirror follows. Explicit
+ * rows survive every inline reconcile (provenance rides the mirror).
+ */
+export async function reconcileNoteTags(
+  dial: ChaosDial,
+  scope: string,
+  store: TagStore,
+  nodeId: string,
+  next: { inline?: string[]; explicit?: string[] },
+): Promise<{ added: string[]; removed: string[] }> {
+  const standing = await store.byNode(nodeId);
+  const delta = computeTagDelta(standing, next);
+  if (delta.toAdd.length === 0 && delta.toRemove.length === 0) {
+    return { added: [], removed: [] };
+  }
+  const ops = [
+    ...delta.toAdd.map((r) => opAdd(nodeId, HAS_TAG, { toLiteral: r.tag })),
+    ...delta.toRemove.map((tag) =>
+      opRemove(nodeId, HAS_TAG, { toLiteral: tag }),
+    ),
+  ];
+  const res = await dial.admit(ops, scope);
+  if (!res.admitted) {
+    throw new ChaosClientError(
+      `reconcileNoteTags: the gate refused the tag batch for ${nodeId}`,
+      "admit_refused",
+      res.violations,
+    );
+  }
+  for (const r of delta.toAdd) {
+    await store.upsert(nodeId, r.tag, r.source);
+  }
+  for (const tag of delta.toRemove) {
+    await store.remove(nodeId, tag);
+  }
+  return {
+    added: delta.toAdd.map((r) => r.tag),
+    removed: delta.toRemove,
+  };
+}
+
+/**
+ * The body-write hook: for a Note-kind node (kind-gated via the node's
+ * `hasType` edge — work-node prose never enters the tag path), extract the
+ * body's inline tags and reconcile. Reads the CURRENT body from the client
+ * so every write shape (coarse, append, edit, block ops) feeds one path.
+ */
+export async function maybeReconcileInlineTags(
+  client: BodyClient,
+  dial: ChaosDial,
+  scope: string,
+  store: TagStore,
+  nodeId: string,
+): Promise<void> {
+  const edges = await dial.edges(nodeId);
+  const isNote = edges.some(
+    (e) => e.predicate === "hasType" && e.value === NOTE_KIND,
+  );
+  if (!isNote) {
+    return;
+  }
+  const sections = await client.readBody(nodeId);
+  const text = sections.map((s) => s.text).join("\n");
+  await reconcileNoteTags(dial, scope, store, nodeId, {
+    inline: extractInlineTags(text),
+  });
+}
+
+/** `list_by_tag(tag)` — the graph's indexed point lookup, server-side. */
+export async function listByTag(
+  dial: ChaosDial,
+  scope: string,
+  tag: string,
+): Promise<{ tag: string; node_ids: string[] }> {
+  const norm = normalizeTag(tag);
+  const node_ids = await dial.findByValue(scope, HAS_TAG, norm);
+  return { tag: norm, node_ids };
+}
+
+/** `list_tags()` — the distinct set with counts (the mirror's enumeration). */
+export async function listTags(store: TagStore): Promise<{ tags: TagCount[] }> {
+  return { tags: await store.distinct() };
 }

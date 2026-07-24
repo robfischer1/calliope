@@ -23,6 +23,8 @@
  * `tools/call` JSON-RPC those transports use.
  */
 
+import { createHash } from "node:crypto";
+
 const DEFAULT_THEMIS_URL = "http://themis:8200";
 const DEFAULT_CHAOS_URL = "http://chaos:8206";
 const TIMEOUT_MS = 30_000;
@@ -92,6 +94,32 @@ export interface ChaosDial {
   resolveNodes(tokens: string[]): Promise<Record<string, string>>;
   /** The node's outbound edges — the heal-on-reuse read. */
   edges(token: string): Promise<NodeEdge[]>;
+  /** The indexed literal point lookup — `find_by_value(graph, p, v)` (C9). */
+  findByValue(
+    scope: string,
+    predicate: string,
+    value: string,
+  ): Promise<string[]>;
+}
+
+/** SHA-256 name-hash of a bare graph/scope name (the chaos identity form). */
+export function scopeHash(name: string): string {
+  return createHash("sha256").update(name, "utf8").digest("hex");
+}
+
+/** Retract one edge; the mirror of {@link opAdd}. */
+export function opRemove(
+  fromId: string,
+  predicate: string,
+  target: { toLiteral?: string; toNode?: string },
+): ChaosOp {
+  return {
+    op: "removeEdge",
+    from_id: fromId,
+    predicate,
+    to_literal: target.toLiteral ?? null,
+    to_node: target.toNode ?? null,
+  };
 }
 
 /** POST one `tools/call` and unwrap FastMCP's `{result}` envelope. */
@@ -220,6 +248,23 @@ export class LiveChaosDial implements ChaosDial {
         String(v),
       ]),
     );
+  }
+
+  async findByValue(
+    scope: string,
+    predicate: string,
+    value: string,
+  ): Promise<string[]> {
+    this.id += 1;
+    const raw = await rpc(this.chaos, this.id, "find_by_value", {
+      graph: scopeHash(scope),
+      predicate,
+      value,
+    });
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    return raw.map(asStr).filter((t) => HEX64.test(t));
   }
 
   async edges(token: string): Promise<NodeEdge[]> {
@@ -385,6 +430,13 @@ export class FixtureChaosDial implements ChaosDial {
           isNode: toNode !== null && toNode !== undefined,
         });
         this.nodeEdges.set(from, list);
+      } else if (op.op === "removeEdge") {
+        const from = asStr(op.from_id);
+        const value = asStr(op.to_node) || asStr(op.to_literal);
+        const list = (this.nodeEdges.get(from) ?? []).filter(
+          (e) => !(e.predicate === asStr(op.predicate) && e.value === value),
+        );
+        this.nodeEdges.set(from, list);
       }
     }
     return Promise.resolve({ admitted: true, minted, violations: [] });
@@ -408,6 +460,20 @@ export class FixtureChaosDial implements ChaosDial {
 
   edges(token: string): Promise<NodeEdge[]> {
     return Promise.resolve(this.nodeEdges.get(token) ?? []);
+  }
+
+  findByValue(
+    _scope: string,
+    predicate: string,
+    value: string,
+  ): Promise<string[]> {
+    const out: string[] = [];
+    for (const [token, list] of this.nodeEdges) {
+      if (list.some((e) => e.predicate === predicate && e.value === value)) {
+        out.push(token);
+      }
+    }
+    return Promise.resolve(out.sort());
   }
 
   /** Test helper: pre-register a node as if it existed on the dictionary. */

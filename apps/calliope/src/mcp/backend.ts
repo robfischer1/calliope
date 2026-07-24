@@ -31,6 +31,7 @@ import {
   LiveChaosDial,
   notesScope,
 } from "../chaos-client.js";
+import { FixtureTagStore, PgTagStore, type TagStore } from "../tag-store.js";
 import { FixtureRevisionStore, PgRevisionStore } from "../revision-store.js";
 import { FixtureBodyClient } from "../fixture-client.js";
 import { UraniaBodyClient } from "../urania-client.js";
@@ -159,6 +160,8 @@ export interface Backend {
   revisions?: RevisionStore;
   /** The graph-write muscle (C8) — same presence rule as `documents`. */
   chaos?: ChaosFacet;
+  /** The tag mirror (C9) — same presence rule as `documents`. */
+  tags?: TagStore;
 }
 
 /** Build the body client AND its facet stores from one backend selection. */
@@ -172,6 +175,7 @@ export function makeBackend(
       documents: new FixtureDocumentStore(),
       revisions: new FixtureRevisionStore(),
       chaos: { dial: new FixtureChaosDial(), scope: notesScope(env) },
+      tags: new FixtureTagStore(),
     };
   }
   if (kind === "pg") {
@@ -182,6 +186,7 @@ export function makeBackend(
       documents: new PgDocumentStore(pool),
       revisions: new PgRevisionStore(pool),
       chaos: { dial: new LiveChaosDial(), scope: notesScope(env) },
+      tags: new PgTagStore(pool),
     };
   }
   return { client: makeBodyClient(kind, env) };
@@ -195,6 +200,9 @@ export async function initBackend(backend: Backend): Promise<void> {
   }
   if (backend.revisions instanceof PgRevisionStore) {
     await backend.revisions.ensureSchema();
+  }
+  if (backend.tags instanceof PgTagStore) {
+    await backend.tags.ensureSchema();
   }
 }
 
