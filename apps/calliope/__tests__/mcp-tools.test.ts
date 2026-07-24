@@ -238,3 +238,109 @@ describe("create_note — the note-native mint (C8)", () => {
     ]);
   });
 });
+
+// ── C9: the tag path over the fixtures ───────────────────────────────────────
+
+import { FixtureTagStore } from "../src/tag-store.js";
+import {
+  HAS_TAG,
+  listByTag,
+  listTags,
+  maybeReconcileInlineTags,
+  reconcileNoteTags,
+} from "../src/mcp/tools.js";
+
+describe("the tag path (C9)", () => {
+  it("create_note writes explicit tags as hasTag edges + mirror rows", async () => {
+    const dial = new FixtureChaosDial();
+    const store = new FixtureTagStore();
+    const result = await createNote(
+      dial,
+      SCOPE,
+      { title: "Tagged", tags: ["#Journal", "brain-soup"] },
+      store,
+    );
+    if (isCreateNoteError(result)) throw new Error("create failed");
+    const edges = await dial.edges(result.node_id);
+    const tags = edges
+      .filter((e) => e.predicate === HAS_TAG)
+      .map((e) => e.value);
+    expect(tags.sort()).toEqual(["#brain-soup", "#journal"]);
+    expect(await store.byNode(result.node_id)).toEqual([
+      { tag: "#brain-soup", source: "explicit" },
+      { tag: "#journal", source: "explicit" },
+    ]);
+  });
+
+  it("inline reconcile: adds, removes, never touches explicit", async () => {
+    const dial = new FixtureChaosDial();
+    const store = new FixtureTagStore();
+    const created = await createNote(
+      dial,
+      SCOPE,
+      { title: "R", tags: ["#journal"] },
+      store,
+    );
+    if (isCreateNoteError(created)) throw new Error("create failed");
+    const node = created.node_id;
+    await reconcileNoteTags(dial, SCOPE, store, node, {
+      inline: ["#a", "#b"],
+    });
+    await reconcileNoteTags(dial, SCOPE, store, node, {
+      inline: ["#b", "#c"],
+    });
+    const edges = await dial.edges(node);
+    const tags = edges
+      .filter((e) => e.predicate === HAS_TAG)
+      .map((e) => e.value);
+    expect(tags.sort()).toEqual(["#b", "#c", "#journal"]);
+  });
+
+  it("the body-write hook is kind-gated: only Note-kind nodes reconcile", async () => {
+    const dial = new FixtureChaosDial();
+    const store = new FixtureTagStore();
+    const body = new FixtureBodyClient();
+    // a Note node
+    const created = await createNote(dial, SCOPE, { title: "N" }, store);
+    if (isCreateNoteError(created)) throw new Error("create failed");
+    await body.saveBody(created.node_id, [{ text: "hello #tagme" }]);
+    await maybeReconcileInlineTags(body, dial, SCOPE, store, created.node_id);
+    expect(
+      (await dial.edges(created.node_id)).some(
+        (e) => e.predicate === HAS_TAG && e.value === "#tagme",
+      ),
+    ).toBe(true);
+    // a non-Note node: same body content, no extraction
+    const work = "ab".repeat(32);
+    await body.saveBody(work, [{ text: "work prose #never" }]);
+    await maybeReconcileInlineTags(body, dial, SCOPE, store, work);
+    expect(await dial.edges(work)).toEqual([]);
+  });
+
+  it("list_by_tag + list_tags serve the read half", async () => {
+    const dial = new FixtureChaosDial();
+    const store = new FixtureTagStore();
+    const a = await createNote(
+      dial,
+      SCOPE,
+      { title: "A", tags: ["#x"] },
+      store,
+    );
+    const b = await createNote(
+      dial,
+      SCOPE,
+      { title: "B", tags: ["#x", "#y"] },
+      store,
+    );
+    if (isCreateNoteError(a) || isCreateNoteError(b)) throw new Error("create");
+    const byTag = await listByTag(dial, SCOPE, "X");
+    expect(byTag.tag).toBe("#x");
+    expect(byTag.node_ids.sort()).toEqual([a.node_id, b.node_id].sort());
+    expect(await listTags(store)).toEqual({
+      tags: [
+        { tag: "#x", count: 2 },
+        { tag: "#y", count: 1 },
+      ],
+    });
+  });
+});

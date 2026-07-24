@@ -30,8 +30,15 @@ import {
   writeBody,
 } from "./tools.js";
 import { readPlan, isReadPlanError } from "./plan-ingest.js";
-import { createNote, isCreateNoteError } from "./tools.js";
+import {
+  createNote,
+  isCreateNoteError,
+  listByTag,
+  listTags,
+  maybeReconcileInlineTags,
+} from "./tools.js";
 import type { ChaosFacet } from "../chaos-client.js";
+import type { TagStore } from "../tag-store.js";
 
 /**
  * Adapt a typed tool result to the MCP SDK's `structuredContent` slot, which
@@ -63,6 +70,12 @@ export interface ServerOptions {
    * registers `create_note` — the note-native gated mint on the notes graph.
    */
   chaos?: ChaosFacet;
+  /**
+   * The tag mirror (C9). With the chaos facet, additionally registers
+   * `list_by_tag` + `list_tags` and arms the body-write inline-tag
+   * reconcile + create_note's explicit tags.
+   */
+  tags?: TagStore;
 }
 
 /** Build a configured MCP server bound to `client`, ready to `connect()`. */
@@ -74,6 +87,29 @@ export function createServer(
     name: "calliope-mcp",
     version: "0.1.0",
   });
+
+  // C9: the inline-tag reconcile — fires after any successful body write
+  // when the chaos facet + tag mirror are wired. Non-fatal: a tag failure
+  // never fails the body write it rides behind (logged loudly instead).
+  const afterBodyWrite = async (nodeId: string): Promise<void> => {
+    if (options?.chaos === undefined || options.tags === undefined) {
+      return;
+    }
+    try {
+      await maybeReconcileInlineTags(
+        client,
+        options.chaos.dial,
+        options.chaos.scope,
+        options.tags,
+        nodeId,
+      );
+    } catch (err) {
+      console.error(
+        `calliope-mcp: inline-tag reconcile failed for ${nodeId}: ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+    }
+  };
 
   server.registerTool(
     "read_body",
@@ -118,6 +154,7 @@ export function createServer(
     },
     async ({ node_id, sections }) => {
       const result = await writeBody(client, node_id, sections);
+      await afterBodyWrite(node_id);
       return {
         content: [
           { type: "text", text: `Saved ${String(result.count)} section(s).` },
@@ -141,6 +178,7 @@ export function createServer(
     },
     async ({ node_id, text }) => {
       const result = await appendSection(client, node_id, text);
+      await afterBodyWrite(node_id);
       return {
         content: [
           {
@@ -169,6 +207,7 @@ export function createServer(
     },
     async ({ node_id, section_id, text }) => {
       const result = await editSection(client, node_id, section_id, text);
+      await afterBodyWrite(node_id);
       return {
         content: [
           { type: "text", text: `Edited section ${result.section.id}.` },
@@ -236,6 +275,7 @@ export function createServer(
     },
     async ({ node_id, ops }) => {
       const result = await applySectionOps(client, node_id, ops);
+      await afterBodyWrite(node_id);
       return {
         content: [
           {
@@ -593,11 +633,16 @@ export function createServer(
         },
       },
       async ({ title, parent, tags }) => {
-        const result = await createNote(dial, scope, {
-          title,
-          ...(parent !== undefined ? { parent } : {}),
-          ...(tags !== undefined ? { tags } : {}),
-        });
+        const result = await createNote(
+          dial,
+          scope,
+          {
+            title,
+            ...(parent !== undefined ? { parent } : {}),
+            ...(tags !== undefined ? { tags } : {}),
+          },
+          options.tags,
+        );
         if (isCreateNoteError(result)) {
           return {
             content: [
@@ -613,6 +658,59 @@ export function createServer(
               type: "text",
               text: `note ${result.node_id} (${result.created ? "created" : "existing"})`,
             },
+          ],
+          structuredContent: structured(result),
+        };
+      },
+    );
+  }
+
+  if (options?.chaos !== undefined && options.tags !== undefined) {
+    const { dial, scope } = options.chaos;
+    const tagStore = options.tags;
+    server.registerTool(
+      "list_by_tag",
+      {
+        title: "Notes carrying a tag",
+        description:
+          "C9: the server-side tag slice — the notes-graph nodes carrying " +
+          "hasTag == the (lowercase-normalized) tag, over the graph's indexed " +
+          "point lookup. Returns {tag, node_ids}.",
+        inputSchema: {
+          tag: z
+            .string()
+            .min(1)
+            .describe("The tag (with or without the leading #)."),
+        },
+      },
+      async ({ tag }) => {
+        const result = await listByTag(dial, scope, tag);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${String(result.node_ids.length)} note(s) carry ${result.tag}.`,
+            },
+          ],
+          structuredContent: structured(result),
+        };
+      },
+    );
+
+    server.registerTool(
+      "list_tags",
+      {
+        title: "The distinct tag set",
+        description:
+          "C9: every tag Calliope has written, with carrier counts — the " +
+          "picker's chip source. Returns {tags: [{tag, count}]}.",
+        inputSchema: {},
+      },
+      async () => {
+        const result = await listTags(tagStore);
+        return {
+          content: [
+            { type: "text", text: `${String(result.tags.length)} tag(s).` },
           ],
           structuredContent: structured(result),
         };
