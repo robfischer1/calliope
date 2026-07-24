@@ -33,6 +33,7 @@ import type { DocumentStore } from "../document-store.js";
 import type { RevisionStore } from "../revision-store.js";
 import { backendKind, initBackend, makeBackend } from "./backend.js";
 import { createServer } from "./server.js";
+import type { ChaosFacet } from "../chaos-client.js";
 import { startHeartbeat } from "./heartbeat.js";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
@@ -76,10 +77,12 @@ async function handleMcp(
   client: BodyClient,
   documents?: DocumentStore,
   revisions?: RevisionStore,
+  chaos?: ChaosFacet,
 ): Promise<void> {
   const server = createServer(client, {
     ...(documents !== undefined ? { documents } : {}),
     ...(revisions !== undefined ? { revisions } : {}),
+    ...(chaos !== undefined ? { chaos } : {}),
   });
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session id, no server-initiated streams to keep alive.
@@ -100,6 +103,7 @@ export function createCalliopeHttpServer(
   prebuilt?: BodyClient,
   documents?: DocumentStore,
   revisions?: RevisionStore,
+  chaos?: ChaosFacet,
 ): ReturnType<typeof createHttpServer> {
   // One backend for the server's lifetime: the store (or fixture memory)
   // is shared across every stateless request. A caller that needs async
@@ -108,12 +112,14 @@ export function createCalliopeHttpServer(
   // so the fixture path serves the document verbs too.
   let docStore = documents;
   let revStore = revisions;
+  let chaosFacet = chaos;
   let client = prebuilt;
   if (client === undefined) {
     const backend = makeBackend(kind);
     client = backend.client;
     docStore ??= backend.documents;
     revStore ??= backend.revisions;
+    chaosFacet ??= backend.chaos;
   }
   return createHttpServer((req, res) => {
     const url = req.url ?? "";
@@ -134,22 +140,24 @@ export function createCalliopeHttpServer(
       return;
     }
 
-    handleMcp(req, res, client, docStore, revStore).catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`calliope-mcp-http: request error: ${message}\n`);
-      if (!res.headersSent) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            error: { code: -32603, message: "Internal server error" },
-            id: null,
-          }),
-        );
-      } else {
-        res.end();
-      }
-    });
+    handleMcp(req, res, client, docStore, revStore, chaosFacet).catch(
+      (err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`calliope-mcp-http: request error: ${message}\n`);
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              error: { code: -32603, message: "Internal server error" },
+              id: null,
+            }),
+          );
+        } else {
+          res.end();
+        }
+      },
+    );
   });
 }
 
@@ -164,6 +172,7 @@ async function main(): Promise<void> {
     backend.client,
     backend.documents,
     backend.revisions,
+    backend.chaos,
   );
 
   await new Promise<void>((resolve) => {

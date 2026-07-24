@@ -25,6 +25,12 @@ import type { BodyClient } from "../types.js";
 import type { DocumentStore } from "../document-store.js";
 import { FixtureDocumentStore, PgDocumentStore } from "../document-store.js";
 import type { RevisionStore } from "../revision-store.js";
+import {
+  type ChaosFacet,
+  FixtureChaosDial,
+  LiveChaosDial,
+  notesScope,
+} from "../chaos-client.js";
 import { FixtureRevisionStore, PgRevisionStore } from "../revision-store.js";
 import { FixtureBodyClient } from "../fixture-client.js";
 import { UraniaBodyClient } from "../urania-client.js";
@@ -151,6 +157,8 @@ export interface Backend {
   documents?: DocumentStore;
   /** The revision store (C4) — same presence rule as `documents`. */
   revisions?: RevisionStore;
+  /** The graph-write muscle (C8) — same presence rule as `documents`. */
+  chaos?: ChaosFacet;
 }
 
 /** Build the body client AND its facet stores from one backend selection. */
@@ -163,6 +171,7 @@ export function makeBackend(
       client: new FixtureBodyClient(),
       documents: new FixtureDocumentStore(),
       revisions: new FixtureRevisionStore(),
+      chaos: { dial: new FixtureChaosDial(), scope: notesScope(env) },
     };
   }
   if (kind === "pg") {
@@ -172,6 +181,7 @@ export function makeBackend(
       client: withIndexPush(new PgBodyClient(pool), env),
       documents: new PgDocumentStore(pool),
       revisions: new PgRevisionStore(pool),
+      chaos: { dial: new LiveChaosDial(), scope: notesScope(env) },
     };
   }
   return { client: makeBodyClient(kind, env) };

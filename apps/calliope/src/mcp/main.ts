@@ -24,6 +24,7 @@ async function main(): Promise<void> {
     ...(backend.revisions !== undefined
       ? { revisions: backend.revisions }
       : {}),
+    ...(backend.chaos !== undefined ? { chaos: backend.chaos } : {}),
   });
   const transport = new StdioServerTransport();
   await server.connect(transport);

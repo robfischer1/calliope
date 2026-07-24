@@ -128,3 +128,113 @@ describe("calliope-mcp tools — over FixtureBodyClient", () => {
     );
   });
 });
+
+// ── C8: create_note over the FixtureChaosDial ────────────────────────────────
+
+import {
+  FixtureChaosDial,
+  NOTE_ROOT_KIND,
+  NOTE_ROOT_LABEL,
+} from "../src/chaos-client.js";
+import { createNote, isCreateNoteError } from "../src/mcp/tools.js";
+
+const SCOPE = "notes";
+
+describe("create_note — the note-native mint (C8)", () => {
+  it("mints via two admits: createNode, then hasName/hasType/parent", async () => {
+    const dial = new FixtureChaosDial();
+    const result = await createNote(dial, SCOPE, { title: "My Note" });
+    expect(isCreateNoteError(result)).toBe(false);
+    if (isCreateNoteError(result)) return;
+    expect(result.created).toBe(true);
+    // admits: root mint (2: create+edges) then the note mint (2: create+edges)
+    expect(dial.admits).toHaveLength(4);
+    const noteEdges = dial.admits[3];
+    expect(noteEdges?.ops.map((o) => o.predicate)).toEqual([
+      "hasName",
+      "hasType",
+      "parent",
+    ]);
+    const parentOp = noteEdges?.ops[2];
+    const root = await dial.findByName(NOTE_ROOT_KIND, NOTE_ROOT_LABEL);
+    expect(parentOp?.to_node).toBe(root[0]);
+    expect(noteEdges?.scope).toBe(SCOPE);
+  });
+
+  it("is idempotent: an identical re-run answers the standing node, no new admits", async () => {
+    const dial = new FixtureChaosDial();
+    const first = await createNote(dial, SCOPE, { title: "Twice" });
+    if (isCreateNoteError(first)) throw new Error("first create failed");
+    const before = dial.admits.length;
+    const second = await createNote(dial, SCOPE, { title: "Twice" });
+    if (isCreateNoteError(second)) throw new Error("second create failed");
+    expect(second.node_id).toBe(first.node_id);
+    expect(second.created).toBe(false);
+    expect(dial.admits.length).toBe(before); // heal check read only, no writes
+  });
+
+  it("heals an interrupted mint: a dictionary row without edges gets them", async () => {
+    const dial = new FixtureChaosDial();
+    const orphan = "cd".repeat(32);
+    dial.seed("Note", "Broken", orphan); // row exists, edges never landed
+    const result = await createNote(dial, SCOPE, { title: "Broken" });
+    if (isCreateNoteError(result)) throw new Error("heal path errored");
+    expect(result.node_id).toBe(orphan);
+    expect(result.created).toBe(false);
+    const healed = await dial.edges(orphan);
+    expect(healed.map((e) => e.predicate)).toEqual([
+      "hasName",
+      "hasType",
+      "parent",
+    ]);
+  });
+
+  it("honors a caller parent that exists on the dictionary", async () => {
+    const dial = new FixtureChaosDial();
+    const parent = "ef".repeat(32);
+    dial.seed("Note", "The Parent", parent);
+    const result = await createNote(dial, SCOPE, {
+      title: "Child",
+      parent,
+    });
+    if (isCreateNoteError(result)) throw new Error("create failed");
+    const edges = await dial.edges(result.node_id);
+    expect(edges.find((e) => e.predicate === "parent")?.value).toBe(parent);
+    // no root ensure ran: only the note's own two admits
+    expect(dial.admits).toHaveLength(2);
+  });
+
+  it("rejects a malformed and an unknown parent as bad_parent", async () => {
+    const dial = new FixtureChaosDial();
+    const malformed = await createNote(dial, SCOPE, {
+      title: "X",
+      parent: "not-hex",
+    });
+    expect(isCreateNoteError(malformed) && malformed.error).toBe("bad_parent");
+    const unknown = await createNote(dial, SCOPE, {
+      title: "X",
+      parent: "aa".repeat(32),
+    });
+    expect(isCreateNoteError(unknown) && unknown.error).toBe("bad_parent");
+  });
+
+  it("rejects an empty title and empty tags", async () => {
+    const dial = new FixtureChaosDial();
+    const t = await createNote(dial, SCOPE, { title: "   " });
+    expect(isCreateNoteError(t) && t.error).toBe("bad_title");
+    const g = await createNote(dial, SCOPE, { title: "ok", tags: ["a", " "] });
+    expect(isCreateNoteError(g) && g.error).toBe("bad_tags");
+  });
+
+  it("surfaces a gate refusal with its violations, verbatim", async () => {
+    const dial = new FixtureChaosDial();
+    dial.refuseWith = [{ shape: "Note", missing: ["hasName"] }];
+    const result = await createNote(dial, SCOPE, { title: "Refused" });
+    expect(isCreateNoteError(result)).toBe(true);
+    if (!isCreateNoteError(result)) return;
+    expect(result.error).toBe("admit_refused");
+    expect(result.violations).toEqual([
+      { shape: "Note", missing: ["hasName"] },
+    ]);
+  });
+});

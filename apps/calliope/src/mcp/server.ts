@@ -30,6 +30,8 @@ import {
   writeBody,
 } from "./tools.js";
 import { readPlan, isReadPlanError } from "./plan-ingest.js";
+import { createNote, isCreateNoteError } from "./tools.js";
+import type { ChaosFacet } from "../chaos-client.js";
 
 /**
  * Adapt a typed tool result to the MCP SDK's `structuredContent` slot, which
@@ -56,6 +58,11 @@ export interface ServerOptions {
    * into the vault's own git repo).
    */
   revisions?: RevisionStore;
+  /**
+   * The graph-write muscle (C8). When present, the server additionally
+   * registers `create_note` — the note-native gated mint on the notes graph.
+   */
+  chaos?: ChaosFacet;
 }
 
 /** Build a configured MCP server bound to `client`, ready to `connect()`. */
@@ -543,6 +550,71 @@ export function createServer(
         return {
           content: [{ type: "text", text: `${String(rows.length)} delta(s).` }],
           structuredContent: { deltas: rows },
+        };
+      },
+    );
+  }
+
+  if (options?.chaos !== undefined) {
+    const { dial, scope } = options.chaos;
+    server.registerTool(
+      "create_note",
+      {
+        title: "Create a note (the note-native mint)",
+        description:
+          "C8: mint a Note-kind identity node on the notes graph through the " +
+          "gated two-admit path (createNode, then hasName/hasType/parent " +
+          "edges), auto-parenting to the invisible 'Notes' root when no " +
+          "parent is named — orphan-safe, idempotent on (Note, title), with " +
+          "heal-on-reuse for interrupted mints. tags[] is accepted and " +
+          "forward-carried (the hasTag write is C9's). Returns {node_id, " +
+          "created}; misses are structured (bad_title / bad_parent / " +
+          "bad_tags / admit_refused).",
+        inputSchema: {
+          title: z
+            .string()
+            .min(1)
+            .describe("The note's title — its graph name AND idempotency key."),
+          parent: z
+            .string()
+            .regex(/^[0-9a-f]{64}$/)
+            .optional()
+            .describe(
+              "Parent node token; omitted, the note parents to the ensured " +
+                "'Notes' root.",
+            ),
+          tags: z
+            .array(z.string())
+            .optional()
+            .describe(
+              "Explicit tags (e.g. folder-derived) — validated here, written " +
+                "as hasTag edges by C9.",
+            ),
+        },
+      },
+      async ({ title, parent, tags }) => {
+        const result = await createNote(dial, scope, {
+          title,
+          ...(parent !== undefined ? { parent } : {}),
+          ...(tags !== undefined ? { tags } : {}),
+        });
+        if (isCreateNoteError(result)) {
+          return {
+            content: [
+              { type: "text", text: `${result.error}: ${result.detail}` },
+            ],
+            structuredContent: structured(result),
+            isError: true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: `note ${result.node_id} (${result.created ? "created" : "existing"})`,
+            },
+          ],
+          structuredContent: structured(result),
         };
       },
     );

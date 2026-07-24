@@ -21,6 +21,14 @@ import type {
   SectionInput,
   SectionOp,
 } from "../types.js";
+import {
+  type ChaosDial,
+  ChaosClientError,
+  ensureNotesRoot,
+  isNodeToken,
+  opAdd,
+  opCreate,
+} from "../chaos-client.js";
 
 /** A section as the MCP returns it (the lib {@link Section} shape, verbatim). */
 export interface ToolSection {
@@ -259,4 +267,156 @@ export async function readBodyAt(
   }
   const sections = await client.readRevisionAt(nodeId, revision);
   return { revision, sections: sections.map(toToolSection) };
+}
+
+// ── C8: the note-native mint ─────────────────────────────────────────────────
+
+/** `create_note` success: the note's identity (+ whether this call minted it). */
+export interface CreateNoteResult {
+  node_id: string;
+  created: boolean;
+}
+
+/** `create_note` structured miss — surfaced, never thrown. */
+export interface CreateNoteError {
+  error: "bad_title" | "bad_parent" | "bad_tags" | "admit_refused";
+  detail: string;
+  violations?: unknown[];
+}
+
+/** Type guard for the miss shape. */
+export function isCreateNoteError(
+  r: CreateNoteResult | CreateNoteError,
+): r is CreateNoteError {
+  return "error" in r;
+}
+
+/** The kind + type label a minted note carries. */
+export const NOTE_KIND = "Note";
+
+/**
+ * create_note(title, parent?, tags?) -> { node_id, created } — the C8 mint.
+ *
+ * Reuse-first (the F2 identity contract: `createNode` never dedups, so the
+ * name is looked up before any mint — `(Note, title)` IS the idempotency key);
+ * on a miss, the two-admit mint (createNode → `minted[0]`, then the edge
+ * batch: `hasName`, `hasType:"Note"`, `parent`) on the notes scope. A
+ * parentless note parents to the ensured "Notes" root — orphan-safety
+ * regardless of caller. `tags` is validated and otherwise inert (C9 wires the
+ * `hasTag` write). No section rows mint — the body is the node's (empty)
+ * section set, readable immediately; first write attaches sections.
+ */
+export async function createNote(
+  dial: ChaosDial,
+  scope: string,
+  input: { title: string; parent?: string; tags?: string[] },
+): Promise<CreateNoteResult | CreateNoteError> {
+  const title = input.title.trim();
+  if (title.length === 0) {
+    return { error: "bad_title", detail: "title must be non-empty" };
+  }
+  if (input.tags?.some((t) => t.trim() === "")) {
+    return { error: "bad_tags", detail: "tags must be non-empty strings" };
+  }
+
+  // Lazy parent resolve — shared by the mint and the heal-on-reuse paths.
+  const resolveParent = async (): Promise<string | CreateNoteError> => {
+    if (input.parent === undefined) {
+      try {
+        return await ensureNotesRoot(dial, scope);
+      } catch (err) {
+        if (err instanceof ChaosClientError && err.code === "admit_refused") {
+          return {
+            error: "admit_refused",
+            detail: err.message,
+            violations: err.violations,
+          };
+        }
+        throw err;
+      }
+    }
+    if (!isNodeToken(input.parent)) {
+      return {
+        error: "bad_parent",
+        detail: "parent must be a 64-hex node token",
+      };
+    }
+    const known = await dial.resolveNodes([input.parent]);
+    if (!(input.parent in known)) {
+      return {
+        error: "bad_parent",
+        detail: `parent ${input.parent} is not on the node dictionary`,
+      };
+    }
+    return input.parent;
+  };
+
+  const edgeBatch = (token: string, parent: string) => [
+    opAdd(token, "hasName", { toLiteral: title }),
+    opAdd(token, "hasType", { toLiteral: NOTE_KIND }),
+    opAdd(token, "parent", { toNode: parent }),
+  ];
+
+  const standing = await dial.findByName(NOTE_KIND, title);
+  if (standing.length > 0) {
+    const [node] = [...standing].sort();
+    if (node === undefined) {
+      return { error: "admit_refused", detail: "empty standing set" };
+    }
+    // Heal an interrupted mint: a dictionary row whose edge admit never
+    // landed (the invisible-row trap) gets its edges re-asserted here, so
+    // idempotent re-runs converge instead of returning a broken node.
+    const existing = await dial.edges(node);
+    if (!existing.some((e) => e.predicate === "hasName")) {
+      const parent = await resolveParent();
+      if (typeof parent !== "string") {
+        return parent;
+      }
+      const healed = await dial.admit(edgeBatch(node, parent), scope);
+      if (!healed.admitted) {
+        return {
+          error: "admit_refused",
+          detail: `the gate refused the healing edge batch for ${node}`,
+          violations: healed.violations,
+        };
+      }
+    }
+    return { node_id: node, created: false };
+  }
+
+  const parent = await resolveParent();
+  if (typeof parent !== "string") {
+    return parent;
+  }
+
+  const mint = await dial.admit([opCreate(NOTE_KIND, title)], scope);
+  if (!mint.admitted || mint.minted.length !== 1) {
+    return {
+      error: "admit_refused",
+      detail: "the gate refused the mint",
+      violations: mint.violations,
+    };
+  }
+  const [token] = mint.minted;
+  if (token === undefined) {
+    return {
+      error: "admit_refused",
+      detail: "the gate admitted but returned no minted token",
+      violations: mint.violations,
+    };
+  }
+
+  const edges = await dial.admit(edgeBatch(token, parent), scope);
+  if (!edges.admitted) {
+    return {
+      error: "admit_refused",
+      detail:
+        `the gate refused the edge batch for ${token} — the node is a ` +
+        "dictionary row without its edges; an identical re-run heals it " +
+        "(the reuse path re-asserts the missing edges)",
+      violations: edges.violations,
+    };
+  }
+
+  return { node_id: token, created: true };
 }
