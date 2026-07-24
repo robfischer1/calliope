@@ -2,11 +2,14 @@
 /**
  * Calliope-MCP entry point — the prose facet, exposed to LLMs over stdio.
  *
- * Selects a {@link BodyClient} backend from the environment (live urania by
- * default; `CALLIOPE_MCP_BACKEND=fixture` for a safe standalone server), builds
- * the four-tool server, and serves it over stdio. This is the `calliope-mcp`
- * bin — a separate entry from the lib, so the lib build and the Tantalus-facing
- * `@forge/calliope` export are unaffected.
+ * Selects a {@link BodyClient} backend from the environment (`pg` when
+ * `DATABASE_URL` is set — the sovereign store, the production default;
+ * `hades` when `CALLIOPE_WRITE_VIA_HADES`/`CHARON_URL` is set; else live
+ * urania; `CALLIOPE_MCP_BACKEND=fixture` for a safe standalone server),
+ * builds the server (four-to-nine tools, depending on which facet stores
+ * the backend supplies), and serves it over stdio. This is the
+ * `calliope-mcp` bin — a separate entry from the lib, so the lib build and
+ * the Tantalus-facing `@forge/calliope` export are unaffected.
  */
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
