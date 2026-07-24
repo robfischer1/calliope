@@ -88,6 +88,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
     expect(names).toEqual([
       "append_section",
       "apply_section_ops",
+      "create_note",
       "edit_section",
       "file_revisions",
       "read_body",
