@@ -18,7 +18,37 @@ describe("extractInlineTags — the scan.ts grammar, mirrored", () => {
     expect(extractInlineTags("x#not-a-tag")).toEqual([]);
     expect(extractInlineTags("#9nope leading digit")).toEqual([]);
     expect(extractInlineTags("##nope double hash")).toEqual([]);
-    expect(extractInlineTags("(#yes) parens are boundaries")).toEqual(["#yes"]);
+  });
+
+  it("only whitespace or text-start is a valid boundary — not punctuation", () => {
+    // Rob's own inline convention always has a space (or line-start) ahead of
+    // a #tag; anything else (parens, slashes, ...) is text that merely
+    // contains a `#`, not an authored tag.
+    expect(extractInlineTags("(#no) parens aren't boundaries")).toEqual([]);
+    expect(extractInlineTags("line one\n#yes at line start")).toEqual(["#yes"]);
+  });
+
+  it("does not sweep in a URL fragment's #-prefixed path segment", () => {
+    // A quoted Gmail permalink's `.../u/0/#inbox/FMfcgz...` used to read as
+    // a tag because `/` qualified as a boundary before the tightening above.
+    expect(
+      extractInlineTags(
+        "From <https://mail.google.com/mail/u/0/#inbox/FMfcgzGrblhftmnGmMDXhFFlnVnRqHxL>",
+      ),
+    ).toEqual([]);
+  });
+
+  it("excludes hex color shorthands but keeps real words at the same lengths", () => {
+    expect(
+      extractInlineTags("swatch #fff and accent #deadbeef and #cafe"),
+    ).toEqual([]);
+    // #4a90d9 never reaches the hex filter — the grammar already excludes a
+    // digit-led body, so this is really testing the letter-head rule stays
+    // in force.
+    expect(extractInlineTags("css var #4a90d9 unchanged")).toEqual([]);
+    expect(extractInlineTags("#deadline is not a color")).toEqual([
+      "#deadline",
+    ]);
   });
 
   it("normalizeTag canonicalizes with or without the hash", () => {

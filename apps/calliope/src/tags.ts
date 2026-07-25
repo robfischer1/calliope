@@ -11,8 +11,34 @@
  * form. Tag-nodes (rename, metadata) are the later evolution, not this pass.
  */
 
-/** scan.ts:62, verbatim — mirrored, not shared (render vs write halves). */
-const TAG_RE = /(^|[^\w#[])#([A-Za-z][\w/-]*)/g;
+/**
+ * scan.ts:62, verbatim — mirrored, not shared (render vs write halves).
+ *
+ * A tag starts at text-start or after whitespace — never mid-word, and never
+ * after any other punctuation. The prior grammar allowed any non-word
+ * character ahead of `#`, which let a quoted Gmail permalink's URL fragment
+ * (`.../u/0/#inbox/FMfcgzGrblhftmnGmMDXhFFlnVnRqHxL`) get swept in as a tag —
+ * the `/` right before `#` qualified as a boundary. Rob's own inline
+ * convention always has a space (or line-start) ahead of a `#tag`, so
+ * tightening the boundary to whitespace-only is both the fix and the true
+ * grammar; frontmatter's `tags:` field is a separate explicit source and
+ * never runs through this regex at all.
+ */
+const TAG_RE = /(^|\s)#([A-Za-z][\w/-]*)/g;
+
+/**
+ * CSS-style hex color shorthands (`#fff`, `#deadbeef`, `#cafe`, …) can pass
+ * the tag grammar above whenever every character happens to be a hex digit
+ * AND the body leads with a letter (a-f) — digit-led ones like `#4a90d9`
+ * never reach here since the grammar already requires a letter head. Excluded
+ * at the CSS-standard hex lengths: RGB / RGBA / RRGGBB / RRGGBBAA.
+ */
+const HEX_COLOR_LENGTHS = new Set([3, 4, 6, 8]);
+const HEX_DIGITS_RE = /^[0-9a-f]+$/i;
+
+function isHexColor(tag: string): boolean {
+  return HEX_COLOR_LENGTHS.has(tag.length) && HEX_DIGITS_RE.test(tag);
+}
 
 /** A stored tag with its write provenance. */
 export interface TagRow {
@@ -31,7 +57,7 @@ export function extractInlineTags(text: string): string[] {
   const out = new Set<string>();
   for (const m of text.matchAll(TAG_RE)) {
     const tag = m[2];
-    if (tag !== undefined) {
+    if (tag !== undefined && !isHexColor(tag)) {
       out.add(normalizeTag(tag));
     }
   }
