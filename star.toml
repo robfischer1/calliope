@@ -21,7 +21,7 @@ sync  = ["mcp"]
 async = []
 
 [observability]
-exports = ["metrics"]
+exports = ["metrics", "traces", "logs"]
 
 [image]
 ref = "forgejo.notusmi.com/rob/calliope:latest"
