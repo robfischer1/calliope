@@ -51,4 +51,21 @@ describe("order-key", () => {
     expect(() => between("5", "3")).toThrow();
     expect(() => between("5", "5")).toThrow();
   });
+
+  it("between(null, b) descends below zero-padded sequence keys", () => {
+    // sequence() pads with "0" ("01", "02", …) — the prepend-at-top case must
+    // mint a key strictly below the padded head (was broken: returned "11").
+    for (const b of ["01", "02", "001", "0100", "10"]) {
+      const k = between(null, b);
+      expect(compareKeys(k, b)).toBe(-1);
+    }
+    const [head] = sequence(3);
+    if (head === undefined) throw new Error("sequence(3) empty");
+    expect(compareKeys(between(null, head), head)).toBe(-1);
+  });
+
+  it("between(null, b) handles all-zero keys down to the floor", () => {
+    expect(compareKeys(between(null, "00"), "00")).toBe(-1);
+    expect(() => between(null, "0")).toThrow(/floor/);
+  });
 });

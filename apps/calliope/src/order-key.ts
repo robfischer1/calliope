@@ -44,17 +44,28 @@ export function between(a: string | null, b: string | null): string {
   return midpoint(a, b);
 }
 
-/** A key strictly below `b`. */
+/** A key strictly below `b`.
+ *
+ * `sequence()` zero-pads ("01", "02", …), so keys legitimately start below
+ * FIRST; the old fallback (`FIRST + FIRST`) returned a key ABOVE such a `b` —
+ * the prepend-at-top case was broken for every sequence-minted key (found by
+ * the G2 fs-client suite). Descend digit-wise instead. */
 function keyBelow(b: string): string {
-  // Smallest first char of b that exceeds FIRST? Prefer a shorter key.
   const head = b[0] ?? LAST;
-  if (head > FIRST) {
-    // A single digit one below the leading digit sorts before b.
+  if (head > "0") {
+    // A single digit one below the leading digit sorts before b (the "0" pad
+    // digit is byte-ordered below FIRST and equally valid).
     return String.fromCharCode(head.charCodeAt(0) - 1);
   }
-  // b starts at the floor; descend by prefixing b's lead and appending FIRST,
-  // which is strictly shorter-or-prefix-less than b.
-  return b + FIRST > b ? FIRST + FIRST : FIRST;
+  const tail = b.slice(1);
+  if (tail === "" || /^0+$/.test(tail)) {
+    // An all-zero key: one char shorter still sorts strictly below.
+    if (b.length <= 1) {
+      throw new Error(`between(): no key below the floor key "${b}"`);
+    }
+    return b.slice(0, -1);
+  }
+  return `0${keyBelow(tail)}`;
 }
 
 /** A key strictly above `a`. */
