@@ -15,11 +15,39 @@
  * under `bun build --target=bun`, unlike the native `node-rdkafka`).
  */
 
+import { randomUUID } from "node:crypto";
 import { Kafka, logLevel } from "kafkajs";
 import type { Producer } from "kafkajs";
 
 /** This star's identity in the heartbeat payload + topic (star.toml name). */
 const STAR = "calliope";
+
+/**
+ * A new id per PROCESS, minted once at module load.
+ *
+ * The fleet's deploy signal. Nothing in the heartbeat said which *instance* was
+ * beating, so "calliope restarted" — the moment a deploy actually lands — was
+ * not observable at all; a reader could only infer it by watching the
+ * cumulative metrics counters run backwards, which needs per-star history and
+ * has to be reimplemented by every consumer that wants the edge.
+ *
+ * Module scope, not per-publisher: a process has exactly one boot. Minting it
+ * inside `startHeartbeat` would make a publisher rebuilt on reconnect look like
+ * a restart — a false deploy edge, which is worse than no edge because a
+ * consumer would act on it.
+ *
+ * `.hex`-shaped (dashes stripped) for wire parity with the Python publisher's
+ * `uuid.uuid4().hex`.
+ */
+export const BOOT_ID = randomUUID().replaceAll("-", "");
+
+/**
+ * Env var carrying the git sha this image was built from. The shared build
+ * workflow stamps it as an `ENV` layer on the star's own image (alongside the
+ * `org.opencontainers.image.revision` label) precisely because a process cannot
+ * read its own image labels without the docker daemon.
+ */
+const REVISION_ENV = "STELLAR_REVISION";
 /** The topic Nyx / operators / Hades read this star's liveness from. */
 export const HEARTBEAT_TOPIC = `${STAR}._ops.heartbeat`;
 /**
@@ -37,6 +65,9 @@ export interface HeartbeatPayload {
   ready: boolean;
   metrics: Record<string, number>;
   ts: string;
+  boot_id: string;
+  /** Omitted entirely when the image is unstamped — never written as null. */
+  revision?: string;
 }
 
 /** A running heartbeat; `stop()` clears the timer + disconnects the producer. */
@@ -45,17 +76,49 @@ export interface HeartbeatHandle {
 }
 
 /**
- * Build the heartbeat payload for a given instant. Pure — `now` is injected so
- * the shape (and the ISO timestamp) is testable without a wall clock.
+ * Resolve the git sha this image was built from, or `undefined` if unstamped.
+ * Pure — the env is injected, matching `resolveBootstrap`.
+ *
+ * `undefined` rather than a placeholder: an unstamped image is a real state
+ * (built before the build began stamping, or built by hand), and a reader must
+ * be able to tell "running an unknown revision" from "running one called
+ * unknown".
  */
-export function heartbeatPayload(now: Date): HeartbeatPayload {
-  return {
+export function revision(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const raw = env[REVISION_ENV];
+  const trimmed = raw?.trim();
+  return trimmed !== undefined && trimmed !== "" ? trimmed : undefined;
+}
+
+/**
+ * Build the heartbeat payload for a given instant. Pure — `now` and the env are
+ * injected so the shape (and the ISO timestamp) is testable without a wall
+ * clock or a mutated process env.
+ *
+ * `boot_id` and `revision` describe the PROCESS, not its health, so they are
+ * read here rather than threaded through call sites.
+ *
+ * `revision` is OMITTED when unstamped rather than written as null, so an image
+ * built before the build began stamping produces the exact payload it always
+ * did.
+ */
+export function heartbeatPayload(
+  now: Date,
+  env: NodeJS.ProcessEnv = process.env,
+): HeartbeatPayload {
+  const payload: HeartbeatPayload = {
     star: STAR,
     live: true,
     ready: true,
     metrics: {},
     ts: now.toISOString(),
+    boot_id: BOOT_ID,
   };
+  const rev = revision(env);
+  if (rev !== undefined) payload.revision = rev;
+  return payload;
 }
 
 /**
