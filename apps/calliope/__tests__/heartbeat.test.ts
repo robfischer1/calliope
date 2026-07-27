@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  BOOT_ID,
   DEFAULT_INTERVAL_MS,
   HEARTBEAT_TOPIC,
   heartbeatPayload,
   resolveBootstrap,
+  revision,
 } from "../src/mcp/heartbeat.js";
 
 /**
@@ -16,18 +18,64 @@ import {
 describe("heartbeatPayload", () => {
   it("builds the op-contract payload for the given instant", () => {
     const now = new Date("2026-07-08T12:34:56.000Z");
-    expect(heartbeatPayload(now)).toEqual({
+    expect(heartbeatPayload(now, {})).toEqual({
       star: "calliope",
       live: true,
       ready: true,
       metrics: {},
       ts: "2026-07-08T12:34:56.000Z",
+      boot_id: BOOT_ID,
     });
   });
 
   it("serialises the timestamp as ISO-8601 (matching the Python publisher)", () => {
     const now = new Date("2026-01-02T03:04:05.678Z");
-    expect(heartbeatPayload(now).ts).toBe("2026-01-02T03:04:05.678Z");
+    expect(heartbeatPayload(now, {}).ts).toBe("2026-01-02T03:04:05.678Z");
+  });
+
+  it("carries the same boot_id on every beat of one process", () => {
+    // The deploy edge is "this id CHANGED". If it moved between beats of a
+    // single process, every consumer would read a restart that never happened.
+    const a = heartbeatPayload(new Date("2026-07-08T12:00:00.000Z"), {});
+    const b = heartbeatPayload(new Date("2026-07-08T12:00:30.000Z"), {});
+    expect(a.boot_id).toBe(b.boot_id);
+    expect(a.boot_id).toBe(BOOT_ID);
+  });
+
+  it("omits revision entirely when the image is unstamped", () => {
+    // Omitted, not null: an image built before the build began stamping must
+    // produce the exact payload it always did.
+    const payload = heartbeatPayload(new Date(), {});
+    expect("revision" in payload).toBe(false);
+  });
+
+  it("carries revision when the build stamped it", () => {
+    const payload = heartbeatPayload(new Date(), {
+      STELLAR_REVISION: "829a8ee62b1383981e193dbf3557410a900d0e49",
+    });
+    expect(payload.revision).toBe("829a8ee62b1383981e193dbf3557410a900d0e49");
+  });
+});
+
+describe("BOOT_ID", () => {
+  it("is a dash-free uuid, matching the Python publisher's uuid4().hex", () => {
+    expect(BOOT_ID).toMatch(/^[0-9a-f]{32}$/);
+  });
+});
+
+describe("revision", () => {
+  it("reads STELLAR_REVISION", () => {
+    expect(revision({ STELLAR_REVISION: "abc123" })).toBe("abc123");
+  });
+
+  it("treats unset, blank and whitespace-only as unstamped", () => {
+    expect(revision({})).toBeUndefined();
+    expect(revision({ STELLAR_REVISION: "" })).toBeUndefined();
+    expect(revision({ STELLAR_REVISION: "   " })).toBeUndefined();
+  });
+
+  it("trims surrounding whitespace", () => {
+    expect(revision({ STELLAR_REVISION: "  abc123  " })).toBe("abc123");
   });
 });
 
