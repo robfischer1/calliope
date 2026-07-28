@@ -48,11 +48,25 @@ describe("FsBodyClient.readBody — derivation", () => {
     expect(await client.readBody("empty.md")).toEqual([]);
   });
 
-  it("a CRLF file has no boundary and reads coarse", async () => {
+  it("a CRLF file normalizes to LF and splits like its LF twin", async () => {
     await seed("crlf.md", "alpha\r\n\r\nbeta\r\n");
     const sections = await client.readBody("crlf.md");
-    expect(sections).toHaveLength(1);
-    expect(sections[0]?.text).toBe("alpha\r\n\r\nbeta\r\n");
+    expect(sections.map((s) => s.text)).toEqual(["alpha", "beta\n"]);
+  });
+
+  it("lone-CR endings normalize the same way (markdown-it parity)", async () => {
+    await seed("cr.md", "alpha\r\rbeta");
+    const sections = await client.readBody("cr.md");
+    expect(sections.map((s) => s.text)).toEqual(["alpha", "beta"]);
+  });
+
+  it("a CRLF frontmatter fence derives as its own section run", async () => {
+    await seed("fenced.md", "---\r\ntitle: t\r\n---\r\n\r\nbody\r\n");
+    const sections = await client.readBody("fenced.md");
+    expect(sections.map((s) => s.text)).toEqual([
+      "---\ntitle: t\n---",
+      "body\n",
+    ]);
   });
 
   it("subdirectory paths resolve", async () => {
@@ -74,7 +88,6 @@ describe("FsBodyClient.readBody — derivation", () => {
 describe("FsBodyClient round trips — byte identity", () => {
   const cases: [string, string][] = [
     ["lf multi-block", "alpha\n\nbeta\n\ngamma\n"],
-    ["crlf", "alpha\r\n\r\nbeta\r\n"],
     ["no trailing newline", "alpha\n\nbeta"],
     ["multi-blank-line", "alpha\n\n\nbeta\n\n\n\ngamma"],
     ["leading blank lines", "\n\nalpha\n\n"],
@@ -90,6 +103,16 @@ describe("FsBodyClient round trips — byte identity", () => {
       expect(await disk("note.md")).toBe(content);
     });
   }
+
+  it("a CRLF file's read → save lands as LF (the dialect flip)", async () => {
+    await seed("note.md", "alpha\r\n\r\nbeta\r\n");
+    const sections = await client.readBody("note.md");
+    await client.saveBody(
+      "note.md",
+      sections.map((s) => ({ text: s.text })),
+    );
+    expect(await disk("note.md")).toBe("alpha\n\nbeta\n");
+  });
 
   it("saveBody creates parent directories", async () => {
     await client.saveBody("fresh/new.md", [{ text: "born" }]);

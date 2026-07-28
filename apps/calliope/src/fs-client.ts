@@ -3,11 +3,15 @@
  * interface (G2 of the Grace plan): a directory IS the store, a root-relative
  * path IS the node identity, a markdown file IS a body.
  *
- * Sections are DERIVED deterministically from file content: the text split on
- * the editor's own block separator (`"\n\n"` — aglaia's BLOCK_SEP). Split and
- * join on one separator are an identity, so an unmodified read → save round
- * trip is byte-lossless by construction; a CRLF file simply has no boundary
- * and reads as one coarse section (degradation, never corruption).
+ * Sections are DERIVED deterministically from file content: line endings
+ * normalize to LF (matching the editor's own markdown normalization — a CRLF
+ * file otherwise has no `"\n\n"` boundary, reads as one coarse section, and
+ * its raw `\r\n` baseline is text the editor's serializer can never emit, so
+ * every such doc sat permanently dirty), then the text splits on the editor's
+ * block separator (`"\n\n"` — aglaia's BLOCK_SEP). Split and join on one
+ * separator are an identity, so an unmodified LF read → save round trip is
+ * byte-lossless; a CRLF file's first real save lands as LF (the dialect
+ * flip — deliberate, like the serializer's own markdown normalization).
  *
  * Section identity is generational: `sha256(fileBytes):index`. Every external
  * change churns every id, which is exactly the staleness signal the editor's
@@ -49,9 +53,12 @@ function hashOf(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-/** Derive the canonical section list for a file's bytes. */
+/** Derive the canonical section list for a file's bytes. Line endings
+ *  normalize to LF exactly as markdown-it does (`\r\n` and lone `\r`), so the
+ *  derived text is always text the editor can serialize back. The generation
+ *  id keeps hashing the RAW bytes — any external rewrite still churns ids. */
 function derive(bytes: Buffer): Section[] {
-  const text = bytes.toString("utf8");
+  const text = bytes.toString("utf8").replace(/\r\n?/g, "\n");
   if (text === "") return [];
   const generation = hashOf(bytes);
   const parts = text.split(SECTION_SEP);
