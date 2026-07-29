@@ -71,7 +71,8 @@ describe("the ferry wire", () => {
     const { sections } = (await read.json()) as {
       sections: { id: string; text: string; orderKey: string }[];
     };
-    expect(sections.map((s) => s.text)).toEqual(["alpha", "beta"]);
+    // The user grain: a file is ONE section, blank lines never chunk.
+    expect(sections.map((s) => s.text)).toEqual(["alpha\n\nbeta"]);
 
     const write = await ferry("write_body", {
       node_id: "note.md",
@@ -83,26 +84,21 @@ describe("the ferry wire", () => {
     );
   });
 
-  it("apply_section_ops speaks the snake_case wire and 409s stale ids", async () => {
+  it("apply_section_ops is not served by the fs backend (0.14 de-inference)", async () => {
     await writeFile(path.join(root, "note.md"), "alpha", "utf8");
     const read = await ferry("read_body", { node_id: "note.md" });
     const { sections } = (await read.json()) as {
       sections: { id: string }[];
     };
-    const ok = await ferry("apply_section_ops", {
+    const res = await ferry("apply_section_ops", {
       node_id: "note.md",
       ops: [{ op: "update", section_id: sections[0]?.id, text: "ALPHA" }],
     });
-    expect(ok.status).toBe(200);
-    expect(await readFile(path.join(root, "note.md"), "utf8")).toBe("ALPHA");
-
-    const stale = await ferry("apply_section_ops", {
-      node_id: "note.md",
-      ops: [{ op: "update", section_id: sections[0]?.id, text: "old" }],
-    });
-    expect(stale.status).toBe(409);
-    const err = (await stale.json()) as { error: string };
-    expect(err.error).toMatch(/^stale_section:/);
+    expect(res.status).toBe(500);
+    const err = (await res.json()) as { error: string };
+    expect(err.error).toMatch(/does not support/);
+    // Nothing written — the editor degrades to whole-body writes instead.
+    expect(await readFile(path.join(root, "note.md"), "utf8")).toBe("alpha");
   });
 
   it("unsupported and unknown verbs answer 4xx/5xx without crashing", async () => {

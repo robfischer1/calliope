@@ -3,73 +3,58 @@
  * interface (G2 of the Grace plan): a directory IS the store, a root-relative
  * path IS the node identity, a markdown file IS a body.
  *
- * Sections are DERIVED deterministically from file content: line endings
- * normalize to LF (matching the editor's own markdown normalization — a CRLF
- * file otherwise has no `"\n\n"` boundary, reads as one coarse section, and
- * its raw `\r\n` baseline is text the editor's serializer can never emit, so
- * every such doc sat permanently dirty), then the text splits on the editor's
- * block separator (`"\n\n"` — aglaia's BLOCK_SEP). Split and join on one
- * separator are an identity, so an unmodified LF read → save round trip is
- * byte-lossless; a CRLF file's first real save lands as LF (the dialect
- * flip — deliberate, like the serializer's own markdown normalization).
+ * A file derives as exactly ONE section (the 0.14 de-inference pass: the
+ * block grain is USER-determined, so the old blank-line chunker — every
+ * `"\n\n"` a section — is gone; a note is one block until the user splits
+ * it in the editor). Line endings normalize to LF (matching the editor's
+ * own markdown normalization; a raw `\r\n` baseline is text the serializer
+ * can never emit, so a CRLF doc sat permanently dirty), and a CRLF file's
+ * first real save lands as LF — deliberate, like the serializer's own
+ * normalization. An unmodified LF read → save round trip is byte-lossless.
  *
- * Section identity is generational: `sha256(fileBytes):index`. Every external
- * change churns every id, which is exactly the staleness signal the editor's
- * compare-before-write (durability) and the interface's `stale_section:`
- * reject consume — the whole conflict model rides the existing contract.
+ * Section identity is generational: `sha256(fileBytes):0`. Every external
+ * change churns the id, which is exactly the staleness signal the editor's
+ * compare-before-write (durability) consumes — the whole conflict model
+ * rides the existing contract.
  *
- * The derivation invariant (binding, tested): {@link applySectionOps} returns
- * exactly what the next {@link readBody} of the written file returns — ids and
- * order keys are re-derived post-write, never carried forward.
+ * `applySectionOps` is deliberately ABSENT: files have no durable section
+ * identity for fine-grained ops to anchor on, and the old implementation
+ * was built on the premise that derived sections cannot contain the
+ * separator — false the moment derivation stopped splitting. The editor's
+ * durable path degrades to the honest whole-body compare-and-write.
  */
 
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import type {
-  AppliedOp,
-  ApplySectionOpsResult,
-  BodyClient,
-  Section,
-  SectionInput,
-  SectionOp,
-} from "./types.js";
-import { compareKeys, sequence } from "./order-key.js";
+import type { BodyClient, Section, SectionInput } from "./types.js";
+import { sequence } from "./order-key.js";
 
-/** The editor's block separator (aglaia BLOCK_SEP) — the derivation seam. */
+/** The editor's block separator (aglaia BLOCK_SEP) — the JOIN seam only:
+ *  a multi-block save writes blocks joined; reads never split on it. */
 const SECTION_SEP = "\n\n";
 
 /** Extensions the body layer serves; everything else is not a body. */
 const SERVED_EXTENSIONS = new Set([".md", ".markdown"]);
 
-/** A derived section plus the working mutation state applySectionOps uses. */
-interface WorkingSection {
-  id: string;
-  text: string;
-  orderKey: string;
-}
-
 function hashOf(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-/** Derive the canonical section list for a file's bytes. Line endings
- *  normalize to LF exactly as markdown-it does (`\r\n` and lone `\r`), so the
- *  derived text is always text the editor can serialize back. The generation
- *  id keeps hashing the RAW bytes — any external rewrite still churns ids. */
+/** Derive a file's body: exactly ONE section carrying the whole normalized
+ *  text (the user grain — no inferred chunking). Line endings normalize to
+ *  LF exactly as markdown-it does (`\r\n` and lone `\r`), so the derived
+ *  text is always text the editor can serialize back. The generation id
+ *  keeps hashing the RAW bytes — any external rewrite still churns it. */
 function derive(bytes: Buffer): Section[] {
   const text = bytes.toString("utf8").replace(/\r\n?/g, "\n");
   if (text === "") return [];
   const generation = hashOf(bytes);
-  const parts = text.split(SECTION_SEP);
-  const keys = sequence(parts.length);
-  return parts.map((part, i) => {
-    const orderKey = keys[i];
-    if (orderKey === undefined) {
-      throw new Error("unreachable: sequence(n) yielded fewer than n keys");
-    }
-    return { id: `${generation}:${String(i)}`, text: part, orderKey };
-  });
+  const orderKey = sequence(1)[0];
+  if (orderKey === undefined) {
+    throw new Error("unreachable: sequence(1) yielded no key");
+  }
+  return [{ id: `${generation}:0`, text, orderKey }];
 }
 
 export class FsBodyClient implements BodyClient {
@@ -172,8 +157,6 @@ export class FsBodyClient implements BodyClient {
       await this.#writeAtomic(abs, texts.join(SECTION_SEP));
       const rewritten = await this.#readBytes(abs);
       const fresh = rewritten === null ? [] : derive(rewritten);
-      // Sections before the edit are derived splits and cannot contain the
-      // separator, so the edit's head sits at the same index post-derive.
       const head = fresh[Math.min(index, fresh.length - 1)];
       if (head === undefined) {
         throw new Error(
@@ -181,102 +164,6 @@ export class FsBodyClient implements BodyClient {
         );
       }
       return head;
-    });
-  }
-
-  async applySectionOps(
-    nodeId: string,
-    ops: SectionOp[],
-  ): Promise<ApplySectionOpsResult> {
-    const abs = this.#resolve(nodeId);
-    return this.#serialized(abs, async () => {
-      const bytes = await this.#readBytes(abs);
-      const current = bytes === null ? [] : derive(bytes);
-      const working: WorkingSection[] = current.map((s) => ({ ...s }));
-      const byId = new Map(working.map((s) => [s.id, s]));
-
-      // Batch rules: every referenced id must be a CURRENT section, and at
-      // most one op may touch a given section — any violation rejects whole.
-      const touched = new Set<string>();
-      for (const op of ops) {
-        if (op.op === "add") continue;
-        const target = byId.get(op.sectionId);
-        if (target === undefined) {
-          throw new Error(
-            `stale_section: section ${op.sectionId} is not part of node ${nodeId}.`,
-          );
-        }
-        if (touched.has(op.sectionId)) {
-          throw new Error(
-            `stale_section: section ${op.sectionId} was consumed earlier in the batch.`,
-          );
-        }
-        touched.add(op.sectionId);
-      }
-
-      // Apply in memory. Op order keys place adds/moves; the final body is the
-      // key-sorted working set. Deletions leave the set entirely.
-      const additions: WorkingSection[] = [];
-      const deleted = new Set<string>();
-      for (const op of ops) {
-        if (op.op === "add") {
-          additions.push({ id: "", text: op.text, orderKey: op.orderKey });
-        } else if (op.op === "update") {
-          const target = byId.get(op.sectionId);
-          if (target === undefined) continue; // unreachable post-validation
-          target.text = op.text;
-          if (op.orderKey !== undefined) target.orderKey = op.orderKey;
-        } else if (op.op === "delete") {
-          deleted.add(op.sectionId);
-        } else {
-          const target = byId.get(op.sectionId);
-          if (target === undefined) continue; // unreachable post-validation
-          target.orderKey = op.orderKey;
-        }
-      }
-      const survivors = working
-        .filter((s) => !deleted.has(s.id))
-        .concat(additions)
-        .sort((a, b) => compareKeys(a.orderKey, b.orderKey));
-
-      const text = survivors.map((s) => s.text).join(SECTION_SEP);
-      await this.#writeAtomic(abs, text);
-
-      // Re-derive: the result IS the next readBody (the derivation invariant).
-      const rewritten = await this.#readBytes(abs);
-      const fresh = rewritten === null ? [] : derive(rewritten);
-
-      // Per-op alignment: map each op to its section's post-apply derived row.
-      // An op's text may itself contain the separator and re-split; derived
-      // originals cannot (they came from a split). The exact fresh index of a
-      // survivor's head is the running sum of its predecessors' split counts.
-      const headIndex = new Map<WorkingSection, number>();
-      let acc = 0;
-      for (const s of survivors) {
-        headIndex.set(s, acc);
-        acc += s.text.split(SECTION_SEP).length;
-      }
-      const rowFor = (probe: (s: WorkingSection) => boolean): AppliedOp => {
-        const survivor = survivors.find(probe);
-        const idx =
-          survivor === undefined ? -1 : (headIndex.get(survivor) ?? -1);
-        const row = idx >= 0 ? fresh[idx] : undefined;
-        return row === undefined
-          ? { id: "", orderKey: "" }
-          : { id: row.id, orderKey: row.orderKey };
-      };
-      const applied: AppliedOp[] = ops.map((op) => {
-        if (op.op === "delete") {
-          const was = byId.get(op.sectionId);
-          return { id: op.sectionId, orderKey: was?.orderKey ?? "" };
-        }
-        if (op.op === "add") {
-          return rowFor((s) => s.id === "" && s.text === op.text);
-        }
-        return rowFor((s) => s.id === op.sectionId);
-      });
-
-      return { sections: fresh, applied };
     });
   }
 }
