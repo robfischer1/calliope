@@ -1,0 +1,73 @@
+{
+  "absorbs": [],
+  "base": {
+    "pinned": true,
+    "ref": "forgejo.notusmi.com/rob/stellar_core:bun-mcp@sha256:a8d21e4ae94191e03d7d83f23f8456c60122163c4345d4d3b215074a2a533b91"
+  },
+  "charter": "The Notes & Prose Muse's wire: the MCP body service over the section body model.",
+  "cluster": "pantheon",
+  "copier": {
+    "answers": {
+      "app_name": "calliope",
+      "author_name": "Rob Fischer",
+      "db_kind": "postgres",
+      "description": "The Notes & Prose Muse's MCP body service",
+      "framework": "mcp",
+      "interstellar": true,
+      "port": 8204,
+      "project_name": "Calliope",
+      "repo_name": "calliope",
+      "scope": "calliope",
+      "sovereign_database": true,
+      "verb_prefix": "calliope",
+      "year": 2026
+    },
+    "template": "frontend-repo-template",
+    "template_url": "https://forgejo.notusmi.com/rob/frontend-repo-template.git",
+    "version": "v0.13.0"
+  },
+  "db": "shared",
+  "entrypoint": "apps/calliope/src/mcp/http.ts",
+  "exports": [
+    "metrics",
+    "traces",
+    "logs"
+  ],
+  "furnace": {
+    "kit": "code-repo-sdd",
+    "provider": "claude"
+  },
+  "governance": {
+    "bundle": "oci://forgejo.notusmi.com/rob/furnace/policy",
+    "digest": "sha256:bda3af5f1c5c2ad1ec21505c796c0c5c93af8feb160fdeec90c872f24aca2c3b",
+    "tag": "policy-v1"
+  },
+  "hallmark_sha256": "879cac0e6fb99d113e445bca096980f0019908510eb2d0d2f2297a96ed3d128c",
+  "image_ref": "forgejo.notusmi.com/rob/calliope:latest",
+  "interface": {
+    "async": [],
+    "sync": [
+      "mcp"
+    ]
+  },
+  "name": "calliope",
+  "namespace": "calliope",
+  "orbits": {},
+  "service": "Calliope",
+  "star_kind": null,
+  "substrate_kind": "container",
+  "tofu": {
+    "env": {
+      "CHAOS_URL": "http://chaos:8206",
+      "HOST": "0.0.0.0",
+      "URANIA_URL": "http://urania:8202"
+    },
+    "image": "forgejo.notusmi.com/rob/calliope:latest",
+    "listen_port": 8204,
+    "networks": [
+      "pantheon"
+    ]
+  },
+  "verb_prefix": "calliope",
+  "version": "0.0.1"
+}
