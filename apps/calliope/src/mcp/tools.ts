@@ -210,7 +210,9 @@ function decodeOp(w: WireSectionOp, i: number): SectionOp {
  * are the `edit_section` copy-on-write engine generalized. A stale
  * `section_id` rejects with a `stale_section` error (the editor's
  * compare-before-write race backstop). Requires a {@link BodyClient} with
- * the optional `applySectionOps` (both shipped backends implement it).
+ * the optional `applySectionOps` — the store-backed backends implement it;
+ * the fs backend deliberately does NOT (0.14: files carry no durable
+ * section identity, and the editor degrades to whole-body writes).
  */
 export async function applySectionOps(
   client: BodyClient,
