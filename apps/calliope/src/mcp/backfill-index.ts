@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Backfill urania's similarity index with EXISTING body prose (B).
  *
