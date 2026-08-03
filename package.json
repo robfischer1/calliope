@@ -46,9 +46,13 @@
   },
   "overrides": {
     "kysely": ">=0.28.12",
-    "fast-uri": "4.1.1",
-    "brace-expansion": "5.0.8",
+    "fast-uri": ">=4.1.2",
+    "brace-expansion": ">=5.0.9",
     "postcss": ">=8.5.18",
-    "@hono/node-server": ">=2.0.10"
+    "@hono/node-server": ">=2.0.10",
+    "ip-address": ">=10.4.0"
+  },
+  "dependencies": {
+    "brace-expansion": "^5.0.8"
   }
 }
