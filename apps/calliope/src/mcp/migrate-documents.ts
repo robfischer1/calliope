@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * C3 migration tool — port the monolith's dissolved-document archive
  * (`phdb history.documents`) into Calliope's document store

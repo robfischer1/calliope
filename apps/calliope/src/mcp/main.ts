@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Calliope-MCP entry point — the prose facet, exposed to LLMs over stdio.
  *

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * C4 migration tool — port the git-for-ideas archive (`phdb
  * history.file_revisions` + `history.revision_triple_deltas`) into

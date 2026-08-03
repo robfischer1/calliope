@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Calliope-MCP HTTP entry point — the prose facet, exposed as a constellation
  * "star" over streamable-HTTP so the Hades MCP gateway can front it east-west.

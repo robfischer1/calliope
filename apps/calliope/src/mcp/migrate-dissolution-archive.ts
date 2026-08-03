@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * C5 archival tool — copy the RETIRED dissolution-bridge's registries
  * (`history.dissolutions`, `history.file_revision_dissolutions`,

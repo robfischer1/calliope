@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * C2 migration tool — carve the prose-body facet out of Chaos into the
  * sovereign store (specs/002-facet-carve-sovereign-store).
