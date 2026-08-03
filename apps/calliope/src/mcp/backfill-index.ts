@@ -9,11 +9,14 @@
  * store, reads each body, and pushes the assembled prose to urania's
  * `index_document` verb.
  *
- * Run where BOTH the sovereign store and urania are reachable (the deployed
- * container, or a one-off docker run on nas01):
+ * Run from a checkout where BOTH the sovereign store and urania are
+ * reachable — e.g. `cd apps/calliope && bun install`, then:
  *
  *   bun run src/mcp/backfill-index.ts           # push every body (idempotent)
  *   bun run src/mcp/backfill-index.ts --probe   # count body-bearing nodes only
+ *
+ * NOT the deployed runtime image: it ships only the bundled `server.js`, no
+ * source tree, no `bun install` — there is nothing to `bun run` inside it.
  *
  * Env:
  *   DATABASE_URL          calliope-db (the sovereign body store; read)

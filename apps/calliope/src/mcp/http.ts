@@ -3,10 +3,12 @@
  * Calliope-MCP HTTP entry point — the prose facet, exposed as a constellation
  * "star" over streamable-HTTP so the Hades MCP gateway can front it east-west.
  *
- * This serves the SAME four-tool server the stdio bin does ({@link createServer}
- * over the env-selected {@link makeBodyClient} backend) — the tool definitions
- * are reused, never forked. The only difference from `main.ts` is the transport:
- * a {@link StreamableHTTPServerTransport} on `POST /mcp` instead of stdio.
+ * This serves the SAME server the stdio bin does ({@link createServer} over
+ * the env-selected {@link makeBackend} backend — four-to-nine tools
+ * depending on which facet stores the backend supplies) — the tool
+ * definitions are reused, never forked. The only difference from `main.ts`
+ * is the transport: a {@link StreamableHTTPServerTransport} on `POST /mcp`
+ * instead of stdio.
  *
  * Transport mode: stateless. Hades reaches each star with independent
  * `tools/list` / `tools/call` JSON-RPC POSTs (mirroring how this repo's own
@@ -17,10 +19,12 @@
  *
  * Port: `PORT` (the constellation-standard env every star reads), else
  * `CALLIOPE_MCP_PORT`, else 8204 (calliope's assigned star port).
- * Backend: the same selection as the stdio server — the chaos substrate over
- * `CHAOS_URL` by default (internal-net `http://chaos:8206/mcp`; legacy
+ * Backend: the same selection as the stdio server — `pg` when `DATABASE_URL`
+ * is set (the sovereign store, the production default), else the chaos
+ * substrate over `CHAOS_URL` (internal-net `http://chaos:8206/mcp`; legacy
  * `URANIA_URL` honored), or the in-memory fixture via
- * `CALLIOPE_MCP_BACKEND=fixture`.
+ * `CALLIOPE_MCP_BACKEND=fixture`. On boot, also starts the op-contract
+ * heartbeat publisher ({@link startHeartbeat}) to Pontus.
  */
 
 import { createServer as createHttpServer } from "node:http";

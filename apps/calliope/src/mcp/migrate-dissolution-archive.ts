@@ -7,6 +7,9 @@
  * death). Row-count parity is the gate (the tables are id-preserved,
  * verbatim copies — `archive_*` prefixed).
  *
+ * Run from a checkout where BOTH databases are reachable, e.g. `cd
+ * apps/calliope`, then:
+ *
  *   bun run src/mcp/migrate-dissolution-archive.ts           # copy + parity + export
  *   bun run src/mcp/migrate-dissolution-archive.ts --probe   # counts only
  *

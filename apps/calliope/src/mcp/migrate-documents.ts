@@ -4,8 +4,10 @@
  * (`phdb history.documents`) into Calliope's document store
  * (specs/003-prose-strangle-move).
  *
- * Modes (run where BOTH databases are reachable — the deployed container with
- * `PHDB_DATABASE_URL` injected, or a one-off docker run on nas01):
+ * Modes (run from a checkout where BOTH databases are reachable — e.g. `cd
+ * apps/calliope && bun install && PHDB_DATABASE_URL=... bun run
+ * src/mcp/migrate-documents.ts`; NOT the deployed runtime image, which ships
+ * only the bundled `server.js` and no source tree):
  *
  *   bun run src/mcp/migrate-documents.ts           # migrate + parity + export (idempotent)
  *   bun run src/mcp/migrate-documents.ts --probe   # counts + parity only, writes nothing

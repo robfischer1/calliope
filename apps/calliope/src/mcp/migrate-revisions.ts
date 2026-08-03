@@ -4,8 +4,10 @@
  * history.file_revisions` + `history.revision_triple_deltas`) into
  * Calliope's revision store (specs/004-notes-and-revision).
  *
- * Modes (run where BOTH databases are reachable — the deployed container
- * with `PHDB_DATABASE_URL` injected; the C3 harness):
+ * Modes (run from a checkout where BOTH databases are reachable — e.g. `cd
+ * apps/calliope && bun install && PHDB_DATABASE_URL=... bun run
+ * src/mcp/migrate-revisions.ts`; the C3 harness. NOT the deployed runtime
+ * image, which ships only the bundled `server.js` and no source tree):
  *
  *   bun run src/mcp/migrate-revisions.ts           # migrate + parity + export
  *   bun run src/mcp/migrate-revisions.ts --probe   # counts + parity only

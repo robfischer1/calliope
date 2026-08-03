@@ -3,7 +3,10 @@
  * C2 migration tool — carve the prose-body facet out of Chaos into the
  * sovereign store (specs/002-facet-carve-sovereign-store).
  *
- * Modes (run inside the deployed container — it carries both networks + env):
+ * Modes (run from a checkout with reachability to both `chaos` and
+ * `calliope-db` — e.g. `cd apps/calliope && bun install && bun run
+ * src/mcp/migrate.ts`; NOT the deployed runtime image, which ships only the
+ * bundled `server.js` and no source tree):
  *
  *   bun run src/mcp/migrate.ts            # migrate + parity + export (idempotent)
  *   bun run src/mcp/migrate.ts --probe    # drift probe: count body facets left in Chaos
