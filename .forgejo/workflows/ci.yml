@@ -6,11 +6,18 @@
 # exactly the gate a bun star needs, so don't fork a near-identical one.
 name: ci
 on:
+  # NO paths-ignore, deliberately. A filtered-out PR runs no workflow and therefore
+  # posts NO STATUS, and a required status check that never reports blocks its PR
+  # forever — which is exactly why branch_protection.tf still carries
+  # enable_status_check = false fleet-wide.
+  #
+  # Nothing is lost by removing it: the reusable gate already skips inert-only PRs
+  # INTERNALLY (its "Detect source changes" step gates every work step with `if:`),
+  # and its own comment names this as the reason — "the job still RUNS and reports
+  # SUCCESS ... so a required check / ourea ci_await never hangs". The filter's three
+  # patterns were `infra/**` (no star repo has one), `.forgejo/**` and `**.md` (both
+  # already in the gate's inert regex). Behaviour is unchanged; a status now exists.
   pull_request:
-    paths-ignore:
-      - "infra/**"
-      - ".forgejo/**"
-      - "**.md"
 jobs:
   ci:
     uses: foundry/foundry-stocks/.forgejo/workflows/frontend-ci.yml@main
