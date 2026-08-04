@@ -12,12 +12,25 @@ name: build
 enable-openid-connect: true
 
 on:
+  # NO paths-ignore. It stopped this workflow RUNNING AT ALL on a docs-only push, so
+  # main carried no build status for that commit and there was no push-side lever to
+  # re-kick it — which is why the workflow_dispatch hand crank above exists, and why an
+  # empty commit cannot re-trigger a build.
+  #
+  # The reusable build makes the distinction properly, INSIDE the job: its "Detect
+  # source changes (skip inert-only pushes)" step gates `Load tool versions`,
+  # `Publish (sha-pinned) + sign + SBOM` and `Open a deploy PR` on
+  # `steps.changes.outputs.run == 'true'`, and its inert regex is a SUPERSET of the
+  # patterns removed here (it also covers star.toml, .furnace/, .claude/, docs/,
+  # .tfvars, .melt, justfile). So the job runs and reports SUCCESS while building,
+  # publishing and deploying nothing.
+  #
+  # Proven on techne PR #34 before this was fanned out: the merge commit touched only
+  # .forgejo/workflows/build.yml, the run logged "Only inert (governance/scaffold/docs)
+  # files changed — skipping build+publish+deploy, reporting success", no package
+  # version was published and no deploy PR was opened.
   push:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - ".forgejo/**"
-      - "infra/**"
 jobs:
   build:
     enable-openid-connect: true
