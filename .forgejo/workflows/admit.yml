@@ -1,0 +1,23 @@
+# Caller stub (Flame pull-CI) — logic lives in foundry/foundry-stocks; invariant.
+#
+# THE NON-PYTHON ADMISSION LANE. foundry-stocks admit.yml opens with
+# `uv sync --all-extras --locked`, which needs a pyproject.toml this repo does not
+# have. go-admit.yml runs the SAME policy against the SAME live ouranos-opa PDP with
+# the SAME supply-chain facts — the only difference is that it never installs the
+# repo's dependencies. Its own header is explicit that the lane is not Go-specific
+# ("the image is named for the family it was cut for, not for the only family it can
+# gate"), and it carries no go.mod, go build, setup-go or golang step anywhere.
+# hades is the working precedent.
+#
+# WHY THIS REPO NOW HAS ONE. Every repo that ships a container runs ci + admit +
+# build. This one shipped a container and ran ci + build only. Measured 2026-08-04:
+# 27 python stars carried an admit caller and exactly one non-python star (hades)
+# did, while eight container repos across go/rust/frontend carried none — because
+# only python-repo-template ever shipped the stub. Drift, not design.
+name: admit
+on:
+  pull_request:
+jobs:
+  admit:
+    uses: foundry/foundry-stocks/.forgejo/workflows/go-admit.yml@main
+    secrets: inherit  # pragma: allowlist secret
