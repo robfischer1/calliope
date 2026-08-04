@@ -12,6 +12,14 @@ name: build
 enable-openid-connect: true
 
 on:
+  # workflow_dispatch: the ONLY way to rebuild a commit that already landed.
+  # `push:` cannot re-fire for a sha that is already on main, so without this a
+  # star needing a rebase onto a patched base -- or a regenerated SBOM -- has no
+  # trigger at all. Measured twice: arachne#1439 (2026-08-03), a green build against
+  # a 2-day-old container carrying a CVE fix that never reached the image; and
+  # 2026-08-04, when 14 stars could not join the Dependency-Track SBOM-scoping
+  # rebuild sweep and kept 18 of the portfolio's remaining 20 criticals.
+  workflow_dispatch:
   # NO paths-ignore. It stopped this workflow RUNNING AT ALL on a docs-only push, so
   # main carried no build status for that commit and there was no push-side lever to
   # re-kick it — which is why the workflow_dispatch hand crank above exists, and why an
