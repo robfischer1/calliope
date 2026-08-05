@@ -19,5 +19,5 @@ on:
   pull_request:
 jobs:
   admit:
-    uses: foundry/foundry-stocks/.forgejo/workflows/go-admit.yml@main
+    uses: foundry/foundry-stocks/.forgejo/workflows/admit.yml@main
     secrets: inherit  # pragma: allowlist secret
