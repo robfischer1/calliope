@@ -9,7 +9,7 @@
 # this repo. Bump the digest deliberately; a bump is a base migration.
 
 # -- Stage 1: builder (bun) ---------------------------------------------------
-FROM forgejo.notusmi.com/rob/stellar_core:bun-mcp@sha256:0fb175380f6505980eeec2a89ae4009797b7e85cf9ddb5a453dbd016dcae1f06 AS builder
+FROM forgejo.notusmi.com/rob/stellar_core:bun-mcp@sha256:799c3b31b07342762fc15bdda43d9ea3a7b7c082847bb5c2d4b5a2dc53a199ba AS builder
 ENV CI=1
 WORKDIR /app
 
@@ -38,7 +38,7 @@ COPY . /app
 RUN bun build apps/calliope/src/mcp/http.ts --target=bun --outfile /deploy/server.js --minify
 
 # -- Stage 2: runtime ---------------------------------------------------------
-FROM forgejo.notusmi.com/rob/stellar_core:bun-mcp@sha256:0fb175380f6505980eeec2a89ae4009797b7e85cf9ddb5a453dbd016dcae1f06
+FROM forgejo.notusmi.com/rob/stellar_core:bun-mcp@sha256:799c3b31b07342762fc15bdda43d9ea3a7b7c082847bb5c2d4b5a2dc53a199ba
 WORKDIR /app
 COPY --from=builder --chown=bun:bun /deploy/server.js ./server.js
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8204
