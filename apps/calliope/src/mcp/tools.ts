@@ -353,6 +353,56 @@ export async function createBlock(
   return { block: { id: applied.id, text, orderKey: applied.orderKey } };
 }
 
+/** One entry of a section-container index (F5): the address, never the prose. */
+export interface ContainerBlockRef {
+  id: string;
+  /** The block's first non-empty line, trimmed, capped at 80 chars. */
+  title: string;
+  /** The block's character count (UTF-16 units of its text). */
+  chars: number;
+  /** The fractional order key (byte-ordered). */
+  order_key: string;
+}
+
+/** `list_blocks` result for the node family. */
+export interface ListContainerBlocksResult {
+  container_id: string;
+  kind: "node";
+  block_count: number;
+  blocks: ContainerBlockRef[];
+}
+
+/**
+ * list_blocks(container_id) — the node-family container index (F5): block
+ * ids, first-line titles, sizes and order, with NO prose crossing the wire.
+ * The general form that `read_plan`'s whole-plan index special-cased.
+ */
+export async function listContainerBlocks(
+  client: BodyClient,
+  nodeId: string,
+): Promise<ListContainerBlocksResult> {
+  const sections = await client.readBody(nodeId);
+  const blocks = sections.map((s) => {
+    const firstLine =
+      s.text
+        .split("\n")
+        .map((l) => l.trim())
+        .find((l) => l.length > 0) ?? "";
+    return {
+      id: s.id,
+      title: firstLine.slice(0, 80),
+      chars: s.text.length,
+      order_key: s.orderKey,
+    };
+  });
+  return {
+    container_id: nodeId,
+    kind: "node",
+    block_count: blocks.length,
+    blocks,
+  };
+}
+
 /**
  * read_block(container_id, block_id) -> { block } | block_not_found — serve
  * ONE block's content; only that block's markdown crosses the wire.

@@ -6,6 +6,7 @@ import {
   deleteBlock,
   editSection,
   isBlockMiss,
+  listContainerBlocks,
   mergeBlock,
   readBlock,
   readBody,
@@ -254,6 +255,26 @@ describe("block verbs — CRUD + split/merge over FixtureBodyClient (F3)", () =>
     await expect(mergeBlock(client, "c7", w.id, h.id)).rejects.toThrow(
       /not_adjacent/,
     );
+  });
+
+  it("listContainerBlocks serves the index — first-line titles, sizes, order, no prose (F5)", async () => {
+    const client = new FixtureBodyClient();
+    await writeBody(client, "c-list", [
+      { text: "Title line\nbody body body" },
+      { text: "  \nIndented-empty first line falls through to this" },
+    ]);
+    const index = await listContainerBlocks(client, "c-list");
+    expect(index.block_count).toBe(2);
+    expect(index.blocks.map((b) => b.title)).toEqual([
+      "Title line",
+      "Indented-empty first line falls through to this",
+    ]);
+    expect(index.blocks[0]?.chars).toBe("Title line\nbody body body".length);
+    const keys = index.blocks.map((b) => b.order_key);
+    expect([...keys].sort()).toEqual(keys);
+    for (const b of index.blocks as unknown as Record<string, unknown>[]) {
+      expect(b.text).toBeUndefined();
+    }
   });
 
   it("split_block and merge_block error clearly when the backend lacks the ops", async () => {
