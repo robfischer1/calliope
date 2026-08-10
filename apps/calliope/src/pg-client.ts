@@ -16,7 +16,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import type {
   AppliedOp,
   ApplySectionOpsResult,
@@ -52,6 +52,29 @@ CREATE INDEX IF NOT EXISTS sections_node_active
 -- content and never surface in reads. Idempotent, default false — every
 -- pre-A11 row is a content row.
 ALTER TABLE sections ADD COLUMN IF NOT EXISTS tombstone boolean NOT NULL DEFAULT false;
+-- F1 lineage join table: one row per (successor, predecessor) edge within an
+-- owning node, so a merge (A+B->C) can record N predecessors — inexpressible
+-- in the single supersedes column. The column stays (and is still written)
+-- until F3 cuts the verb surface over; from F1 on it is a denormalization and
+-- this table is the authoritative edge source (readRevisionAt consults it).
+CREATE TABLE IF NOT EXISTS supersessions (
+  successor_id   text NOT NULL,
+  predecessor_id text NOT NULL,
+  node_id        text NOT NULL,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (node_id, successor_id, predecessor_id)
+);
+CREATE INDEX IF NOT EXISTS supersessions_predecessor
+  ON supersessions (node_id, predecessor_id);
+-- Idempotent backfill: every historical superseding row (edit / reorder /
+-- tombstone-delete) becomes an edge stamped with its own created_at, so
+-- backfilled and dual-written edges are indistinguishable. Add markers
+-- (supersedes = '') are NOT edges and never backfill.
+INSERT INTO supersessions (successor_id, predecessor_id, node_id, created_at)
+SELECT id, supersedes, node_id, created_at
+  FROM sections
+ WHERE supersedes IS NOT NULL AND supersedes <> ''
+ON CONFLICT (node_id, successor_id, predecessor_id) DO NOTHING;
 `;
 
 /** Mint a section placement id: 64-hex, collision-safe via a random nonce. */
@@ -170,6 +193,7 @@ export class PgBodyClient implements BodyClient {
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [nextId, nodeId, text, target.order_key, this.#authoredBy, sectionId],
       );
+      await this.#writeEdge(client, nodeId, nextId, sectionId);
       await client.query("COMMIT");
       return { id: nextId, text, orderKey: target.order_key };
     } catch (err) {
@@ -261,6 +285,7 @@ export class PgBodyClient implements BodyClient {
              VALUES ($1, $2, '', $3, $4, $5, false, true)`,
             [stone, nodeId, target.order_key, this.#authoredBy, op.sectionId],
           );
+          await this.#writeEdge(client, nodeId, stone, op.sectionId);
           applied.push({ id: target.id, orderKey: target.order_key });
           continue;
         }
@@ -273,6 +298,7 @@ export class PgBodyClient implements BodyClient {
            VALUES ($1, $2, $3, $4, $5, $6)`,
           [nextId, nodeId, text, orderKey, this.#authoredBy, op.sectionId],
         );
+        await this.#writeEdge(client, nodeId, nextId, op.sectionId);
         applied.push({ id: nextId, orderKey });
       }
 
@@ -297,6 +323,72 @@ export class PgBodyClient implements BodyClient {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * F1 dual-write: one lineage edge per superseding write, inside the write's
+   * own transaction. `created_at` defaults to the transaction-stable `now()`,
+   * so the edge and the successor row it describes share the event stamp.
+   */
+  async #writeEdge(
+    client: PoolClient,
+    nodeId: string,
+    successorId: string,
+    predecessorId: string,
+  ): Promise<void> {
+    await client.query(
+      `INSERT INTO supersessions (successor_id, predecessor_id, node_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (node_id, successor_id, predecessor_id) DO NOTHING`,
+      [successorId, predecessorId, nodeId],
+    );
+  }
+
+  /**
+   * F1 (the F3-facing seam): record that `successorId` supersedes each of
+   * `predecessorIds` under `nodeId` — N edges in one statement, idempotent
+   * re-apply (the PK dedups). A merge records N > 1.
+   */
+  async recordSupersession(
+    nodeId: string,
+    successorId: string,
+    predecessorIds: readonly string[],
+  ): Promise<void> {
+    if (predecessorIds.length === 0) return;
+    await this.#pool.query(
+      `INSERT INTO supersessions (successor_id, predecessor_id, node_id)
+       SELECT $1, p, $2 FROM unnest($3::text[]) AS p
+       ON CONFLICT (node_id, successor_id, predecessor_id) DO NOTHING`,
+      [successorId, nodeId, [...predecessorIds]],
+    );
+  }
+
+  /**
+   * F1 both-direction lineage point query: who does `blockId` supersede, and
+   * who supersedes it — under one owner. No recursive walk.
+   */
+  async lineageOf(
+    nodeId: string,
+    blockId: string,
+  ): Promise<{ predecessors: string[]; successors: string[] }> {
+    const [preds, succs] = await Promise.all([
+      this.#pool.query<{ predecessor_id: string }>(
+        `SELECT predecessor_id FROM supersessions
+          WHERE node_id = $1 AND successor_id = $2
+          ORDER BY predecessor_id`,
+        [nodeId, blockId],
+      ),
+      this.#pool.query<{ successor_id: string }>(
+        `SELECT successor_id FROM supersessions
+          WHERE node_id = $1 AND predecessor_id = $2
+          ORDER BY successor_id`,
+        [nodeId, blockId],
+      ),
+    ]);
+    return {
+      predecessors: preds.rows.map((r) => r.predecessor_id),
+      successors: succs.rows.map((r) => r.successor_id),
+    };
   }
 
   /**
@@ -359,10 +451,13 @@ export class PgBodyClient implements BodyClient {
           AND s.created_at <= $2
           AND s.created_at >= gen.t0
           AND NOT s.tombstone
+          -- F1: the supersession lookup consults the join table (the
+          -- authoritative edge source), so N-predecessor merges reconstruct
+          -- without another read-path change at F3.
           AND NOT EXISTS (
-            SELECT 1 FROM sections r
-             WHERE r.node_id = $1 AND r.supersedes = s.id
-               AND r.created_at <= $2
+            SELECT 1 FROM supersessions p
+             WHERE p.node_id = $1 AND p.predecessor_id = s.id
+               AND p.created_at <= $2
           )
         ORDER BY s.order_key COLLATE "C", s.id`,
       [nodeId, revision],
