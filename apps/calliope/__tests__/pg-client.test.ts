@@ -284,6 +284,151 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     );
   });
 
+  it("recordSupersession records N predecessors; lineageOf resolves both directions (F1)", async () => {
+    const a = "a".repeat(64);
+    const b = "b".repeat(64);
+    const c = "c".repeat(64);
+    await client.recordSupersession("node-sup", c, [a, b]);
+    // Successor -> both predecessors.
+    expect(await client.lineageOf("node-sup", c)).toEqual({
+      predecessors: [a, b],
+      successors: [],
+    });
+    // Each predecessor -> the successor.
+    expect((await client.lineageOf("node-sup", a)).successors).toEqual([c]);
+    expect((await client.lineageOf("node-sup", b)).successors).toEqual([c]);
+    // Idempotent re-apply: still exactly two edges.
+    await client.recordSupersession("node-sup", c, [a, b]);
+    const n = await pool.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM supersessions WHERE node_id = 'node-sup'",
+    );
+    expect(n.rows[0]?.n).toBe(2);
+    // Lineage is per owner: another node sees nothing.
+    expect(await client.lineageOf("node-other", c)).toEqual({
+      predecessors: [],
+      successors: [],
+    });
+  });
+
+  it("every superseding write dual-writes its lineage edge (F1)", async () => {
+    await client.saveBody("node-dw", [{ text: "one" }, { text: "two" }]);
+    const body = await client.readBody("node-dw");
+    const [one, two] = body;
+    if (!one || !two) throw new Error("fixture body missing");
+
+    // editSection: edge equals the row's supersedes value.
+    const edited = await client.editSection("node-dw", two.id, "two edited");
+    expect((await client.lineageOf("node-dw", edited.id)).predecessors).toEqual(
+      [two.id],
+    );
+    expect((await client.lineageOf("node-dw", two.id)).successors).toEqual([
+      edited.id,
+    ]);
+
+    // Ops batch: update + reorder + delete each write exactly one edge;
+    // add writes none.
+    const { applied } = await client.applySectionOps("node-dw", [
+      { op: "update", sectionId: one.id, text: "one edited" },
+      { op: "add", text: "wedged", orderKey: "015" },
+      { op: "reorder", sectionId: edited.id, orderKey: "005" },
+    ]);
+    expect(applied).toHaveLength(3);
+    const updated = applied.at(0);
+    const reordered = applied.at(2);
+    if (!updated || !reordered) throw new Error("applied ops missing");
+    expect(
+      (await client.lineageOf("node-dw", updated.id)).predecessors,
+    ).toEqual([one.id]);
+    expect(
+      (await client.lineageOf("node-dw", reordered.id)).predecessors,
+    ).toEqual([edited.id]);
+    // The add landed no edge: total edges = edit + update + reorder.
+    const n = await pool.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM supersessions WHERE node_id = 'node-dw'",
+    );
+    expect(n.rows[0]?.n).toBe(3);
+
+    // Delete: the tombstone carries the edge (predecessor = removed id).
+    const afterOps = await client.readBody("node-dw");
+    const victim = afterOps.find((s) => s.text === "wedged");
+    if (!victim) throw new Error("victim section missing");
+    await client.applySectionOps("node-dw", [
+      { op: "delete", sectionId: victim.id },
+    ]);
+    const succ = (await client.lineageOf("node-dw", victim.id)).successors;
+    expect(succ).toHaveLength(1);
+    const stone = await pool.query<{ tombstone: boolean }>(
+      "SELECT tombstone FROM sections WHERE node_id = 'node-dw' AND id = $1",
+      [succ.at(0)],
+    );
+    expect(stone.rows[0]?.tombstone).toBe(true);
+  });
+
+  it("backfill reconstructs byte-identical history, and the read path really consults the join table (F1)", async () => {
+    // Mixed lineage: save -> edit -> ops (delete + add + update).
+    await client.saveBody("node-bf", [
+      { text: "b1" },
+      { text: "b2" },
+      { text: "b3" },
+    ]);
+    const v1 = await client.readBody("node-bf");
+    const [b1, b2, b3] = v1;
+    if (!b1 || !b2 || !b3) throw new Error("fixture body missing");
+    await client.editSection("node-bf", b1.id, "b1 edited");
+    await client.applySectionOps("node-bf", [
+      { op: "delete", sectionId: b2.id },
+      { op: "add", text: "b4", orderKey: "09" },
+      { op: "update", sectionId: b3.id, text: "b3 edited" },
+    ]);
+
+    // Snapshot everything the read surface serves.
+    const revs = await client.readRevisions("node-bf");
+    const snapshots = new Map<string, unknown>();
+    for (const r of revs) {
+      snapshots.set(
+        r.revision,
+        await client.readRevisionAt("node-bf", r.revision),
+      );
+    }
+    const liveBody = await client.readBody("node-bf");
+
+    // Simulate a pre-F1 store: drop this node's edges. Reconstruction MUST
+    // now differ (the read path consults the join table, not the column) —
+    // the built-in non-vacuity guard.
+    await pool.query("DELETE FROM supersessions WHERE node_id = 'node-bf'");
+    const degraded = await Promise.all(
+      revs.map((r) => client.readRevisionAt("node-bf", r.revision)),
+    );
+    expect(
+      degraded.some(
+        (body, i) =>
+          JSON.stringify(body) !==
+          JSON.stringify(snapshots.get(revs[i]?.revision ?? "")),
+      ),
+    ).toBe(true);
+
+    // Backfill (ensureSchema is the migration seam) and compare byte-identically.
+    await client.ensureSchema();
+    expect(await client.readRevisions("node-bf")).toEqual(revs);
+    for (const r of revs) {
+      expect(await client.readRevisionAt("node-bf", r.revision)).toEqual(
+        snapshots.get(r.revision),
+      );
+    }
+    expect(await client.readBody("node-bf")).toEqual(liveBody);
+
+    // Backfill hygiene: tombstone edge present, no add-marker edges anywhere.
+    const stoneEdge = await pool.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM supersessions WHERE node_id = 'node-bf' AND predecessor_id = $1",
+      [b2.id],
+    );
+    expect(stoneEdge.rows[0]?.n).toBe(1);
+    const emptyEdges = await pool.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM supersessions WHERE predecessor_id = ''",
+    );
+    expect(emptyEdges.rows[0]?.n).toBe(0);
+  });
+
   it("importSection preserves ids and is idempotent; retainOnly converges", async () => {
     const sec = { id: "f".repeat(64), text: "migrated", orderKey: "01" };
     await client.importSection("node-m", sec);
