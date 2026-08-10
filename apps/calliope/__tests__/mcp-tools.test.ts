@@ -203,6 +203,16 @@ describe("block verbs — CRUD + split/merge over FixtureBodyClient (F3)", () =>
     expect(after.at(0)?.id).toBe(keep.id);
   });
 
+  it("update_block with identical text is a no-op returning the same id (F4)", async () => {
+    const client = new FixtureBodyClient();
+    await writeBody(client, "c-noop", [{ text: "same" }]);
+    const body = (await readBody(client, "c-noop")).sections;
+    const only = body.at(0);
+    if (!only) throw new Error("fixture body missing");
+    const res = await updateBlock(client, "c-noop", only.id, "same");
+    expect(res.block.id).toBe(only.id);
+  });
+
   it("delete_block removes one block and reports what left", async () => {
     const client = new FixtureBodyClient();
     await writeBody(client, "c6", [{ text: "stay" }, { text: "go" }]);

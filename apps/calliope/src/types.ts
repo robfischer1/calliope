@@ -158,6 +158,11 @@ export interface BodyClient {
    * Resolves to the (possibly new) section's resolved {@link Section}. Rejects if
    * `sectionId` is not a current `hasPart` target of `nodeId`.
    *
+   * F4: a BYTE-IDENTICAL re-submit is a no-op — the current section returns
+   * unchanged (same id), and no row, lineage edge or revision event is
+   * written. The comparison is made under the write path's own lock, so a
+   * racing real edit is never swallowed. Retrying callers are safe.
+   *
    * Optional for backward compatibility: a {@link BodyClient} predating this
    * method (e.g. a host's own adapter) need not implement it; the two clients
    * shipped here ({@link FixtureBodyClient}, {@link UraniaBodyClient}) both do.
