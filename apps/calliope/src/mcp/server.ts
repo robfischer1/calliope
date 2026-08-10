@@ -8,11 +8,12 @@
  * on those same nodes. Tool shapes mirror clotho's conceptually (read / write /
  * append / edit), not its Python stack.
  *
- * Tools:
- *  - read_body(node_id)                       — resolve a node's sections
- *  - write_body(node_id, sections)            — coarse-save (replace the body)
- *  - append_section(node_id, text)            — append one section at the end
- *  - edit_section(node_id, section_id, text)  — single-section copy-on-write
+ * Tools (F3 — the block grain is the primary surface):
+ *  - create_block / read_block / update_block / delete_block — block CRUD
+ *  - split_block / merge_block                — identity-preserving structure
+ *  - read_body(node_id)                       — resolve a container's blocks
+ *  - write_body(node_id, sections)            — LEGACY coarse-save
+ *  - append_section / edit_section / apply_section_ops — the editor's batch path
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -23,10 +24,17 @@ import type { RevisionStore } from "../revision-store.js";
 import {
   appendSection,
   applySectionOps,
+  createBlock,
+  deleteBlock,
   editSection,
+  isBlockMiss,
+  mergeBlock,
+  readBlock,
   readBody,
   readBodyAt,
   readBodyRevisions,
+  splitBlock,
+  updateBlock,
   writeBody,
 } from "./tools.js";
 import { readPlan, isReadPlanError } from "./plan-ingest.js";
@@ -137,14 +145,216 @@ export function createServer(
     },
   );
 
+  // ── F3: the block-native verb surface — the primary grain ────────────────
+
+  server.registerTool(
+    "create_block",
+    {
+      title: "Create a block",
+      description:
+        "F3: mint ONE block into a container — after the named sibling, or " +
+        "appended at the end when no position is given. The fractional order " +
+        "key is minted server-side; siblings' ids and keys never move. " +
+        "Returns { block: { id, text, orderKey } }. A stale after_block_id " +
+        "rejects with stale_section.",
+      inputSchema: {
+        container_id: z
+          .string()
+          .describe("The container (note/document node) to create into."),
+        text: z.string().describe("The new block's prose."),
+        after_block_id: z
+          .string()
+          .optional()
+          .describe("Insert after this block; omitted = append at the end."),
+      },
+    },
+    async ({ container_id, text, after_block_id }) => {
+      const result = await createBlock(
+        client,
+        container_id,
+        text,
+        after_block_id,
+      );
+      await afterBodyWrite(container_id);
+      return {
+        content: [{ type: "text", text: `Created block ${result.block.id}.` }],
+        structuredContent: structured(result),
+      };
+    },
+  );
+
+  server.registerTool(
+    "read_block",
+    {
+      title: "Read one block",
+      description:
+        "F3: serve ONE block's content by id — only that block's markdown " +
+        "crosses the wire. Returns { block: { id, text, orderKey } }; a miss " +
+        "is a structured block_not_found.",
+      inputSchema: {
+        container_id: z.string().describe("The container owning the block."),
+        block_id: z.string().describe("The block to read."),
+      },
+    },
+    async ({ container_id, block_id }) => {
+      const result = await readBlock(client, container_id, block_id);
+      if (isBlockMiss(result)) {
+        return {
+          content: [
+            { type: "text", text: `${result.error}: ${result.detail}` },
+          ],
+          structuredContent: structured(result),
+          isError: true,
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Block ${result.block.id} (${String(result.block.text.length)} chars).`,
+          },
+        ],
+        structuredContent: structured(result),
+      };
+    },
+  );
+
+  server.registerTool(
+    "update_block",
+    {
+      title: "Update one block",
+      description:
+        "F3: rewrite ONE block's prose (copy-on-write — exactly one " +
+        "superseding row; the container's other blocks are untouched and " +
+        "shared by reference). The block's position is kept. Returns " +
+        "{ block }. A stale block_id rejects.",
+      inputSchema: {
+        container_id: z.string().describe("The container owning the block."),
+        block_id: z.string().describe("The block to rewrite."),
+        text: z.string().describe("The block's new prose."),
+      },
+    },
+    async ({ container_id, block_id, text }) => {
+      const result = await updateBlock(client, container_id, block_id, text);
+      await afterBodyWrite(container_id);
+      return {
+        content: [{ type: "text", text: `Updated block ${result.block.id}.` }],
+        structuredContent: structured(result),
+      };
+    },
+  );
+
+  server.registerTool(
+    "delete_block",
+    {
+      title: "Delete one block",
+      description:
+        "F3: remove ONE block from its container. History preserves it — " +
+        "as-of reconstruction still shows the block before the delete. " +
+        "Returns { ok, deleted: { id, orderKey } }. A stale block_id rejects.",
+      inputSchema: {
+        container_id: z.string().describe("The container owning the block."),
+        block_id: z.string().describe("The block to remove."),
+      },
+    },
+    async ({ container_id, block_id }) => {
+      const result = await deleteBlock(client, container_id, block_id);
+      await afterBodyWrite(container_id);
+      return {
+        content: [
+          { type: "text", text: `Deleted block ${result.deleted.id}.` },
+        ],
+        structuredContent: structured(result),
+      };
+    },
+  );
+
+  server.registerTool(
+    "split_block",
+    {
+      title: "Split a block (identity-preserving)",
+      description:
+        "F3: cut one block at a caret offset (UTF-16 units; 0..length — " +
+        "boundary splits make an empty block) into TWO blocks whose order " +
+        "keys land between the original's neighbours. BOTH children record " +
+        "the original as lineage predecessor, so comments/pins/anchors " +
+        "resolve forward. Returns { blocks: [first, second] }.",
+      inputSchema: {
+        container_id: z.string().describe("The container owning the block."),
+        block_id: z.string().describe("The block to split."),
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .describe("The caret offset (UTF-16 code units into the text)."),
+      },
+    },
+    async ({ container_id, block_id, offset }) => {
+      const result = await splitBlock(client, container_id, block_id, offset);
+      await afterBodyWrite(container_id);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Split into ${result.blocks[0].id} + ${result.blocks[1].id}.`,
+          },
+        ],
+        structuredContent: structured(result),
+      };
+    },
+  );
+
+  server.registerTool(
+    "merge_block",
+    {
+      title: "Merge two adjacent blocks (identity-preserving)",
+      description:
+        "F3: join a block with its immediate successor into ONE block " +
+        "(first + separator + second, at the first's position). The " +
+        "survivor's lineage records BOTH parents (the supersessions join " +
+        "table), so anchors on either resolve forward. Non-adjacent pairs " +
+        "reject with not_adjacent; stale ids with stale_section. Returns " +
+        "{ block }.",
+      inputSchema: {
+        container_id: z.string().describe("The container owning the blocks."),
+        first_block_id: z
+          .string()
+          .describe("The earlier block (keeps its position)."),
+        second_block_id: z
+          .string()
+          .describe("Its immediate successor (merged into the first)."),
+        separator: z
+          .string()
+          .optional()
+          .describe("Joined between the two texts (default: none)."),
+      },
+    },
+    async ({ container_id, first_block_id, second_block_id, separator }) => {
+      const result = await mergeBlock(
+        client,
+        container_id,
+        first_block_id,
+        second_block_id,
+        separator,
+      );
+      await afterBodyWrite(container_id);
+      return {
+        content: [{ type: "text", text: `Merged into ${result.block.id}.` }],
+        structuredContent: structured(result),
+      };
+    },
+  );
+
   server.registerTool(
     "write_body",
     {
-      title: "Write node body (coarse save)",
+      title: "Write node body (LEGACY coarse save)",
       description:
-        "Replace a plan node's whole body with the given sections, in display " +
-        "order. The substrate mints fresh order keys and copy-on-writes changed " +
-        "prose. Returns { ok, count }.",
+        "LEGACY (F3): the whole-body replace. Prefer the block verbs " +
+        "(create_block / update_block / delete_block / split_block / " +
+        "merge_block) — they preserve block identity; this replaces every " +
+        "block's id in one stroke. Kept for coarse imports and the editor's " +
+        "degraded path. Returns { ok, count }.",
       inputSchema: {
         node_id: z.string().describe("The node whose body to replace."),
         sections: z

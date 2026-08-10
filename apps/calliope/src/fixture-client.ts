@@ -7,7 +7,7 @@ import type {
   SectionInput,
   SectionOp,
 } from "./types.js";
-import { compareKeys, sequence } from "./order-key.js";
+import { between, compareKeys, sequence } from "./order-key.js";
 
 /** An in-memory section row, mirroring the substrate's `{ text, order_key }`. */
 interface FixtureSection {
@@ -172,6 +172,110 @@ export class FixtureBodyClient implements BodyClient {
       .sort((a, b) => compareKeys(a.orderKey, b.orderKey))
       .map((r) => ({ id: r.id, text: r.text, orderKey: r.orderKey }));
     return Promise.resolve({ sections, applied });
+  }
+
+  /**
+   * F3 identity-preserving split — the fixture twin of the sovereign store's
+   * `splitSection`. Same visible semantics: two fresh children, first keeps
+   * the key, second lands between the original and its next neighbour; one
+   * "ops"-kind write-event.
+   */
+  splitSection(
+    nodeId: string,
+    sectionId: string,
+    offset: number,
+  ): Promise<[Section, Section]> {
+    if (!Number.isInteger(offset) || offset < 0) {
+      return Promise.reject(
+        new Error(
+          `bad_offset: split offset must be a non-negative integer (got ${String(offset)}).`,
+        ),
+      );
+    }
+    const rows = [...(this.bodies.get(nodeId) ?? [])].sort((a, b) =>
+      compareKeys(a.orderKey, b.orderKey),
+    );
+    const idx = rows.findIndex((r) => r.id === sectionId);
+    const target = idx >= 0 ? rows[idx] : undefined;
+    if (target === undefined) {
+      return Promise.reject(
+        new Error(
+          `stale_section: section ${sectionId} is not part of node ${nodeId}.`,
+        ),
+      );
+    }
+    if (offset > target.text.length) {
+      return Promise.reject(
+        new Error(
+          `bad_offset: ${String(offset)} exceeds the block's length ` +
+            `(${String(target.text.length)}).`,
+        ),
+      );
+    }
+    const next = rows[idx + 1];
+    const first: FixtureSection = {
+      id: `${nodeId}#${String(this.seq++)}`,
+      text: target.text.slice(0, offset),
+      orderKey: target.orderKey,
+    };
+    const second: FixtureSection = {
+      id: `${nodeId}#${String(this.seq++)}`,
+      text: target.text.slice(offset),
+      orderKey: between(target.orderKey, next?.orderKey ?? null),
+    };
+    this.bodies.set(nodeId, [
+      ...rows.filter((r) => r.id !== sectionId),
+      first,
+      second,
+    ]);
+    this.record(nodeId, "ops", 2);
+    return Promise.resolve([{ ...first }, { ...second }]);
+  }
+
+  /**
+   * F3 identity-preserving merge — the fixture twin of the sovereign store's
+   * `mergeSections`. Adjacency required; one "edit"-kind write-event.
+   */
+  mergeSections(
+    nodeId: string,
+    firstId: string,
+    secondId: string,
+    separator = "",
+  ): Promise<Section> {
+    const rows = [...(this.bodies.get(nodeId) ?? [])].sort((a, b) =>
+      compareKeys(a.orderKey, b.orderKey),
+    );
+    const iFirst = rows.findIndex((r) => r.id === firstId);
+    const iSecond = rows.findIndex((r) => r.id === secondId);
+    const first = iFirst >= 0 ? rows[iFirst] : undefined;
+    const second = iSecond >= 0 ? rows[iSecond] : undefined;
+    if (first === undefined || second === undefined) {
+      return Promise.reject(
+        new Error(
+          `stale_section: section ${first === undefined ? firstId : secondId} ` +
+            `is not part of node ${nodeId}.`,
+        ),
+      );
+    }
+    if (iSecond !== iFirst + 1) {
+      return Promise.reject(
+        new Error(
+          `not_adjacent: ${firstId} and ${secondId} are not adjacent in ` +
+            `order (merge joins a block with its immediate successor).`,
+        ),
+      );
+    }
+    const merged: FixtureSection = {
+      id: `${nodeId}#${String(this.seq++)}`,
+      text: first.text + separator + second.text,
+      orderKey: first.orderKey,
+    };
+    this.bodies.set(nodeId, [
+      ...rows.filter((r) => r.id !== firstId && r.id !== secondId),
+      merged,
+    ]);
+    this.record(nodeId, "edit");
+    return Promise.resolve({ ...merged });
   }
 
   /** List write-events newest first — the fixture half of the A8 contract. */

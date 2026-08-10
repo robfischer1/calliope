@@ -27,7 +27,7 @@ import type {
   SectionOp,
 } from "./types.js";
 import type { AuthoredBy } from "./urania-client.js";
-import { sequence } from "./order-key.js";
+import { between, sequence } from "./order-key.js";
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS sections (
@@ -317,6 +317,144 @@ export class PgBodyClient implements BodyClient {
         })),
         applied,
       };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * F3 identity-preserving split — see {@link BodyClient.splitSection}. One
+   * transaction: the original deactivates; two fresh children land (first
+   * keeps the key, second takes `between(target, next)`), each carrying
+   * `supersedes = original` in the column AND a join-table edge, so the
+   * original's anchors resolve forward to both.
+   */
+  async splitSection(
+    nodeId: string,
+    sectionId: string,
+    offset: number,
+  ): Promise<[Section, Section]> {
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new Error(
+        `bad_offset: split offset must be a non-negative integer (got ${String(offset)}).`,
+      );
+    }
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN");
+      const cur = await client.query<SectionRow>(
+        `SELECT id, text, order_key FROM sections
+          WHERE node_id = $1 AND active
+          ORDER BY order_key COLLATE "C", id
+          FOR UPDATE`,
+        [nodeId],
+      );
+      const idx = cur.rows.findIndex((r) => r.id === sectionId);
+      const target = idx >= 0 ? cur.rows[idx] : undefined;
+      if (target === undefined) {
+        throw new Error(
+          `stale_section: section ${sectionId} is not part of node ${nodeId}.`,
+        );
+      }
+      if (offset > target.text.length) {
+        throw new Error(
+          `bad_offset: ${String(offset)} exceeds the block's length ` +
+            `(${String(target.text.length)}).`,
+        );
+      }
+      const next = cur.rows[idx + 1];
+      const firstKey = target.order_key;
+      const secondKey = between(firstKey, next?.order_key ?? null);
+      const firstText = target.text.slice(0, offset);
+      const secondText = target.text.slice(offset);
+      const firstId = mintSectionId(nodeId, firstText, firstKey);
+      const secondId = mintSectionId(nodeId, secondText, secondKey);
+      await client.query(
+        `UPDATE sections SET active = false WHERE node_id = $1 AND id = $2`,
+        [nodeId, sectionId],
+      );
+      for (const [id, text, key] of [
+        [firstId, firstText, firstKey],
+        [secondId, secondText, secondKey],
+      ] as const) {
+        await client.query(
+          `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [id, nodeId, text, key, this.#authoredBy, sectionId],
+        );
+        await this.#writeEdge(client, nodeId, id, sectionId);
+      }
+      await client.query("COMMIT");
+      return [
+        { id: firstId, text: firstText, orderKey: firstKey },
+        { id: secondId, text: secondText, orderKey: secondKey },
+      ];
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * F3 identity-preserving merge — see {@link BodyClient.mergeSections}. One
+   * transaction: both ADJACENT parents deactivate; one survivor lands at the
+   * first parent's key. The single-valued `supersedes` column names the first
+   * parent; the join table carries BOTH — the op the column cannot express,
+   * which is what F1 exists for.
+   */
+  async mergeSections(
+    nodeId: string,
+    firstId: string,
+    secondId: string,
+    separator = "",
+  ): Promise<Section> {
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN");
+      const cur = await client.query<SectionRow>(
+        `SELECT id, text, order_key FROM sections
+          WHERE node_id = $1 AND active
+          ORDER BY order_key COLLATE "C", id
+          FOR UPDATE`,
+        [nodeId],
+      );
+      const iFirst = cur.rows.findIndex((r) => r.id === firstId);
+      const iSecond = cur.rows.findIndex((r) => r.id === secondId);
+      const first = iFirst >= 0 ? cur.rows[iFirst] : undefined;
+      const second = iSecond >= 0 ? cur.rows[iSecond] : undefined;
+      if (first === undefined || second === undefined) {
+        throw new Error(
+          `stale_section: section ${first === undefined ? firstId : secondId} ` +
+            `is not part of node ${nodeId}.`,
+        );
+      }
+      if (iSecond !== iFirst + 1) {
+        throw new Error(
+          `not_adjacent: ${firstId} and ${secondId} are not adjacent in ` +
+            `order (merge joins a block with its immediate successor).`,
+        );
+      }
+      const text = first.text + separator + second.text;
+      const mergedId = mintSectionId(nodeId, text, first.order_key);
+      await client.query(
+        `UPDATE sections SET active = false
+          WHERE node_id = $1 AND id = ANY($2::text[])`,
+        [nodeId, [firstId, secondId]],
+      );
+      await client.query(
+        `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [mergedId, nodeId, text, first.order_key, this.#authoredBy, firstId],
+      );
+      await this.#writeEdge(client, nodeId, mergedId, firstId);
+      await this.#writeEdge(client, nodeId, mergedId, secondId);
+      await client.query("COMMIT");
+      return { id: mergedId, text, orderKey: first.order_key };
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;

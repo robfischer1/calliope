@@ -76,7 +76,10 @@ afterEach(async () => {
 });
 
 describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
-  it("serves the same four tools as the stdio server via tools/list", async () => {
+  it("serves the full verb surface via tools/list — the F3 fence", async () => {
+    // This list IS the caller-facing surface contract: every shipped verb
+    // traces to a decided master-plan Exposes row, and nothing ships that
+    // traces to none. Change it only alongside the plan that licenses it.
     await rpc(initEnvelope(1));
     const listed = (await rpc({
       jsonrpc: "2.0",
@@ -88,17 +91,23 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
     expect(names).toEqual([
       "append_section",
       "apply_section_ops",
+      "create_block",
       "create_note",
+      "delete_block",
       "edit_section",
       "file_revisions",
       "list_by_tag",
       "list_tags",
+      "merge_block",
+      "read_block",
       "read_body",
       "read_body_at",
       "read_body_revisions",
       "read_documents",
       "read_plan",
       "revision_deltas",
+      "split_block",
+      "update_block",
       "write_body",
       "write_document",
     ]);

@@ -32,6 +32,7 @@ import {
 } from "../chaos-client.js";
 import { computeTagDelta, extractInlineTags, normalizeTag } from "../tags.js";
 import type { TagCount, TagStore } from "../tag-store.js";
+import { between } from "../order-key.js";
 
 /** A section as the MCP returns it (the lib {@link Section} shape, verbatim). */
 export interface ToolSection {
@@ -272,6 +273,192 @@ export async function readBodyAt(
   }
   const sections = await client.readRevisionAt(nodeId, revision);
   return { revision, sections: sections.map(toToolSection) };
+}
+
+// ── F3: the block-native verb surface ────────────────────────────────────────
+
+/** A single-block result — the block verbs' common success shape. */
+export interface BlockResult {
+  block: ToolSection;
+}
+
+/** `read_block` structured miss — surfaced, never thrown (a read miss is an
+ *  answer, not a fault; write-path staleness still throws `stale_section`). */
+export interface BlockMiss {
+  error: "block_not_found";
+  detail: string;
+}
+
+/** Type guard for the miss shape. */
+export function isBlockMiss(r: BlockResult | BlockMiss): r is BlockMiss {
+  return "error" in r;
+}
+
+/** `delete_block` result. */
+export interface DeleteBlockResult {
+  ok: true;
+  deleted: { id: string; orderKey: string };
+}
+
+/** `split_block` result: the two children, in order. */
+export interface SplitBlockResult {
+  blocks: [ToolSection, ToolSection];
+}
+
+/**
+ * create_block(container_id, text, after_block_id?) -> { block } — mint one
+ * block. Position: after the named sibling, or appended at the end when no
+ * position is given. The fractional key is minted SERVER-side
+ * (`between(after, next)`), so callers never learn key grammar — that stays
+ * `apply_section_ops`' contract for the editor. A stale `after_block_id`
+ * rejects with `stale_section`.
+ */
+export async function createBlock(
+  client: BodyClient,
+  nodeId: string,
+  text: string,
+  afterBlockId?: string,
+): Promise<BlockResult> {
+  if (client.applySectionOps === undefined) {
+    throw new Error(
+      "create_block: the configured body backend does not support " +
+        "block-grain writes (no applySectionOps method).",
+    );
+  }
+  const body = await client.readBody(nodeId);
+  let prevKey: string | null;
+  let nextKey: string | null;
+  if (afterBlockId !== undefined) {
+    const idx = body.findIndex((s) => s.id === afterBlockId);
+    const anchor = idx >= 0 ? body[idx] : undefined;
+    if (anchor === undefined) {
+      throw new Error(
+        `stale_section: block ${afterBlockId} is not part of container ${nodeId}.`,
+      );
+    }
+    prevKey = anchor.orderKey;
+    nextKey = body[idx + 1]?.orderKey ?? null;
+  } else {
+    prevKey = body.at(-1)?.orderKey ?? null;
+    nextKey = null;
+  }
+  const orderKey = between(prevKey, nextKey);
+  const result = await client.applySectionOps(nodeId, [
+    { op: "add", text, orderKey },
+  ]);
+  const applied = result.applied.at(0);
+  if (applied === undefined) {
+    throw new Error(`create_block: the store applied no op for ${nodeId}.`);
+  }
+  return { block: { id: applied.id, text, orderKey: applied.orderKey } };
+}
+
+/**
+ * read_block(container_id, block_id) -> { block } | block_not_found — serve
+ * ONE block's content; only that block's markdown crosses the wire.
+ */
+export async function readBlock(
+  client: BodyClient,
+  nodeId: string,
+  blockId: string,
+): Promise<BlockResult | BlockMiss> {
+  const body = await client.readBody(nodeId);
+  const section = body.find((s) => s.id === blockId);
+  if (section === undefined) {
+    return {
+      error: "block_not_found",
+      detail: `block ${blockId} is not part of container ${nodeId}`,
+    };
+  }
+  return { block: toToolSection(section) };
+}
+
+/**
+ * update_block(container_id, block_id, text) -> { block } — one superseding
+ * row; the container's other blocks are untouched and shared by reference
+ * (the {@link editSection} copy-on-write engine, block-named).
+ */
+export async function updateBlock(
+  client: BodyClient,
+  nodeId: string,
+  blockId: string,
+  text: string,
+): Promise<BlockResult> {
+  const result = await editSection(client, nodeId, blockId, text);
+  return { block: result.section };
+}
+
+/**
+ * delete_block(container_id, block_id) -> { ok, deleted } — the block leaves
+ * the body; history preserves it (tombstone lineage on the store backends).
+ */
+export async function deleteBlock(
+  client: BodyClient,
+  nodeId: string,
+  blockId: string,
+): Promise<DeleteBlockResult> {
+  if (client.applySectionOps === undefined) {
+    throw new Error(
+      "delete_block: the configured body backend does not support " +
+        "block-grain writes (no applySectionOps method).",
+    );
+  }
+  const result = await client.applySectionOps(nodeId, [
+    { op: "delete", sectionId: blockId },
+  ]);
+  const applied = result.applied.at(0);
+  if (applied === undefined) {
+    throw new Error(`delete_block: the store applied no op for ${nodeId}.`);
+  }
+  return { ok: true, deleted: { id: applied.id, orderKey: applied.orderKey } };
+}
+
+/**
+ * split_block(container_id, block_id, offset) -> { blocks: [first, second] }
+ * — the Enter-mid-paragraph gesture as an identity-preserving op: both
+ * children trace to the original through the lineage record.
+ */
+export async function splitBlock(
+  client: BodyClient,
+  nodeId: string,
+  blockId: string,
+  offset: number,
+): Promise<SplitBlockResult> {
+  if (client.splitSection === undefined) {
+    throw new Error(
+      "split_block: the configured body backend does not support " +
+        "identity-preserving splits (no splitSection method).",
+    );
+  }
+  const [first, second] = await client.splitSection(nodeId, blockId, offset);
+  return { blocks: [toToolSection(first), toToolSection(second)] };
+}
+
+/**
+ * merge_block(container_id, first_block_id, second_block_id, separator?) ->
+ * { block } — the Backspace-at-block-start gesture: two ADJACENT blocks
+ * become one whose lineage records BOTH parents.
+ */
+export async function mergeBlock(
+  client: BodyClient,
+  nodeId: string,
+  firstBlockId: string,
+  secondBlockId: string,
+  separator?: string,
+): Promise<BlockResult> {
+  if (client.mergeSections === undefined) {
+    throw new Error(
+      "merge_block: the configured body backend does not support " +
+        "identity-preserving merges (no mergeSections method).",
+    );
+  }
+  const section = await client.mergeSections(
+    nodeId,
+    firstBlockId,
+    secondBlockId,
+    separator,
+  );
+  return { block: toToolSection(section) };
 }
 
 // ── C8: the note-native mint ─────────────────────────────────────────────────
