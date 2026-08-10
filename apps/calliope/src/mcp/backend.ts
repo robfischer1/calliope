@@ -2,11 +2,13 @@
  * Backend selection for Calliope-MCP: pick the {@link BodyClient} the tool
  * handlers run against, from the environment.
  *
- *  - default / `"urania"`: a wired {@link UraniaBodyClient} over
- *    {@link LiveUraniaCapture}, writing the chaos substrate directly (env:
- *    `CHAOS_URL`; legacy `URANIA_URL` honored). Post-D1-cut, urania is a lens
- *    and serves no capture — the substrate is chaos. Preserved unchanged when
- *    `CALLIOPE_WRITE_VIA_HADES` is off.
+ *  - default / `"pg"`: the sovereign store (C2/F2) — `DATABASE_URL` is
+ *    required and its absence fails the boot loudly.
+ *  - `"urania"` (explicit-only since F2): a wired {@link UraniaBodyClient}
+ *    over {@link LiveUraniaCapture}, writing the chaos substrate directly
+ *    (env: `CHAOS_URL`; legacy `URANIA_URL` honored). Post-D1-cut, urania is
+ *    a lens and serves no capture — the substrate is chaos. Kept as the
+ *    migration-era hatch until the strangle completes.
  *  - `"hades"`: a wired {@link UraniaBodyClient} over {@link HadesCapture} —
  *    the F2 gateway-auth path (Charon → Hades → calliope-mcp). Selected
  *    automatically when `CALLIOPE_WRITE_VIA_HADES=1` / `CHARON_URL` is set, or
@@ -43,8 +45,9 @@ import { IndexingBodyClient, UraniaIndexClient } from "./index-push.js";
 /** How the MCP reaches the body model. */
 export type BackendKind = "urania" | "hades" | "fixture" | "pg";
 
-/** Read the configured backend kind (default: pg when DATABASE_URL is set —
- * the C2 sovereign store — else live urania, or hades if enabled). */
+/** Read the configured backend kind (default: pg — the sovereign store IS the
+ * body store post-cutover (F2); urania survives as an explicit opt-in only,
+ * and hades still auto-selects on its env flags). */
 export function backendKind(env: NodeJS.ProcessEnv = process.env): BackendKind {
   const explicit = env.CALLIOPE_MCP_BACKEND;
   if (explicit === "fixture") return "fixture";
@@ -59,7 +62,27 @@ export function backendKind(env: NodeJS.ProcessEnv = process.env): BackendKind {
     (env.CHARON_URL !== undefined && env.CHARON_URL !== "")
   )
     return "hades";
-  return "urania";
+  // F2: the bare-env default is pg. A missing DATABASE_URL then FAILS the
+  // boot (see pgConnectionString) instead of silently reverting prose writes
+  // to chaos triples — the store the migration explicitly emptied.
+  return "pg";
+}
+
+/**
+ * The sovereign store's connection string, or a loud refusal. `new Pool({})`
+ * with an undefined connectionString silently falls back to libpq defaults —
+ * a third wrong store — so absence throws here, at construction.
+ */
+function pgConnectionString(env: NodeJS.ProcessEnv): string {
+  const url = env.DATABASE_URL;
+  if (url === undefined || url === "") {
+    throw new Error(
+      "calliope: DATABASE_URL is required for the pg backend (the sovereign " +
+        "store is the default since the F2 cutover). Set it, or select a " +
+        "backend explicitly via CALLIOPE_MCP_BACKEND.",
+    );
+  }
+  return url;
 }
 
 /**
@@ -107,7 +130,7 @@ export function makeBodyClient(
     // The sovereign store (C2). Schema bootstrap is async — the entrypoints
     // await initBodyClient() before serving (fail-fast on an unreachable db).
     return withIndexPush(
-      new PgBodyClient(new Pool({ connectionString: env.DATABASE_URL })),
+      new PgBodyClient(new Pool({ connectionString: pgConnectionString(env) })),
       env,
     );
   }
@@ -180,7 +203,7 @@ export function makeBackend(
   }
   if (kind === "pg") {
     // ONE pool for every facet — the sovereign store is one database.
-    const pool = new Pool({ connectionString: env.DATABASE_URL });
+    const pool = new Pool({ connectionString: pgConnectionString(env) });
     return {
       client: withIndexPush(new PgBodyClient(pool), env),
       documents: new PgDocumentStore(pool),

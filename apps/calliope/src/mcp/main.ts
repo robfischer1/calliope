@@ -2,10 +2,11 @@
 /**
  * Calliope-MCP entry point — the prose facet, exposed to LLMs over stdio.
  *
- * Selects a {@link BodyClient} backend from the environment (`pg` when
- * `DATABASE_URL` is set — the sovereign store, the production default;
- * `hades` when `CALLIOPE_WRITE_VIA_HADES`/`CHARON_URL` is set; else live
- * urania; `CALLIOPE_MCP_BACKEND=fixture` for a safe standalone server),
+ * Selects a {@link BodyClient} backend from the environment (`pg` — the
+ * sovereign store — is the default since F2, and a missing `DATABASE_URL`
+ * fails the boot; `hades` when `CALLIOPE_WRITE_VIA_HADES`/`CHARON_URL` is
+ * set; `CALLIOPE_MCP_BACKEND=urania` explicitly for the graph-substrate
+ * hatch; `CALLIOPE_MCP_BACKEND=fixture` for a safe standalone server),
  * builds the server (four-to-nine tools, depending on which facet stores
  * the backend supplies), and serves it over stdio. This is the
  * `calliope-mcp` bin — a separate entry from the lib, so the lib build and

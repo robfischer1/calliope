@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { backendKind, initBodyClient } from "../src/mcp/backend.js";
+import {
+  backendKind,
+  initBodyClient,
+  makeBackend,
+  makeBodyClient,
+} from "../src/mcp/backend.js";
 import {
   IndexingBodyClient,
   UraniaIndexClient,
@@ -31,8 +36,12 @@ describe("backendKind — backend selection from env", () => {
     expect(backendKind({ CHARON_URL: "http://charon:8300" })).toBe("hades");
   });
 
-  it("defaults to 'urania' when no relevant env vars are set", () => {
-    expect(backendKind({})).toBe("urania");
+  it("defaults to 'pg' when no relevant env vars are set (F2 — the flip)", () => {
+    expect(backendKind({})).toBe("pg");
+  });
+
+  it("still auto-selects 'pg' when DATABASE_URL is set", () => {
+    expect(backendKind({ DATABASE_URL: "postgresql://x/y" })).toBe("pg");
   });
 
   it("CALLIOPE_MCP_BACKEND=fixture takes priority over CALLIOPE_WRITE_VIA_HADES", () => {
@@ -51,6 +60,22 @@ describe("backendKind — backend selection from env", () => {
         CALLIOPE_WRITE_VIA_HADES: "1",
       }),
     ).toBe("urania");
+  });
+});
+
+describe("pg fail-fast — a missing DATABASE_URL refuses the boot (F2)", () => {
+  it("makeBodyClient('pg') throws naming DATABASE_URL when it is absent", () => {
+    expect(() => makeBodyClient("pg", {})).toThrow(/DATABASE_URL/);
+  });
+
+  it("makeBodyClient('pg') throws when DATABASE_URL is empty", () => {
+    expect(() => makeBodyClient("pg", { DATABASE_URL: "" })).toThrow(
+      /DATABASE_URL/,
+    );
+  });
+
+  it("makeBackend('pg') throws naming DATABASE_URL when it is absent", () => {
+    expect(() => makeBackend("pg", {})).toThrow(/DATABASE_URL/);
   });
 });
 
