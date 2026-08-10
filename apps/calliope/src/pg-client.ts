@@ -183,6 +183,13 @@ export class PgBodyClient implements BodyClient {
           `editSection: section ${sectionId} is not part of node ${nodeId}.`,
         );
       }
+      // F4: a byte-identical re-submit is a no-op — no row, no lineage edge,
+      // no revision event, same id back. Decided in-transaction (under the
+      // FOR UPDATE lock), so a racing real edit cannot be swallowed.
+      if (target.text === text) {
+        await client.query("COMMIT");
+        return { id: target.id, text: target.text, orderKey: target.order_key };
+      }
       const nextId = mintSectionId(nodeId, text, target.order_key);
       await client.query(
         `UPDATE sections SET active = false WHERE node_id = $1 AND id = $2`,

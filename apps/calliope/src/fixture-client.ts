@@ -86,6 +86,14 @@ export class FixtureBodyClient implements BodyClient {
         ),
       );
     }
+    // F4: a byte-identical re-submit is a no-op — no event, same id back.
+    if (target.text === text) {
+      return Promise.resolve({
+        id: target.id,
+        text: target.text,
+        orderKey: target.orderKey,
+      });
+    }
     const next: FixtureSection = {
       id: `${nodeId}#${String(this.seq++)}`,
       text,

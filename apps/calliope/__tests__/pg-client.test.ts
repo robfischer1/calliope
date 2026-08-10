@@ -579,6 +579,56 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     expect(a.text).toBe("one");
   });
 
+  it("a single-block edit costs exactly one row; identical re-submit costs zero (F4)", async () => {
+    const rowCount = async (): Promise<number> => {
+      const r = await pool.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM sections WHERE node_id = 'node-noop'",
+      );
+      return r.rows[0]?.n ?? -1;
+    };
+    const edgeCount = async (): Promise<number> => {
+      const r = await pool.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM supersessions WHERE node_id = 'node-noop'",
+      );
+      return r.rows[0]?.n ?? -1;
+    };
+    await client.saveBody("node-noop", [
+      { text: "a" },
+      { text: "b" },
+      { text: "c" },
+    ]);
+    const before = await client.readBody("node-noop");
+    const target = before.at(1);
+    if (!target) throw new Error("fixture body missing");
+
+    // SC-001: one real edit = exactly one new row; siblings reused.
+    const rows0 = await rowCount();
+    const edited = await client.editSection("node-noop", target.id, "b2");
+    expect((await rowCount()) - rows0).toBe(1);
+    const after = await client.readBody("node-noop");
+    expect(after.at(0)?.id).toBe(before.at(0)?.id);
+    expect(after.at(2)?.id).toBe(before.at(2)?.id);
+
+    // SC-003: provenance rides the superseding row.
+    const prov = await pool.query<{ authored_by: string }>(
+      "SELECT authored_by FROM sections WHERE node_id = 'node-noop' AND id = $1",
+      [edited.id],
+    );
+    expect(prov.rows[0]?.authored_by).toBe("human");
+
+    // SC-002: byte-identical re-submit is a no-op — zero row/edge/revision
+    // deltas, same id back.
+    const rows1 = await rowCount();
+    const edges1 = await edgeCount();
+    const revs1 = await client.readRevisions("node-noop");
+    const noop = await client.editSection("node-noop", edited.id, "b2");
+    expect(noop.id).toBe(edited.id);
+    expect(noop.text).toBe("b2");
+    expect(await rowCount()).toBe(rows1);
+    expect(await edgeCount()).toBe(edges1);
+    expect(await client.readRevisions("node-noop")).toEqual(revs1);
+  });
+
   it("importSection preserves ids and is idempotent; retainOnly converges", async () => {
     const sec = { id: "f".repeat(64), text: "migrated", orderKey: "01" };
     await client.importSection("node-m", sec);
