@@ -184,6 +184,42 @@ export interface BodyClient {
   ): Promise<ApplySectionOpsResult>;
 
   /**
+   * F3 identity-preserving split: cut the section `sectionId` at `offset`
+   * (UTF-16 code units into its `text`, `0 ≤ offset ≤ length` — boundary
+   * splits produce an empty-prose child, which is legal). The original is
+   * superseded by TWO fresh children: the first keeps the original's
+   * `order_key`, the second takes a fractional key strictly between the
+   * original and its next active neighbour. BOTH children record the
+   * original as lineage predecessor, so anchors resolve forward. One
+   * transaction; a stale `sectionId` rejects with `stale_section`.
+   *
+   * Optional like {@link editSection}; the fs backend deliberately never
+   * grows it (file is truth, one block, no inference).
+   */
+  splitSection?(
+    nodeId: string,
+    sectionId: string,
+    offset: number,
+  ): Promise<[Section, Section]>;
+
+  /**
+   * F3 identity-preserving merge of two ADJACENT sections: `firstId` must
+   * order strictly before `secondId` with no active section between, else
+   * the op rejects with `not_adjacent`. Both parents are superseded by ONE
+   * survivor carrying `first.text + separator + second.text` (separator
+   * default `""`) at the first parent's `order_key`. The survivor records
+   * BOTH parents as lineage predecessors (the F1 join table — the op the
+   * single-valued `supersedes` column cannot express). One transaction;
+   * stale ids reject with `stale_section`.
+   */
+  mergeSections?(
+    nodeId: string,
+    firstId: string,
+    secondId: string,
+    separator?: string,
+  ): Promise<Section>;
+
+  /**
    * List the body's stored revisions — the write-events of its copy-on-write
    * lineage, newest first. Each coarse save and each single-section edit is
    * one event. Optional for backward compatibility, like {@link editSection}:

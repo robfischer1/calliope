@@ -2,8 +2,15 @@ import { describe, expect, it } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import {
   appendSection,
+  createBlock,
+  deleteBlock,
   editSection,
+  isBlockMiss,
+  mergeBlock,
+  readBlock,
   readBody,
+  splitBlock,
+  updateBlock,
   writeBody,
 } from "../src/mcp/tools.js";
 import type { BodyClient } from "../src/types.js";
@@ -124,6 +131,130 @@ describe("calliope-mcp tools — over FixtureBodyClient", () => {
       saveBody: () => Promise.resolve(),
     };
     await expect(editSection(legacy, "n1", "s1", "y")).rejects.toThrow(
+      /does not support/i,
+    );
+  });
+});
+
+// ── F3: the block-native verb surface ────────────────────────────────────────
+
+describe("block verbs — CRUD + split/merge over FixtureBodyClient (F3)", () => {
+  it("create_block appends when no position is given, including into an empty container", async () => {
+    const client = new FixtureBodyClient();
+    const first = await createBlock(client, "c1", "alpha");
+    expect(first.block.text).toBe("alpha");
+    const second = await createBlock(client, "c1", "omega");
+    const body = await readBody(client, "c1");
+    expect(body.sections.map((s) => s.text)).toEqual(["alpha", "omega"]);
+    expect(second.block.orderKey > first.block.orderKey).toBe(true);
+  });
+
+  it("create_block after a block lands between it and its next sibling, siblings untouched", async () => {
+    const client = new FixtureBodyClient();
+    await writeBody(client, "c2", [{ text: "one" }, { text: "two" }]);
+    const before = (await readBody(client, "c2")).sections;
+    const [one, two] = before;
+    if (!one || !two) throw new Error("fixture body missing");
+    const wedged = await createBlock(client, "c2", "wedge", one.id);
+    const after = (await readBody(client, "c2")).sections;
+    expect(after.map((s) => s.text)).toEqual(["one", "wedge", "two"]);
+    // Siblings keep ids AND keys.
+    expect(after.at(0)?.id).toBe(one.id);
+    expect(after.at(2)?.id).toBe(two.id);
+    expect(after.at(0)?.orderKey).toBe(one.orderKey);
+    expect(after.at(2)?.orderKey).toBe(two.orderKey);
+    expect(wedged.block.orderKey > one.orderKey).toBe(true);
+    expect(wedged.block.orderKey < two.orderKey).toBe(true);
+  });
+
+  it("create_block after a stale id rejects", async () => {
+    const client = new FixtureBodyClient();
+    await writeBody(client, "c3", [{ text: "x" }]);
+    await expect(createBlock(client, "c3", "y", "nope")).rejects.toThrow(
+      /stale_section/,
+    );
+  });
+
+  it("read_block serves one block; a miss is a structured block_not_found", async () => {
+    const client = new FixtureBodyClient();
+    await writeBody(client, "c4", [{ text: "only" }]);
+    const body = (await readBody(client, "c4")).sections;
+    const only = body.at(0);
+    if (!only) throw new Error("fixture body missing");
+    const hit = await readBlock(client, "c4", only.id);
+    if (isBlockMiss(hit)) throw new Error("expected a hit");
+    expect(hit.block.text).toBe("only");
+    const miss = await readBlock(client, "c4", "nope");
+    expect(isBlockMiss(miss)).toBe(true);
+    if (isBlockMiss(miss)) expect(miss.error).toBe("block_not_found");
+  });
+
+  it("update_block rewrites one block, siblings shared by reference", async () => {
+    const client = new FixtureBodyClient();
+    await writeBody(client, "c5", [{ text: "keep" }, { text: "old" }]);
+    const body = (await readBody(client, "c5")).sections;
+    const [keep, old] = body;
+    if (!keep || !old) throw new Error("fixture body missing");
+    const updated = await updateBlock(client, "c5", old.id, "new");
+    expect(updated.block.id).not.toBe(old.id);
+    expect(updated.block.orderKey).toBe(old.orderKey);
+    const after = (await readBody(client, "c5")).sections;
+    expect(after.map((s) => s.text)).toEqual(["keep", "new"]);
+    expect(after.at(0)?.id).toBe(keep.id);
+  });
+
+  it("delete_block removes one block and reports what left", async () => {
+    const client = new FixtureBodyClient();
+    await writeBody(client, "c6", [{ text: "stay" }, { text: "go" }]);
+    const body = (await readBody(client, "c6")).sections;
+    const go = body.at(1);
+    if (!go) throw new Error("fixture body missing");
+    const res = await deleteBlock(client, "c6", go.id);
+    expect(res.ok).toBe(true);
+    expect(res.deleted.id).toBe(go.id);
+    expect((await readBody(client, "c6")).sections.map((s) => s.text)).toEqual([
+      "stay",
+    ]);
+  });
+
+  it("split_block and merge_block round-trip with the store twins", async () => {
+    const client = new FixtureBodyClient();
+    await writeBody(client, "c7", [{ text: "hello world" }, { text: "tail" }]);
+    const body = (await readBody(client, "c7")).sections;
+    const target = body.at(0);
+    if (!target) throw new Error("fixture body missing");
+    const split = await splitBlock(client, "c7", target.id, 5);
+    expect(split.blocks.map((b) => b.text)).toEqual(["hello", " world"]);
+    const mid = (await readBody(client, "c7")).sections;
+    expect(mid.map((s) => s.text)).toEqual(["hello", " world", "tail"]);
+    const secondId = split.blocks.at(1)?.id;
+    const tailId = mid.at(2)?.id;
+    if (secondId === undefined || tailId === undefined)
+      throw new Error("split blocks missing");
+    const merged = await mergeBlock(client, "c7", secondId, tailId, " / ");
+    expect(merged.block.text).toBe(" world / tail");
+    expect((await readBody(client, "c7")).sections.map((s) => s.text)).toEqual([
+      "hello",
+      " world / tail",
+    ]);
+    // Non-adjacent (now only two blocks; merge them backwards) rejects.
+    const final = (await readBody(client, "c7")).sections;
+    const [h, w] = final;
+    if (!h || !w) throw new Error("fixture body missing");
+    await expect(mergeBlock(client, "c7", w.id, h.id)).rejects.toThrow(
+      /not_adjacent/,
+    );
+  });
+
+  it("split_block and merge_block error clearly when the backend lacks the ops", async () => {
+    const legacy: BodyClient = {
+      readBody: () => Promise.resolve([]),
+      saveBody: () => Promise.resolve(),
+    };
+    await expect(splitBlock(legacy, "n", "s", 0)).rejects.toThrow(
+      /does not support/i,
+    );
+    await expect(mergeBlock(legacy, "n", "a", "b")).rejects.toThrow(
       /does not support/i,
     );
   });

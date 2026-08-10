@@ -429,6 +429,156 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     expect(emptyEdges.rows[0]?.n).toBe(0);
   });
 
+  it("splitSection cuts one block into two lineage-carrying children (F3)", async () => {
+    await client.saveBody("node-split", [
+      { text: "before" },
+      { text: "hello world" },
+      { text: "after" },
+    ]);
+    const body = await client.readBody("node-split");
+    const target = body.at(1);
+    const after = body.at(2);
+    if (!target || !after) throw new Error("fixture body missing");
+
+    const [first, second] = await client.splitSection(
+      "node-split",
+      target.id,
+      "hello".length,
+    );
+    expect(first.text).toBe("hello");
+    expect(second.text).toBe(" world");
+    // First child keeps the original's key; second lands strictly between
+    // the original and its next neighbour.
+    expect(first.orderKey).toBe(target.orderKey);
+    expect(second.orderKey > first.orderKey).toBe(true);
+    expect(second.orderKey < after.orderKey).toBe(true);
+    // Both children are fresh identities superseding the original.
+    expect(first.id).not.toBe(target.id);
+    expect(second.id).not.toBe(target.id);
+    expect(
+      (await client.lineageOf("node-split", first.id)).predecessors,
+    ).toEqual([target.id]);
+    expect(
+      (await client.lineageOf("node-split", second.id)).predecessors,
+    ).toEqual([target.id]);
+    const succ = (await client.lineageOf("node-split", target.id)).successors;
+    expect([...succ].sort()).toEqual([first.id, second.id].sort());
+    // The body reads as four blocks in order.
+    expect((await client.readBody("node-split")).map((s) => s.text)).toEqual([
+      "before",
+      "hello",
+      " world",
+      "after",
+    ]);
+    // Boundary split: offset 0 yields an empty first child (legal).
+    const [empty, rest] = await client.splitSection("node-split", first.id, 0);
+    expect(empty.text).toBe("");
+    expect(rest.text).toBe("hello");
+    // Stale id rejects.
+    await expect(
+      client.splitSection("node-split", target.id, 1),
+    ).rejects.toThrow(/stale_section/);
+    // Bad offset rejects.
+    await expect(
+      client.splitSection("node-split", rest.id, 999),
+    ).rejects.toThrow(/bad_offset/);
+  });
+
+  it("mergeSections joins two adjacent blocks into one with BOTH predecessors (F3)", async () => {
+    await client.saveBody("node-merge", [
+      { text: "alpha" },
+      { text: "beta" },
+      { text: "gamma" },
+    ]);
+    const [alpha, beta, gamma] = await client.readBody("node-merge");
+    if (!alpha || !beta || !gamma) throw new Error("fixture body missing");
+
+    // Non-adjacent rejects untouched.
+    await expect(
+      client.mergeSections("node-merge", alpha.id, gamma.id),
+    ).rejects.toThrow(/not_adjacent/);
+    // Wrong order rejects.
+    await expect(
+      client.mergeSections("node-merge", beta.id, alpha.id),
+    ).rejects.toThrow(/not_adjacent/);
+    expect((await client.readBody("node-merge")).map((s) => s.text)).toEqual([
+      "alpha",
+      "beta",
+      "gamma",
+    ]);
+
+    const merged = await client.mergeSections(
+      "node-merge",
+      alpha.id,
+      beta.id,
+      " + ",
+    );
+    expect(merged.text).toBe("alpha + beta");
+    expect(merged.orderKey).toBe(alpha.orderKey);
+    // The join table carries BOTH predecessors (the op the single column
+    // cannot express); the column names the first.
+    const lin = await client.lineageOf("node-merge", merged.id);
+    expect([...lin.predecessors].sort()).toEqual([alpha.id, beta.id].sort());
+    expect((await client.lineageOf("node-merge", alpha.id)).successors).toEqual(
+      [merged.id],
+    );
+    expect((await client.lineageOf("node-merge", beta.id)).successors).toEqual([
+      merged.id,
+    ]);
+    const col = await pool.query<{ supersedes: string | null }>(
+      "SELECT supersedes FROM sections WHERE node_id = 'node-merge' AND id = $1",
+      [merged.id],
+    );
+    expect(col.rows[0]?.supersedes).toBe(alpha.id);
+    expect((await client.readBody("node-merge")).map((s) => s.text)).toEqual([
+      "alpha + beta",
+      "gamma",
+    ]);
+    // Stale id rejects.
+    await expect(
+      client.mergeSections("node-merge", alpha.id, gamma.id),
+    ).rejects.toThrow(/stale_section/);
+  });
+
+  it("reconstruction stays byte-exact across split and merge events (F3 SC-005)", async () => {
+    await client.saveBody("node-sm", [{ text: "one two" }, { text: "three" }]);
+    const v1 = await client.readBody("node-sm");
+    const target = v1.at(0);
+    if (!target) throw new Error("fixture body missing");
+    const [a, b] = await client.splitSection("node-sm", target.id, 3);
+    await client.mergeSections(
+      "node-sm",
+      b.id,
+      (await client.readBody("node-sm")).at(2)?.id ?? "",
+      "/",
+    );
+
+    const revs = await client.readRevisions("node-sm");
+    expect(revs.map((r) => r.kind)).toEqual(["edit", "ops", "save"]);
+    const [atMerge, atSplit, atSave] = revs;
+    if (!atMerge || !atSplit || !atSave) throw new Error("missing revisions");
+    expect(
+      (await client.readRevisionAt("node-sm", atSave.revision)).map(
+        (s) => s.text,
+      ),
+    ).toEqual(["one two", "three"]);
+    expect(
+      (await client.readRevisionAt("node-sm", atSplit.revision)).map(
+        (s) => s.text,
+      ),
+    ).toEqual(["one", " two", "three"]);
+    expect(
+      (await client.readRevisionAt("node-sm", atMerge.revision)).map(
+        (s) => s.text,
+      ),
+    ).toEqual(["one", " two/three"]);
+    // The latest revision reconstructs to the live body.
+    expect(await client.readRevisionAt("node-sm", atMerge.revision)).toEqual(
+      await client.readBody("node-sm"),
+    );
+    expect(a.text).toBe("one");
+  });
+
   it("importSection preserves ids and is idempotent; retainOnly converges", async () => {
     const sec = { id: "f".repeat(64), text: "migrated", orderKey: "01" };
     await client.importSection("node-m", sec);
