@@ -39,6 +39,7 @@ import {
   writeBody,
 } from "./tools.js";
 import { readPlan, isReadPlanError } from "./plan-ingest.js";
+import { sinkNoteVersion, type SinkResult } from "../notes-sink.js";
 import {
   createNote,
   isCreateNoteError,
@@ -764,16 +765,38 @@ export function createServer(
       },
       async (input) => {
         const result = await documents.write(input);
+        // F6 — the strangler bridge: while the table remains the READ truth
+        // (until F7 cuts over), every dissolve ALSO lands note-natively —
+        // identity + one-block container + provenance attrs + tags. Both
+        // halves are idempotent, so a failed-then-retried dissolve
+        // converges; a sink failure fails the verb (silent loss = silent
+        // drift between the stores).
+        let note: SinkResult | undefined;
+        if (options?.chaos !== undefined) {
+          note = await sinkNoteVersion(
+            client,
+            options.chaos.dial,
+            options.chaos.scope,
+            options.tags,
+            input,
+          );
+        }
         return {
           content: [
             {
               type: "text",
-              text: result.deduped
-                ? `Deduped (already stored): ${input.source_path}`
-                : `Stored document #${String(result.id ?? 0)}.`,
+              text:
+                (result.deduped
+                  ? `Deduped (already stored): ${input.source_path}`
+                  : `Stored document #${String(result.id ?? 0)}.`) +
+                (note !== undefined
+                  ? ` Note ${note.node_id} (${note.generation}).`
+                  : ""),
             },
           ],
-          structuredContent: structured(result),
+          structuredContent: structured(
+            note === undefined ? result : { ...result, note },
+          ),
         };
       },
     );

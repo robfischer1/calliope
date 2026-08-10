@@ -80,6 +80,8 @@ export interface DocumentStore {
   byId(id: number): Promise<DocumentRow | null>;
   bySourcePath(sourcePath: string): Promise<DocumentRow[]>;
   list(query?: ListDocumentsQuery): Promise<DocumentRow[]>;
+  /** F6: every distinct `source_path`, ordered — the migration enumeration. */
+  listSourcePaths(): Promise<string[]>;
 }
 
 export function sha256(text: string): string {
@@ -225,6 +227,13 @@ export class PgDocumentStore implements DocumentStore {
     );
     return res.rows.map(toRow);
   }
+
+  async listSourcePaths(): Promise<string[]> {
+    const res = await this.#pool.query<{ source_path: string }>(
+      `SELECT DISTINCT source_path FROM documents ORDER BY source_path`,
+    );
+    return res.rows.map((r) => r.source_path);
+  }
 }
 
 /** In-memory {@link DocumentStore} — dev server + tool tests, no wire. */
@@ -293,5 +302,11 @@ export class FixtureDocumentStore implements DocumentStore {
       rows = rows.map((r) => ({ ...r, body_text: "" }));
     }
     return Promise.resolve(rows);
+  }
+
+  listSourcePaths(): Promise<string[]> {
+    return Promise.resolve(
+      [...new Set(this.#rows.map((r) => r.source_path))].sort(),
+    );
   }
 }

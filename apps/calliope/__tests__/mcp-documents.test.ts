@@ -141,4 +141,54 @@ describe("write_document / read_documents (the C3 verbs, wire-level)", () => {
     expect(docs[0]?.body_text).toBe("the dissolved body — verbatim");
     expect(docs[0]?.title).toBe("Dissolved");
   });
+
+  it("F6 bridge: a dissolve also lands note-natively — identity, body, no-op retry", async () => {
+    await rpc(initEnvelope(1));
+    const payload = {
+      source_path: "Brain Soup/Bridged.md",
+      body_text: "bridged body #f6",
+      subject: "Bridged",
+    };
+    const first = structuredOf(
+      await rpc(callEnvelope(2, "write_document", payload)),
+    );
+    const note = first.note as {
+      node_id: string;
+      created: boolean;
+      generation: string;
+    };
+    expect(note.created).toBe(true);
+    expect(note.generation).toBe("minted");
+
+    // The note's body is readable through the BLOCK surface — one store.
+    const body = structuredOf(
+      await rpc(callEnvelope(3, "read_body", { node_id: note.node_id })),
+    );
+    const sections = body.sections as { text: string }[];
+    expect(sections.map((s) => s.text)).toEqual(["bridged body #f6"]);
+
+    // Identical re-submit: both stores no-op.
+    const retry = structuredOf(
+      await rpc(callEnvelope(4, "write_document", payload)),
+    );
+    expect(retry.deduped).toBe(true);
+    expect((retry.note as { generation: string }).generation).toBe("nooped");
+
+    // A new version supersedes the container generation.
+    const v2 = structuredOf(
+      await rpc(
+        callEnvelope(5, "write_document", {
+          ...payload,
+          body_text: "bridged body v2",
+        }),
+      ),
+    );
+    expect((v2.note as { generation: string }).generation).toBe("superseded");
+    const after = structuredOf(
+      await rpc(callEnvelope(6, "read_body", { node_id: note.node_id })),
+    );
+    expect((after.sections as { text: string }[]).map((s) => s.text)).toEqual([
+      "bridged body v2",
+    ]);
+  });
 });
