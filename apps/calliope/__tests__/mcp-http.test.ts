@@ -96,6 +96,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "delete_block",
       "edit_section",
       "file_revisions",
+      "list_blocks",
       "list_by_tag",
       "list_tags",
       "merge_block",

@@ -28,6 +28,7 @@ import {
   deleteBlock,
   editSection,
   isBlockMiss,
+  listContainerBlocks,
   mergeBlock,
   readBlock,
   readBody,
@@ -188,17 +189,77 @@ export function createServer(
     {
       title: "Read one block",
       description:
-        "F3: serve ONE block's content by id — only that block's markdown " +
-        "crosses the wire. Returns { block: { id, text, orderKey } }; a miss " +
-        "is a structured block_not_found.",
+        "F3/F5: serve ONE block's content — only that block's markdown " +
+        "crosses the wire. Two handle families: { container_id, block_id } " +
+        "reads a section-store block (returns { block: { id, text, " +
+        "orderKey } }); { document | source_path, block_id } reads one " +
+        "feature block of a stored plan document (returns { handle, block: " +
+        "{ id, title, size, order, text } }). Misses are structured: " +
+        "block_not_found / document_not_found / bad_handle.",
       inputSchema: {
-        container_id: z.string().describe("The container owning the block."),
-        block_id: z.string().describe("The block to read."),
+        container_id: z
+          .string()
+          .optional()
+          .describe("Node family: the container owning the block."),
+        block_id: z.string().describe("The block to read (or a feature id)."),
+        document: z
+          .number()
+          .int()
+          .optional()
+          .describe("Document family: the plan document id."),
+        source_path: z
+          .string()
+          .optional()
+          .describe("Document family: the plan's source path (newest wins)."),
       },
     },
-    async ({ container_id, block_id }) => {
-      const result = await readBlock(client, container_id, block_id);
-      if (isBlockMiss(result)) {
+    async ({ container_id, block_id, document, source_path }) => {
+      if (container_id !== undefined) {
+        const result = await readBlock(client, container_id, block_id);
+        if (isBlockMiss(result)) {
+          return {
+            content: [
+              { type: "text", text: `${result.error}: ${result.detail}` },
+            ],
+            structuredContent: structured(result),
+            isError: true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Block ${result.block.id} (${String(result.block.text.length)} chars).`,
+            },
+          ],
+          structuredContent: structured(result),
+        };
+      }
+      const documents = options?.documents;
+      if (
+        (document === undefined && source_path === undefined) ||
+        documents === undefined
+      ) {
+        const miss = {
+          error: "bad_handle",
+          detail:
+            documents === undefined &&
+            (document !== undefined || source_path !== undefined)
+              ? "this backend carries no document store"
+              : "read_block needs a container_id, or a document/source_path.",
+        };
+        return {
+          content: [{ type: "text", text: `${miss.error}: ${miss.detail}` }],
+          structuredContent: structured(miss),
+          isError: true,
+        };
+      }
+      const result = await readPlan(documents, {
+        ...(document !== undefined ? { document } : {}),
+        ...(source_path !== undefined ? { source_path } : {}),
+        block: block_id,
+      });
+      if (isReadPlanError(result)) {
         return {
           content: [
             { type: "text", text: `${result.error}: ${result.detail}` },
@@ -207,14 +268,110 @@ export function createServer(
           isError: true,
         };
       }
+      const summary =
+        "block" in result
+          ? `Block ${result.block.id} (${String(result.block.text.length)} chars).`
+          : "unexpected whole-plan result";
+      return {
+        content: [{ type: "text", text: summary }],
+        structuredContent: structured(result),
+      };
+    },
+  );
+
+  server.registerTool(
+    "list_blocks",
+    {
+      title: "List a container's blocks (the index)",
+      description:
+        "F5: the general container index — block ids, titles, sizes and " +
+        "order, with NO body text crossing the wire. Two handle families: " +
+        "{ container_id } serves a section container (entries { id, title, " +
+        "chars, order_key }, kind: 'node'); { document | source_path } " +
+        "serves a stored plan document's feature-block index (entries " +
+        "{ id, title, size, order }, kind: 'document'). This is the read " +
+        "that replaces read_plan's whole-plan index.",
+      inputSchema: {
+        container_id: z
+          .string()
+          .optional()
+          .describe("Node family: the section container."),
+        document: z
+          .number()
+          .int()
+          .optional()
+          .describe("Document family: the plan document id."),
+        source_path: z
+          .string()
+          .optional()
+          .describe("Document family: the plan's source path (newest wins)."),
+      },
+    },
+    async ({ container_id, document, source_path }) => {
+      if (container_id !== undefined) {
+        const result = await listContainerBlocks(client, container_id);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${String(result.block_count)} block(s) in ${container_id}.`,
+            },
+          ],
+          structuredContent: structured(result),
+        };
+      }
+      const documents = options?.documents;
+      if (
+        (document === undefined && source_path === undefined) ||
+        documents === undefined
+      ) {
+        const miss = {
+          error: "bad_handle",
+          detail:
+            documents === undefined &&
+            (document !== undefined || source_path !== undefined)
+              ? "this backend carries no document store"
+              : "list_blocks needs a container_id, or a document/source_path.",
+        };
+        return {
+          content: [{ type: "text", text: `${miss.error}: ${miss.detail}` }],
+          structuredContent: structured(miss),
+          isError: true,
+        };
+      }
+      const result = await readPlan(documents, {
+        ...(document !== undefined ? { document } : {}),
+        ...(source_path !== undefined ? { source_path } : {}),
+        omit_body: true,
+      });
+      if (isReadPlanError(result)) {
+        return {
+          content: [
+            { type: "text", text: `${result.error}: ${result.detail}` },
+          ],
+          structuredContent: structured(result),
+          isError: true,
+        };
+      }
+      if ("block" in result) {
+        // Unreachable: no block address was passed.
+        throw new Error("list_blocks: unexpected single-block result");
+      }
+      const index = {
+        kind: "document" as const,
+        handle: result.handle,
+        title: result.title,
+        block_count: result.block_count,
+        blocks: result.blocks,
+      };
       return {
         content: [
           {
             type: "text",
-            text: `Block ${result.block.id} (${String(result.block.text.length)} chars).`,
+            text: `${String(index.block_count)} feature block(s).`,
           },
         ],
-        structuredContent: structured(result),
+        structuredContent: structured(index),
       };
     },
   );
@@ -676,7 +833,8 @@ export function createServer(
     server.registerTool(
       "read_plan",
       {
-        title: "Read a plan by reference (block-addressable)",
+        title:
+          "Read a plan by reference (LEGACY — prefer list_blocks + read_block)",
         description:
           "C7 projection-shaped ingest: resolve a plan document BY REFERENCE " +
           "(a handle — `document` id or `source_path`, newest version wins) and " +

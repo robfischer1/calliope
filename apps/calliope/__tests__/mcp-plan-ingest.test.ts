@@ -181,3 +181,123 @@ describe("read_plan (the C7 verb, wire-level)", () => {
     expect(structuredOf(res).error).toBe("block_not_found");
   });
 });
+
+describe("list_blocks — the general container index (F5)", () => {
+  it("serves a plan document's index with NO body text", async () => {
+    const id = await seedPlan();
+    const index = structuredOf(
+      await rpc(callEnvelope(3, "list_blocks", { document: id })),
+    );
+    expect(index.kind).toBe("document");
+    expect(index.block_count).toBe(2);
+    const blocks = index.blocks as Record<string, unknown>[];
+    expect(blocks.map((b) => b.id)).toEqual(["C6", "C7"]);
+    expect(blocks.map((b) => b.size)).toEqual(["L", "M"]);
+    expect(blocks.map((b) => b.order)).toEqual([0, 1]);
+    // The index NEVER carries prose.
+    expect(index.body_text).toBeUndefined();
+    for (const b of blocks) expect(b.text).toBeUndefined();
+  });
+
+  it("serves a section container's index with NO prose", async () => {
+    await rpc(initEnvelope(1));
+    await rpc(
+      callEnvelope(2, "write_body", {
+        node_id: "n-idx",
+        sections: [
+          { text: "First paragraph line\nmore prose here" },
+          { text: "Second block" },
+        ],
+      }),
+    );
+    const index = structuredOf(
+      await rpc(callEnvelope(3, "list_blocks", { container_id: "n-idx" })),
+    );
+    expect(index.kind).toBe("node");
+    expect(index.block_count).toBe(2);
+    const blocks = index.blocks as {
+      id: string;
+      title: string;
+      chars: number;
+      order_key: string;
+    }[];
+    expect(blocks.map((b) => b.title)).toEqual([
+      "First paragraph line",
+      "Second block",
+    ]);
+    expect(blocks[0]?.chars).toBe(
+      "First paragraph line\nmore prose here".length,
+    );
+    const keys = blocks.map((b) => b.order_key);
+    expect([...keys].sort()).toEqual(keys);
+    for (const b of blocks as Record<string, unknown>[]) {
+      expect(b.text).toBeUndefined();
+    }
+  });
+
+  it("misses are structured: bad_handle and document_not_found", async () => {
+    await rpc(initEnvelope(1));
+    const none = await rpc(callEnvelope(2, "list_blocks", {}));
+    expect(resultOf(none).isError).toBe(true);
+    expect(structuredOf(none).error).toBe("bad_handle");
+    const gone = await rpc(callEnvelope(3, "list_blocks", { document: 9999 }));
+    expect(resultOf(gone).isError).toBe(true);
+    expect(structuredOf(gone).error).toBe("document_not_found");
+  });
+});
+
+describe("read_block — the document-handle family (F5)", () => {
+  it("serves exactly one feature block's markdown by document handle", async () => {
+    const id = await seedPlan();
+    const one = structuredOf(
+      await rpc(
+        callEnvelope(3, "read_block", { document: id, block_id: "c7" }),
+      ),
+    );
+    const block = one.block as { id: string; text: string; size: string };
+    expect(block.id).toBe("C7");
+    expect(block.size).toBe("M");
+    expect(block.text).toContain("projection-shaped ingest read");
+    expect(block.text).not.toContain("The vault carve");
+  });
+
+  it("misses are structured on the document family", async () => {
+    const id = await seedPlan();
+    const badBlock = await rpc(
+      callEnvelope(3, "read_block", { document: id, block_id: "Z9" }),
+    );
+    expect(resultOf(badBlock).isError).toBe(true);
+    expect(structuredOf(badBlock).error).toBe("block_not_found");
+    const badDoc = await rpc(
+      callEnvelope(4, "read_block", { document: 9999, block_id: "C7" }),
+    );
+    expect(resultOf(badDoc).isError).toBe(true);
+    expect(structuredOf(badDoc).error).toBe("document_not_found");
+    const noHandle = await rpc(
+      callEnvelope(5, "read_block", { block_id: "C7" }),
+    );
+    expect(resultOf(noHandle).isError).toBe(true);
+    expect(structuredOf(noHandle).error).toBe("bad_handle");
+  });
+
+  it("the node family still works unchanged (F3 contract)", async () => {
+    await rpc(initEnvelope(1));
+    await rpc(
+      callEnvelope(2, "write_body", {
+        node_id: "n-rb",
+        sections: [{ text: "only block" }],
+      }),
+    );
+    const body = structuredOf(
+      await rpc(callEnvelope(3, "read_body", { node_id: "n-rb" })),
+    );
+    const sections = body.sections as { id: string }[];
+    const sid = sections[0]?.id ?? "";
+    const one = structuredOf(
+      await rpc(
+        callEnvelope(4, "read_block", { container_id: "n-rb", block_id: sid }),
+      ),
+    );
+    expect((one.block as { text: string }).text).toBe("only block");
+  });
+});
