@@ -91,6 +91,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
     expect(names).toEqual([
       "append_section",
       "apply_section_ops",
+      "coalesce_block_writes",
       "create_block",
       "create_note",
       "delete_block",
@@ -112,6 +113,30 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "write_body",
       "write_document",
     ]);
+  });
+
+  it("coalesce_block_writes refuses while the F8 flag is off (default)", async () => {
+    await rpc(initEnvelope(1));
+    const res = (await rpc({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "coalesce_block_writes",
+        arguments: {
+          container_id: "n-x",
+          block_id: "b-x",
+          since_revision: "2026-01-01T00:00:00.000000Z",
+        },
+      },
+    })) as {
+      result?: {
+        isError?: boolean;
+        structuredContent?: { error?: string };
+      };
+    };
+    expect(res.result?.isError).toBe(true);
+    expect(res.result?.structuredContent?.error).toBe("coalesce_disabled");
   });
 
   it("round-trips write_body then read_body over HTTP", async () => {

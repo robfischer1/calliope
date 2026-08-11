@@ -225,6 +225,19 @@ export interface BodyClient {
   ): Promise<Section>;
 
   /**
+   * F8 arc coalescing: collapse the single-link supersession chain ending at
+   * the active `blockId` back to (but not past) the arc-start moment
+   * `sinceRevision`, physically removing pause-write intermediates and
+   * rewiring lineage across the gap. Structural events are boundaries.
+   * Optional — the sovereign store implements it; fs and fixture do not.
+   */
+  coalesceArc?(
+    nodeId: string,
+    blockId: string,
+    sinceRevision: string,
+  ): Promise<{ removed: number; from: string; to: string }>;
+
+  /**
    * List the body's stored revisions — the write-events of its copy-on-write
    * lineage, newest first. Each coarse save and each single-section edit is
    * one event. Optional for backward compatibility, like {@link editSection}:

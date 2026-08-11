@@ -471,6 +471,148 @@ export class PgBodyClient implements BodyClient {
   }
 
   /**
+   * F8 arc coalescing — collapse an intra-arc supersession chain to its
+   * endpoints, physically. Walks backward from the ACTIVE row `blockId`
+   * while predecessors are strictly newer than `sinceRevision`, collecting
+   * removable intermediates; deletes them (rows + lineage edges) and rewires
+   * the final row's lineage — column AND join table — to the walk's stop row.
+   *
+   * A predecessor is removable ONLY when every guard passes:
+   *  - it is inactive, not a tombstone, and newer than the arc start;
+   *  - it has exactly ONE predecessor edge and ONE successor edge (no
+   *    split/merge fan touches it);
+   *  - its creation event wrote exactly ONE row — a pause-edit. A row born
+   *    in a multi-row event (a split child, an ops batch) is a BOUNDARY:
+   *    deleting it would make its event reconstruct without its siblings.
+   *
+   * The rewired edge carries the FINAL row's `created_at`, so mid-arc
+   * moments reconstruct to the pre-arc state and the endpoints stay
+   * byte-exact. Returns `{removed, from, to}`; `removed: 0` when nothing
+   * qualifies. The first deliberate deletion in this store — which is why
+   * the verb above it ships flag-gated.
+   */
+  async coalesceArc(
+    nodeId: string,
+    blockId: string,
+    sinceRevision: string,
+  ): Promise<{ removed: number; from: string; to: string }> {
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN");
+      const rowsRes = await client.query<{
+        id: string;
+        active: boolean;
+        tombstone: boolean;
+        created_at: Date;
+      }>(
+        `SELECT id, active, tombstone, created_at FROM sections
+          WHERE node_id = $1 FOR UPDATE`,
+        [nodeId],
+      );
+      const rows = new Map(rowsRes.rows.map((r) => [r.id, r]));
+      const final = rows.get(blockId);
+      if (final?.active !== true) {
+        throw new Error(
+          `stale_section: block ${blockId} is not an active block of ${nodeId}.`,
+        );
+      }
+      const edgesRes = await client.query<{
+        successor_id: string;
+        predecessor_id: string;
+      }>(
+        `SELECT successor_id, predecessor_id FROM supersessions
+          WHERE node_id = $1`,
+        [nodeId],
+      );
+      const predsOf = new Map<string, string[]>();
+      const succsOf = new Map<string, string[]>();
+      for (const e of edgesRes.rows) {
+        predsOf.set(e.successor_id, [
+          ...(predsOf.get(e.successor_id) ?? []),
+          e.predecessor_id,
+        ]);
+        succsOf.set(e.predecessor_id, [
+          ...(succsOf.get(e.predecessor_id) ?? []),
+          e.successor_id,
+        ]);
+      }
+      const eventPeers = new Map<number, number>();
+      for (const r of rowsRes.rows) {
+        const t = r.created_at.getTime();
+        eventPeers.set(t, (eventPeers.get(t) ?? 0) + 1);
+      }
+      const since = new Date(sinceRevision).getTime();
+
+      const removable: string[] = [];
+      let to = "";
+      let cur = blockId;
+      for (;;) {
+        const preds = predsOf.get(cur) ?? [];
+        if (preds.length !== 1) {
+          to = "";
+          break;
+        }
+        const pid = preds[0] ?? "";
+        const p = rows.get(pid);
+        if (p === undefined) {
+          to = pid; // referenced but not stored under this node — endpoint
+          break;
+        }
+        const isBoundary =
+          p.created_at.getTime() <= since ||
+          p.tombstone ||
+          p.active ||
+          (succsOf.get(pid) ?? []).length !== 1 ||
+          (predsOf.get(pid) ?? []).length !== 1 ||
+          (eventPeers.get(p.created_at.getTime()) ?? 0) !== 1;
+        if (isBoundary) {
+          to = pid;
+          break;
+        }
+        removable.push(pid);
+        cur = pid;
+      }
+
+      if (removable.length === 0 || to === "") {
+        await client.query("COMMIT");
+        return { removed: 0, from: blockId, to };
+      }
+
+      await client.query(
+        `DELETE FROM sections WHERE node_id = $1 AND id = ANY($2::text[])`,
+        [nodeId, removable],
+      );
+      await client.query(
+        `DELETE FROM supersessions
+          WHERE node_id = $1
+            AND (successor_id = ANY($2::text[])
+                 OR predecessor_id = ANY($2::text[]))`,
+        [nodeId, removable],
+      );
+      await client.query(
+        `UPDATE sections SET supersedes = $3
+          WHERE node_id = $1 AND id = $2`,
+        [nodeId, blockId, to],
+      );
+      // The rewired edge carries the FINAL row's stamp (see the doc above).
+      await client.query(
+        `INSERT INTO supersessions (successor_id, predecessor_id, node_id, created_at)
+         SELECT $2, $3, $1, created_at FROM sections
+          WHERE node_id = $1 AND id = $2
+         ON CONFLICT (node_id, successor_id, predecessor_id) DO NOTHING`,
+        [nodeId, blockId, to],
+      );
+      await client.query("COMMIT");
+      return { removed: removable.length, from: blockId, to };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
    * F1 dual-write: one lineage edge per superseding write, inside the write's
    * own transaction. `created_at` defaults to the transaction-stable `now()`,
    * so the edge and the successor row it describes share the event stamp.
