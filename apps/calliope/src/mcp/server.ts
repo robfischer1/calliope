@@ -1228,6 +1228,70 @@ export function createServer(
     );
 
     server.registerTool(
+      "export_note",
+      {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
+        title: "Export a container to markdown (one-way)",
+        description:
+          "F14 (the A5 fork closes): project a container's blocks to clean " +
+          "markdown for git and grep — blocks byte-verbatim, in order, " +
+          "joined with the dialect's block separator. Markdown is an " +
+          "EXPORT here, never the interchange format or the source of " +
+          "truth. Handle: container_id, or source_path (the note's " +
+          "identity name). Returns { container_id, markdown, block_count }; " +
+          "a miss is container_not_found.",
+        inputSchema: {
+          container_id: z.string().optional().describe("The note's node id."),
+          source_path: z
+            .string()
+            .optional()
+            .describe("The note's identity path (resolves by name)."),
+        },
+      },
+      async ({ container_id, source_path }) => {
+        let nodeId = container_id;
+        if (nodeId === undefined && source_path !== undefined) {
+          const [hit] = await dial.findByName("Note", source_path);
+          nodeId = hit;
+        }
+        const body = nodeId === undefined ? [] : await client.readBody(nodeId);
+        if (nodeId === undefined || body.length === 0) {
+          const miss = {
+            error: "container_not_found",
+            detail:
+              container_id ??
+              source_path ??
+              "export_note needs a container_id or a source_path",
+          };
+          return {
+            content: [{ type: "text", text: `${miss.error}: ${miss.detail}` }],
+            structuredContent: structured(miss),
+            isError: true,
+          };
+        }
+        const markdown = body.map((s) => s.text).join("\n\n");
+        const result = {
+          container_id: nodeId,
+          markdown,
+          block_count: body.length,
+        };
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${String(body.length)} block(s), ${String(markdown.length)} chars.`,
+            },
+          ],
+          structuredContent: structured(result),
+        };
+      },
+    );
+
+    server.registerTool(
       "materialize_note",
       {
         annotations: {

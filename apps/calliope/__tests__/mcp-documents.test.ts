@@ -193,6 +193,52 @@ describe("write_document / read_documents (the C3 verbs, wire-level)", () => {
   });
 });
 
+describe("export_note (F14, wire-level)", () => {
+  it("projects a container's blocks to markdown, one way", async () => {
+    await rpc(initEnvelope(1));
+    const blocks = [
+      { text: "# Exported" },
+      { text: "first para with **bold**" },
+      { text: "- a list\n- of items" },
+    ];
+    const made = structuredOf(
+      await rpc(
+        callEnvelope(2, "dissolve_note", {
+          source_path: "Notes/Export Me.md",
+          blocks,
+        }),
+      ),
+    );
+    const exported = structuredOf(
+      await rpc(
+        callEnvelope(3, "export_note", {
+          source_path: "Notes/Export Me.md",
+        }),
+      ),
+    );
+    expect(exported.container_id).toBe(made.node_id);
+    expect(exported.block_count).toBe(3);
+    // The projection: blocks pass through byte-verbatim, joined with the
+    // shared \n\n seam (fs SECTION_SEP / aglaia BLOCK_SEP).
+    const markdown = exported.markdown as string;
+    expect(markdown).toBe(blocks.map((b) => b.text).join("\n\n"));
+    // Re-import through the separator seam: count + order match. (A block
+    // CONTAINING the separator is the surfaced fidelity boundary — the
+    // list block here uses single newlines, inside the boundary.)
+    expect(markdown.split("\n\n")).toEqual(blocks.map((b) => b.text));
+
+    // Miss shape.
+    const miss = await rpc(
+      callEnvelope(4, "export_note", { source_path: "Notes/Nope.md" }),
+    );
+    expect((miss.result as { isError?: boolean }).isError).toBe(true);
+    expect(
+      (miss.result as { structuredContent?: { error?: string } })
+        .structuredContent?.error,
+    ).toBe("container_not_found");
+  });
+});
+
 describe("dissolve_note / materialize_note (F9, wire-level)", () => {
   it("dissolves a container, materializes it back, no-ops the retry", async () => {
     await rpc(initEnvelope(1));
