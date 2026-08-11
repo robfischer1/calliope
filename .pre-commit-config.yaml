@@ -1,0 +1,86 @@
+# Pre-commit hooks — the LOCAL half of the CI gate, so local and CI cannot drift.
+# pre-commit stage: basic hygiene. pre-PUSH stage: the checks the reusable
+# frontend-ci.yml runs — `bun run gate` (format:check / lint / typecheck / test /
+# build), `bun audit`, opengrep SAST — kept off `pre-commit` so commits stay fast,
+# run before a push reaches the door/CI. CI (the baked frontend-ci image) is the
+# hard enforce; a dev box missing opengrep gets a notice, not a block.
+#
+# Install (copier _tasks does this on scaffold): `uvx pre-commit install` — a bun
+# repo has no uv project, so pre-commit rides uvx the way the go/rust templates do.
+# default_install_hook_types wires pre-commit + pre-push in that one call.
+#
+# NOTE: no detect-secrets here — the frontend CI gate doesn't run it (opengrep +
+# bun audit cover the security surface), and seeding a .secrets.baseline in _tasks
+# would add a rollback-risking step to the stamp. Add it fleet-wide separately if
+# secret-scan parity with the py/go/rust templates is wanted.
+#
+# furnace owns .claude/ .specify/ .furnace/; exclude that managed surface.
+default_install_hook_types: [pre-commit, pre-push, post-commit]
+exclude: '^\.(claude|specify|furnace)/'
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      # end-of-file-fixer REMOVED 2026-08-08 — it earned nothing and cost an outage.
+      #
+      # MEASURED across 40 repos / 8276 in-scope text files, applying each repo's `exclude`
+      # and the hook's own `types: [text]`: 62 files would change (0.75%), and NOT ONE is a
+      # source file in any language. ruff-format / rustfmt / gofmt / prettier already
+      # guarantee a final newline on anything a human writes, and .editorconfig has carried
+      # `insert_final_newline = true` the whole time. The 62 are generated trees (Tauri
+      # gen/android, spec-kit .specify/, public/ assets), SVG/XML icons, and one GOLDEN test
+      # fixture ending \n\n on purpose — files where the "fix" is wrong, futile, or both.
+      #
+      # The cost is not hypothetical. Its only real catches are machine-generated files, and
+      # on 2026-08-08 that meant a 24-repo red-CI cascade over renovate's unterminated
+      # `#copier updated` sentinel — charged to PRs that never touched the file, because
+      # .copier-answers.yml is inert to the gate (rob/renovate-config#2558). It also cannot
+      # run in a forge-git-locked primary at all: it opens every file `rb+` before knowing
+      # whether it has a change to make, so a-w tracked files raise PermissionError
+      # (rob/foundry-stocks#2563).
+      #
+      # WHAT THIS GIVES UP: it was the canary that surfaced that sentinel jam, so a future
+      # generator bug of the same shape now lands quietly. Accepted — it signalled by
+      # breaking everyone else's CI and naming the wrong PR, and the jam's real symptom (a
+      # frozen copier manager) is now watched at the source fix instead.
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+  - repo: local
+    hooks:
+      # CI-parity heavy gate (pre-push): the three steps of the reusable
+      # frontend-ci.yml. `bun run gate` is the exact script CI calls
+      # (format:check + turbo lint/typecheck/test/build). bun/turbo are always
+      # present in a frontend repo; opengrep is a system binary → notice if absent.
+      - id: bun-gate
+        name: bun run gate (format/lint/typecheck/test/build — CI parity, pre-push)
+        entry: bash -c 'bun install --frozen-lockfile && bun run gate'
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+      - id: bun-audit
+        name: bun audit dependency vuln scan (CI parity — pre-push)
+        entry: bash -c 'bun audit --audit-level=high'
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+      - id: opengrep-sast
+        name: opengrep SAST (CI parity — pre-push; notice if absent)
+        entry: >-
+          bash -c 'command -v opengrep >/dev/null 2>&1 ||
+          { echo "opengrep not installed — skipping SAST locally (CI enforces)"; exit 0; };
+          export LANG=C.UTF-8 LC_ALL=C.UTF-8; opengrep scan --config rules/sast --error .'
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+      - id: fetch-origin
+        name: fetch origin (keep refs fresh)
+        entry: bash -c '(git fetch origin --prune --quiet >/dev/null 2>&1 </dev/null &)'
+        language: system
+        stages: [post-commit]
+        always_run: true
+        pass_filenames: false
