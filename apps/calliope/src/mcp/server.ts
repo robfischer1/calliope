@@ -128,6 +128,11 @@ export function createServer(
   server.registerTool(
     "read_body",
     {
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
       title: "Read node body",
       description:
         "Resolve a plan node's body — its prose sections, sorted by order key. " +
@@ -156,6 +161,11 @@ export function createServer(
   server.registerTool(
     "create_block",
     {
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+      },
       title: "Create a block",
       description:
         "F3: mint ONE block into a container — after the named sibling, or " +
@@ -192,6 +202,11 @@ export function createServer(
   server.registerTool(
     "read_block",
     {
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
       title: "Read one block",
       description:
         "F3/F5: serve ONE block's content — only that block's markdown " +
@@ -287,6 +302,11 @@ export function createServer(
   server.registerTool(
     "list_blocks",
     {
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
       title: "List a container's blocks (the index)",
       description:
         "F5: the general container index — block ids, titles, sizes and " +
@@ -384,6 +404,11 @@ export function createServer(
   server.registerTool(
     "update_block",
     {
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
       title: "Update one block",
       description:
         "F3: rewrite ONE block's prose (copy-on-write — exactly one " +
@@ -409,6 +434,11 @@ export function createServer(
   server.registerTool(
     "delete_block",
     {
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
       title: "Delete one block",
       description:
         "F3: remove ONE block from its container. History preserves it — " +
@@ -434,6 +464,11 @@ export function createServer(
   server.registerTool(
     "split_block",
     {
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+      },
       title: "Split a block (identity-preserving)",
       description:
         "F3: cut one block at a caret offset (UTF-16 units; 0..length — " +
@@ -469,6 +504,11 @@ export function createServer(
   server.registerTool(
     "merge_block",
     {
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+      },
       title: "Merge two adjacent blocks (identity-preserving)",
       description:
         "F3: join a block with its immediate successor into ONE block " +
@@ -510,6 +550,11 @@ export function createServer(
   server.registerTool(
     "coalesce_block_writes",
     {
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+      },
       title: "Coalesce a writing arc's pause-writes (gated)",
       description:
         "F8: collapse one block's intra-arc supersession chain to its " +
@@ -569,6 +614,11 @@ export function createServer(
   server.registerTool(
     "write_body",
     {
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
       title: "Write node body (LEGACY coarse save)",
       description:
         "LEGACY (F3): the whole-body replace. Prefer the block verbs " +
@@ -598,6 +648,11 @@ export function createServer(
   server.registerTool(
     "append_section",
     {
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+      },
       title: "Append a section",
       description:
         "Append one new section to the end of a plan node's body. Returns the " +
@@ -625,6 +680,11 @@ export function createServer(
   server.registerTool(
     "edit_section",
     {
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
       title: "Edit one section",
       description:
         "Replace the prose of a single section (copy-on-write), keeping its " +
@@ -651,6 +711,11 @@ export function createServer(
   server.registerTool(
     "apply_section_ops",
     {
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
       title: "Apply block-grain section ops",
       description:
         "A11: apply the editor's block-op batch in ONE transaction — add " +
@@ -724,6 +789,11 @@ export function createServer(
   server.registerTool(
     "read_body_revisions",
     {
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
       title: "List a body's revisions",
       description:
         "List a plan node body's stored write-events (copy-on-write lineage), " +
@@ -757,6 +827,11 @@ export function createServer(
   server.registerTool(
     "read_body_at",
     {
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
       title: "Read a body at a revision",
       description:
         "Reconstruct a plan node's body as it stood at a write-event returned " +
@@ -788,6 +863,11 @@ export function createServer(
     server.registerTool(
       "write_document",
       {
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
         title: "Write a dissolved document",
         description:
           "Store one dissolved vault note's body verbatim (the typed-write " +
@@ -867,6 +947,11 @@ export function createServer(
     server.registerTool(
       "read_documents",
       {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
         title: "Read dissolved documents",
         description:
           "Read the document store: by id, by source_path, or list " +
@@ -919,6 +1004,11 @@ export function createServer(
     server.registerTool(
       "read_plan",
       {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
         title:
           "Read a plan by reference (LEGACY — prefer list_blocks + read_block)",
         description:
@@ -988,6 +1078,11 @@ export function createServer(
     server.registerTool(
       "file_revisions",
       {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
         title: "Read the file-revision archive",
         description:
           "The git-for-ideas archive (frozen history, re-homed from phdb): " +
@@ -1027,6 +1122,11 @@ export function createServer(
     server.registerTool(
       "revision_deltas",
       {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
         title: "Read a revision's triple deltas",
         description:
           "The frontmatter/link evolution record for one revision — " +
@@ -1055,6 +1155,11 @@ export function createServer(
     server.registerTool(
       "dissolve_note",
       {
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
         title: "Dissolve — promote one container into the constellation",
         description:
           "F9: per-note promotion, human-chosen (the inversion that retired " +
@@ -1125,6 +1230,11 @@ export function createServer(
     server.registerTool(
       "materialize_note",
       {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
         title: "Materialize — land a remote container locally",
         description:
           "F9: the inverse of Dissolve — one read serving everything the " +
@@ -1207,6 +1317,11 @@ export function createServer(
     server.registerTool(
       "create_note",
       {
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
         title: "Create a note (the note-native mint)",
         description:
           "C8: mint a Note-kind identity node on the notes graph through the " +
@@ -1278,6 +1393,11 @@ export function createServer(
     server.registerTool(
       "list_by_tag",
       {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
         title: "Notes carrying a tag",
         description:
           "C9: the server-side tag slice — the notes-graph nodes carrying " +
@@ -1307,6 +1427,11 @@ export function createServer(
     server.registerTool(
       "list_tags",
       {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
         title: "The distinct tag set",
         description:
           "C9: every tag Calliope has written, with carrier counts — the " +

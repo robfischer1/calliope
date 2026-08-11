@@ -117,6 +117,78 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
     ]);
   });
 
+  it("every verb carries honest ToolAnnotations — the F10 map (B7's fence)", async () => {
+    // The pinned map: readOnlyHint / destructiveHint / idempotentHint per
+    // verb. A new verb without annotations fails here by construction.
+    const MAP: Record<string, [boolean, boolean, boolean]> = {
+      // reads
+      read_body: [true, false, true],
+      read_block: [true, false, true],
+      list_blocks: [true, false, true],
+      read_body_revisions: [true, false, true],
+      read_body_at: [true, false, true],
+      read_documents: [true, false, true],
+      read_plan: [true, false, true],
+      file_revisions: [true, false, true],
+      revision_deltas: [true, false, true],
+      list_by_tag: [true, false, true],
+      list_tags: [true, false, true],
+      materialize_note: [true, false, true],
+      // additive writes (each call mints new ids)
+      create_block: [false, false, false],
+      append_section: [false, false, false],
+      split_block: [false, false, false],
+      merge_block: [false, false, false],
+      // idempotent writes (no-op convergence tested in their own suites)
+      update_block: [false, false, true],
+      edit_section: [false, false, true],
+      create_note: [false, false, true],
+      write_document: [false, false, true],
+      dissolve_note: [false, false, true],
+      // destructive
+      apply_section_ops: [false, true, false],
+      delete_block: [false, true, false],
+      write_body: [false, true, false],
+      coalesce_block_writes: [false, true, true],
+    };
+    await rpc(initEnvelope(1));
+    const listed = (await rpc({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/list",
+      params: {},
+    })) as {
+      result?: {
+        tools?: {
+          name: string;
+          title?: string;
+          annotations?: {
+            readOnlyHint?: boolean;
+            destructiveHint?: boolean;
+            idempotentHint?: boolean;
+          };
+        }[];
+      };
+    };
+    const tools = listed.result?.tools ?? [];
+    expect(tools.length).toBe(Object.keys(MAP).length);
+    for (const tool of tools) {
+      const expected = MAP[tool.name];
+      expect(expected, `unmapped verb ${tool.name}`).toBeDefined();
+      if (!expected) continue;
+      const a = tool.annotations;
+      expect(a, `${tool.name} carries no annotations`).toBeDefined();
+      expect(
+        [
+          a?.readOnlyHint ?? false,
+          a?.destructiveHint ?? false,
+          a?.idempotentHint ?? false,
+        ],
+        `${tool.name} hints`,
+      ).toEqual(expected);
+    }
+  });
+
   it("coalesce_block_writes refuses while the F8 flag is off (default)", async () => {
     await rpc(initEnvelope(1));
     const res = (await rpc({
