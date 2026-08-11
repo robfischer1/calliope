@@ -629,6 +629,107 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     expect(await client.readRevisions("node-noop")).toEqual(revs1);
   });
 
+  it("coalesceArc collapses a pause-chain to its endpoints (F8)", async () => {
+    const rowCount = async (): Promise<number> => {
+      const r = await pool.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM sections WHERE node_id = 'node-arc'",
+      );
+      return r.rows[0]?.n ?? -1;
+    };
+    const edgeCount = async (): Promise<number> => {
+      const r = await pool.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM supersessions WHERE node_id = 'node-arc'",
+      );
+      return r.rows[0]?.n ?? -1;
+    };
+    // Pre-arc state: a saved body with two blocks.
+    await client.saveBody("node-arc", [{ text: "stable" }, { text: "draft" }]);
+    const preArc = await client.readBody("node-arc");
+    const target = preArc.at(1);
+    if (!target) throw new Error("fixture body missing");
+    const arcStartRevs = await client.readRevisions("node-arc");
+    const arcStart = arcStartRevs.at(0);
+    if (!arcStart) throw new Error("missing arc-start revision");
+
+    // The arc: four pause-writes on one block.
+    let cur = target.id;
+    for (const text of ["d1", "d2", "d3", "d4 final"]) {
+      cur = (await client.editSection("node-arc", cur, text)).id;
+    }
+    const rowsBefore = await rowCount();
+    const edgesBefore = await edgeCount();
+    const preArcBody = await client.readRevisionAt(
+      "node-arc",
+      arcStart.revision,
+    );
+    const liveBody = await client.readBody("node-arc");
+
+    const result = await client.coalesceArc("node-arc", cur, arcStart.revision);
+    // Three intermediates (d1, d2, d3) removed; their three edges replaced
+    // by one (final -> pre-arc): edges drop by 3+1-1 = 3... precisely:
+    // 4 chain edges before, 1 after.
+    expect(result.removed).toBe(3);
+    expect(result.from).toBe(cur);
+    expect(result.to).toBe(target.id);
+    expect(rowsBefore - (await rowCount())).toBe(3);
+    expect(edgesBefore - (await edgeCount())).toBe(3);
+
+    // Lineage rewired across the gap, both directions.
+    expect((await client.lineageOf("node-arc", cur)).predecessors).toEqual([
+      target.id,
+    ]);
+    expect((await client.lineageOf("node-arc", target.id)).successors).toEqual([
+      cur,
+    ]);
+    // Column follows the join table.
+    const col = await pool.query<{ supersedes: string | null }>(
+      "SELECT supersedes FROM sections WHERE node_id = 'node-arc' AND id = $1",
+      [cur],
+    );
+    expect(col.rows[0]?.supersedes).toBe(target.id);
+
+    // Endpoint reconstructions are byte-identical.
+    expect(await client.readRevisionAt("node-arc", arcStart.revision)).toEqual(
+      preArcBody,
+    );
+    expect(await client.readBody("node-arc")).toEqual(liveBody);
+
+    // Idempotent-ish: nothing left to collapse.
+    const again = await client.coalesceArc("node-arc", cur, arcStart.revision);
+    expect(again.removed).toBe(0);
+
+    // Stale block id rejects.
+    await expect(
+      client.coalesceArc("node-arc", "0".repeat(64), arcStart.revision),
+    ).rejects.toThrow(/stale_section/);
+  });
+
+  it("coalesceArc stops at structural boundaries — a split survives (F8)", async () => {
+    await client.saveBody("node-arc2", [{ text: "one two" }]);
+    const body = await client.readBody("node-arc2");
+    const orig = body.at(0);
+    if (!orig) throw new Error("fixture body missing");
+    const revs0 = await client.readRevisions("node-arc2");
+    const start = revs0.at(0);
+    if (!start) throw new Error("missing revision");
+
+    // Edit, then SPLIT (a structural event), then edit the second child.
+    const e1 = await client.editSection("node-arc2", orig.id, "one two edited");
+    const [, second] = await client.splitSection("node-arc2", e1.id, 3);
+    const e2 = await client.editSection("node-arc2", second.id, "tail edited");
+
+    const result = await client.coalesceArc("node-arc2", e2.id, start.revision);
+    // The walk collapses e2's chain back only as far as the split child —
+    // the split row has a predecessor with TWO successors (the boundary),
+    // so nothing before it is touched... and the chain e2<-second is only
+    // one link, so nothing is removable at all.
+    expect(result.removed).toBe(0);
+    // The split lineage is intact: both children still trace to e1's row.
+    expect(
+      (await client.lineageOf("node-arc2", second.id)).predecessors,
+    ).toEqual([e1.id]);
+  });
+
   it("importSection preserves ids and is idempotent; retainOnly converges", async () => {
     const sec = { id: "f".repeat(64), text: "migrated", orderKey: "01" };
     await client.importSection("node-m", sec);

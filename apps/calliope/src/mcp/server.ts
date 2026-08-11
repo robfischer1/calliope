@@ -504,6 +504,65 @@ export function createServer(
   );
 
   server.registerTool(
+    "coalesce_block_writes",
+    {
+      title: "Coalesce a writing arc's pause-writes (gated)",
+      description:
+        "F8: collapse one block's intra-arc supersession chain to its " +
+        "endpoints — the pre-arc state and the final row — physically " +
+        "removing the pause-write intermediates and rewiring lineage across " +
+        "the gap, so row growth is bounded by sessions rather than pauses. " +
+        "The arc is named by the caller: the final block id plus the " +
+        "arc-start revision (from read_body_revisions). Structural events " +
+        "(splits, merges, batches) are never collapsed across. OFF BY " +
+        "DEFAULT: refuses unless CALLIOPE_COALESCE_ARCS=1. Returns " +
+        "{ removed, from, to }.",
+      inputSchema: {
+        container_id: z.string().describe("The container owning the block."),
+        block_id: z.string().describe("The arc's final (active) block."),
+        since_revision: z
+          .string()
+          .describe("The arc-start revision timestamp (pre-arc moment)."),
+      },
+    },
+    async ({ container_id, block_id, since_revision }) => {
+      if (process.env.CALLIOPE_COALESCE_ARCS !== "1") {
+        const miss = {
+          error: "coalesce_disabled",
+          detail:
+            "arc coalescing is off by default until verified — set " +
+            "CALLIOPE_COALESCE_ARCS=1 to enable (master-plan F8).",
+        };
+        return {
+          content: [{ type: "text", text: `${miss.error}: ${miss.detail}` }],
+          structuredContent: structured(miss),
+          isError: true,
+        };
+      }
+      if (client.coalesceArc === undefined) {
+        throw new Error(
+          "coalesce_block_writes: the configured body backend does not " +
+            "support arc coalescing (no coalesceArc method).",
+        );
+      }
+      const result = await client.coalesceArc(
+        container_id,
+        block_id,
+        since_revision,
+      );
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Removed ${String(result.removed)} intermediate row(s).`,
+          },
+        ],
+        structuredContent: structured(result),
+      };
+    },
+  );
+
+  server.registerTool(
     "write_body",
     {
       title: "Write node body (LEGACY coarse save)",
