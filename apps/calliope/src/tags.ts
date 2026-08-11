@@ -40,15 +40,31 @@ function isHexColor(tag: string): boolean {
   return HEX_COLOR_LENGTHS.has(tag.length) && HEX_DIGITS_RE.test(tag);
 }
 
+/**
+ * F11: a hex-color-shaped tag is junk on EVERY write path, not only at
+ * inline extraction — the explicit path (`create_note` tags[]) and the
+ * reconcile chokepoint call this on the normalized form. The measured
+ * store carried nine Catppuccin palette literals (`#a6d189`…) written
+ * before the extractor grew its guard; filtering the view would have left
+ * them for the next consumer, so the rule lives at the data.
+ */
+export function isJunkTag(normalized: string): boolean {
+  const body = normalized.startsWith("#") ? normalized.slice(1) : normalized;
+  return isHexColor(body);
+}
+
 /** A stored tag with its write provenance. */
 export interface TagRow {
   tag: string;
   source: "inline" | "explicit";
 }
 
-/** Normalize one tag to its canonical stored form: `#lowercase`. */
+/** Normalize one tag to its canonical stored form: `#lowercase`, with any
+ *  trailing slashes stripped (F11 — `#brainsoup/` is a malformed capture of
+ *  `#brainsoup`, a grammar fix; dash-insertion renames are tag-node
+ *  territory and deliberately NOT guessed here). */
 export function normalizeTag(raw: string): string {
-  const bare = raw.startsWith("#") ? raw.slice(1) : raw;
+  const bare = (raw.startsWith("#") ? raw.slice(1) : raw).replace(/\/+$/, "");
   return `#${bare.toLowerCase()}`;
 }
 
@@ -94,6 +110,8 @@ export function computeTagDelta(
   if (next.explicit !== undefined) {
     for (const raw of next.explicit) {
       const tag = normalizeTag(raw);
+      // F11: the chokepoint both paths flow through never admits junk.
+      if (isJunkTag(tag)) continue;
       if (!have.has(tag)) {
         toAdd.push({ tag, source: "explicit" });
         have.set(tag, "explicit");
@@ -102,7 +120,9 @@ export function computeTagDelta(
   }
 
   if (next.inline !== undefined) {
-    const inline = new Set(next.inline.map(normalizeTag));
+    const inline = new Set(
+      next.inline.map(normalizeTag).filter((t) => !isJunkTag(t)),
+    );
     for (const tag of inline) {
       if (!have.has(tag)) {
         toAdd.push({ tag, source: "inline" });
