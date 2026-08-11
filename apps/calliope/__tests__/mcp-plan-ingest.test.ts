@@ -104,19 +104,18 @@ afterEach(async () => {
   });
 });
 
-async function seedPlan(): Promise<number> {
+async function seedPlan(): Promise<void> {
   await rpc(initEnvelope(1));
-  const write = structuredOf(
-    await rpc(
-      callEnvelope(2, "write_document", {
-        source_path: PLAN_SOURCE,
-        body_text: PLAN_BODY,
-        schema_type: "Plan",
-        subject: "Calliope — Master-plan",
-      }),
-    ),
+  // F7: fresh dissolves land note-native and carry NO table id — the
+  // durable handle is source_path (document ids are migration-legacy).
+  await rpc(
+    callEnvelope(2, "write_document", {
+      source_path: PLAN_SOURCE,
+      body_text: PLAN_BODY,
+      schema_type: "Plan",
+      subject: "Calliope — Master-plan",
+    }),
   );
-  return write.id as number;
 }
 
 describe("read_plan (the C7 verb, wire-level)", () => {
@@ -135,18 +134,17 @@ describe("read_plan (the C7 verb, wire-level)", () => {
     expect(tools).toContain("read_documents"); // built on the C3 store
   });
 
-  it("serves the WHOLE plan by reference (id handle → block index + body)", async () => {
-    const id = await seedPlan();
+  it("serves the WHOLE plan by reference (source_path handle → block index + body)", async () => {
+    await seedPlan();
     const whole = structuredOf(
-      await rpc(callEnvelope(3, "read_plan", { document: id })),
+      await rpc(callEnvelope(3, "read_plan", { source_path: PLAN_SOURCE })),
     );
     expect(whole.block_count).toBe(2);
     const blocks = whole.blocks as { id: string; size: string }[];
     expect(blocks.map((b) => b.id)).toEqual(["C6", "C7"]);
     expect(blocks.map((b) => b.size)).toEqual(["L", "M"]);
     expect(whole.body_text).toBe(PLAN_BODY);
-    const handle = whole.handle as { document: number; source_path: string };
-    expect(handle.document).toBe(id);
+    const handle = whole.handle as { source_path: string };
     expect(handle.source_path).toBe(PLAN_SOURCE);
   });
 
@@ -159,9 +157,11 @@ describe("read_plan (the C7 verb, wire-level)", () => {
   });
 
   it("serves a SINGLE feature block by handle (block-addressable)", async () => {
-    const id = await seedPlan();
+    await seedPlan();
     const one = structuredOf(
-      await rpc(callEnvelope(3, "read_plan", { document: id, block: "C7" })),
+      await rpc(
+        callEnvelope(3, "read_plan", { source_path: PLAN_SOURCE, block: "C7" }),
+      ),
     );
     const block = one.block as { id: string; size: string; text: string };
     expect(block.id).toBe("C7");
@@ -173,9 +173,9 @@ describe("read_plan (the C7 verb, wire-level)", () => {
   });
 
   it("returns a structured, isError miss for an unknown block", async () => {
-    const id = await seedPlan();
+    await seedPlan();
     const res = await rpc(
-      callEnvelope(3, "read_plan", { document: id, block: "Z9" }),
+      callEnvelope(3, "read_plan", { source_path: PLAN_SOURCE, block: "Z9" }),
     );
     expect(resultOf(res).isError).toBe(true);
     expect(structuredOf(res).error).toBe("block_not_found");
@@ -184,9 +184,9 @@ describe("read_plan (the C7 verb, wire-level)", () => {
 
 describe("list_blocks — the general container index (F5)", () => {
   it("serves a plan document's index with NO body text", async () => {
-    const id = await seedPlan();
+    await seedPlan();
     const index = structuredOf(
-      await rpc(callEnvelope(3, "list_blocks", { document: id })),
+      await rpc(callEnvelope(3, "list_blocks", { source_path: PLAN_SOURCE })),
     );
     expect(index.kind).toBe("document");
     expect(index.block_count).toBe(2);
@@ -248,10 +248,13 @@ describe("list_blocks — the general container index (F5)", () => {
 
 describe("read_block — the document-handle family (F5)", () => {
   it("serves exactly one feature block's markdown by document handle", async () => {
-    const id = await seedPlan();
+    await seedPlan();
     const one = structuredOf(
       await rpc(
-        callEnvelope(3, "read_block", { document: id, block_id: "c7" }),
+        callEnvelope(3, "read_block", {
+          source_path: PLAN_SOURCE,
+          block_id: "c7",
+        }),
       ),
     );
     const block = one.block as { id: string; text: string; size: string };
@@ -262,9 +265,12 @@ describe("read_block — the document-handle family (F5)", () => {
   });
 
   it("misses are structured on the document family", async () => {
-    const id = await seedPlan();
+    await seedPlan();
     const badBlock = await rpc(
-      callEnvelope(3, "read_block", { document: id, block_id: "Z9" }),
+      callEnvelope(3, "read_block", {
+        source_path: PLAN_SOURCE,
+        block_id: "Z9",
+      }),
     );
     expect(resultOf(badBlock).isError).toBe(true);
     expect(structuredOf(badBlock).error).toBe("block_not_found");
