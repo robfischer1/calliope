@@ -197,6 +197,51 @@ async function landContainer(
   return { node_id: minted.node_id, created: minted.created, generation };
 }
 
+/** Per-call sink options (the F7-prelude archive seam). */
+export interface SinkOptions {
+  /**
+   * Override the note's GRAPH NAME (identity). Provenance attributes stay
+   * truthful — `source_path` always carries the real path; the composite
+   * identity exists only so distinct archive documents sharing a container
+   * path cannot collapse into one note (Rob's F7 decision, 2026-08-10).
+   */
+  identity?: string;
+  /** Extra single-valued attributes, reconciled like provenance
+   *  (`isArchived: "true"` is the archive-exclusion predicate). */
+  extraAttrs?: ReadonlyMap<string, string>;
+  /** Additive attribute edges, asserted-if-missing and NEVER retracted —
+   *  the `document_id` handles that outlive the table (multi-valued). */
+  additiveAttrs?: readonly [predicate: string, value: string][];
+}
+
+/** Assert additive attribute edges — missing pairs only, never a retract. */
+export async function assertAdditiveAttrs(
+  dial: ChaosDial,
+  scope: string,
+  nodeId: string,
+  pairs: readonly [string, string][],
+): Promise<void> {
+  if (pairs.length === 0) return;
+  const current = await dial.edges(nodeId);
+  const ops: ChaosOp[] = [];
+  for (const [predicate, value] of pairs) {
+    const standing = current.some(
+      (e) => e.predicate === predicate && !e.isNode && e.value === value,
+    );
+    if (!standing) {
+      ops.push(opAdd(nodeId, predicate, { toLiteral: value }));
+    }
+  }
+  if (ops.length === 0) return;
+  const res = await dial.admit(ops, scope);
+  if (!res.admitted) {
+    throw new NotesSinkError(
+      `notes-sink: the gate refused the additive attr batch for ${nodeId}`,
+      res.violations,
+    );
+  }
+}
+
 /**
  * Land ONE dissolved document version as its note — mint/reuse the identity,
  * write the body as the next one-block generation (or no-op), reconcile the
@@ -214,16 +259,28 @@ export async function sinkNoteVersion(
   tagStore: TagStore | undefined,
   input: WriteDocumentInput,
   dissolvedAt?: string,
+  opts?: SinkOptions,
 ): Promise<SinkResult> {
-  return landContainer(
+  const attrs = provenanceAttrs(input, dissolvedAt);
+  for (const [k, v] of opts?.extraAttrs ?? []) {
+    attrs.set(k, v);
+  }
+  const result = await landContainer(
     client,
     dial,
     scope,
     tagStore,
-    input.source_path,
+    opts?.identity ?? input.source_path,
     [input.body_text],
-    provenanceAttrs(input, dissolvedAt),
+    attrs,
   );
+  await assertAdditiveAttrs(
+    dial,
+    scope,
+    result.node_id,
+    opts?.additiveAttrs ?? [],
+  );
+  return result;
 }
 
 /** `dissolve_note`'s input — a whole container, block-grain (F9). */

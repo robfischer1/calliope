@@ -10,6 +10,7 @@ import { FixtureChaosDial } from "../src/chaos-client.js";
 import { FixtureTagStore } from "../src/tag-store.js";
 import { FixtureDocumentStore } from "../src/document-store.js";
 import { migrateNotes } from "../src/mcp/migrate-notes.js";
+import { sinkNoteVersion } from "../src/notes-sink.js";
 import type { BodyClient } from "../src/types.js";
 
 const SCOPE = "notes";
@@ -98,6 +99,136 @@ describe("migrateNotes (F6)", () => {
     // not even do that. Assert the strong form: zero new events.
     expect((await client.readRevisions(node)).length).toBe(eventsBefore);
     expect(dial.admits.length).toBe(admitsBefore);
+  });
+
+  it("archive rows split per document with isArchived + document_id edges (F7 prelude)", async () => {
+    const store = new FixtureDocumentStore();
+    // Two distinct documents sharing one container source_path.
+    await store.write({
+      source_path: "F:\\OneDrive",
+      body_text: "doc one body",
+      subject: "Doc One.pdf",
+      file_path: "Ref\\Doc One.pdf",
+      source_kind: "phdb-migration",
+    });
+    await store.write({
+      source_path: "F:\\OneDrive",
+      body_text: "doc two body",
+      subject: "Doc Two.pdf",
+      file_path: "Ref\\Doc Two.pdf",
+      source_kind: "phdb-migration",
+    });
+    // A vault row keeps the F6 model untouched.
+    await store.write({
+      source_path: "Notes/real.md",
+      body_text: "vault note",
+    });
+    const client = new FixtureBodyClient();
+    const dial = new FixtureChaosDial();
+
+    const report = await migrateNotes(store, client, dial, SCOPE);
+    expect(report).toMatchObject({
+      paths: 2,
+      identities: 3,
+      versions: 3,
+      minted: 3,
+      archived: 2,
+      parity_mismatches: [],
+    });
+
+    // Distinct notes, composite-named, archive-flagged, id-bridged.
+    const [one] = await dial.findByName(
+      "Note",
+      "F:\\OneDrive :: Ref\\Doc One.pdf",
+    );
+    const [two] = await dial.findByName(
+      "Note",
+      "F:\\OneDrive :: Ref\\Doc Two.pdf",
+    );
+    if (one === undefined || two === undefined)
+      throw new Error("archive notes missing");
+    expect(one).not.toBe(two);
+    const edgesOne = await dial.edges(one);
+    const attr = (p: string) =>
+      edgesOne.find((e) => e.predicate === p && !e.isNode)?.value;
+    expect(attr("isArchived")).toBe("true");
+    // Provenance stays TRUTHFUL: the real container path, the real file.
+    expect(attr("source_path")).toBe("F:\\OneDrive");
+    expect(attr("file_path")).toBe("Ref\\Doc One.pdf");
+    expect(attr("document_id")).toBe("1");
+    expect((await client.readBody(one)).map((s) => s.text)).toEqual([
+      "doc one body",
+    ]);
+    // The vault note: bare-path identity, NO archive flag.
+    const [vault] = await dial.findByName("Note", "Notes/real.md");
+    if (vault === undefined) throw new Error("vault note missing");
+    const vaultEdges = await dial.edges(vault);
+    expect(vaultEdges.some((e) => e.predicate === "isArchived")).toBe(false);
+
+    // Re-run: zero deltas (identity-grain convergence).
+    const admits = dial.admits.length;
+    const second = await migrateNotes(store, client, dial, SCOPE);
+    expect(second.nooped).toBe(3);
+    expect(second.unwound).toEqual([]);
+    expect(dial.admits.length).toBe(admits);
+  });
+
+  it("unwinds the F6-era mega-note: edges retracted, rows deleted, idempotent", async () => {
+    const store = new FixtureDocumentStore();
+    await store.write({
+      source_path: "F:\\OneDrive",
+      body_text: "doc body",
+      subject: "Doc.pdf",
+      file_path: "Ref\\Doc.pdf",
+      source_kind: "phdb-migration",
+    });
+    const client = new FixtureBodyClient();
+    const dial = new FixtureChaosDial();
+
+    // Simulate the F6 run: a mega-note keyed on the bare container path.
+    const mega = await sinkNoteVersion(client, dial, SCOPE, undefined, {
+      source_path: "F:\\OneDrive",
+      body_text: "doc body",
+      source_kind: "phdb-migration",
+    });
+    expect((await dial.edges(mega.node_id)).length).toBeGreaterThan(0);
+
+    const deleted: string[] = [];
+    const report = await migrateNotes(
+      store,
+      client,
+      dial,
+      SCOPE,
+      undefined,
+      (nodeId) => {
+        deleted.push(nodeId);
+        return Promise.resolve();
+      },
+    );
+    expect(report.unwound).toEqual(["F:\\OneDrive"]);
+    expect(deleted).toEqual([mega.node_id]);
+    // The graph half: every edge of the mega-note retracted.
+    expect(await dial.edges(mega.node_id)).toEqual([]);
+    // The replacement exists under the composite identity.
+    const [fresh] = await dial.findByName(
+      "Note",
+      "F:\\OneDrive :: Ref\\Doc.pdf",
+    );
+    expect(fresh).toBeDefined();
+
+    // Idempotent: a re-run unwinds nothing and deletes nothing new.
+    const second = await migrateNotes(
+      store,
+      client,
+      dial,
+      SCOPE,
+      undefined,
+      (nodeId) => {
+        deleted.push(nodeId);
+        return Promise.resolve();
+      },
+    );
+    expect(second.unwound).toEqual([]);
   });
 
   it("the parity gate reports a store that drops writes", async () => {
