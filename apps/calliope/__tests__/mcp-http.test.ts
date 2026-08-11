@@ -97,6 +97,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "delete_block",
       "dissolve_note",
       "edit_section",
+      "export_note",
       "file_revisions",
       "list_blocks",
       "list_by_tag",
@@ -133,6 +134,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       revision_deltas: [true, false, true],
       list_by_tag: [true, false, true],
       list_tags: [true, false, true],
+      export_note: [true, false, true],
       materialize_note: [true, false, true],
       // additive writes (each call mints new ids)
       create_block: [false, false, false],
