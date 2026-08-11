@@ -124,27 +124,25 @@ async function reconcileAttrs(
 }
 
 /**
- * Land ONE dissolved document version as its note — mint/reuse the identity,
- * write the body as the next one-block generation (or no-op), reconcile the
- * provenance attributes and the inline tags.
- *
- * `dissolvedAt` is the version's original store timestamp when known (the
- * migration passes the newest row's `created_at`; the live bridge passes
- * nothing and the attribute records the write's own moment downstream of the
- * table row until F7 retires it).
+ * The shared sink core: mint/reuse the note (identity = `source_path`),
+ * land `blocks` as one generation unless the active body is elementwise
+ * identical, reconcile the provenance attributes, materialise inline tags.
+ * Both dissolve grains (one-block document version, multi-block container)
+ * ride this ONE path — no second sink to drift.
  */
-export async function sinkNoteVersion(
+async function landContainer(
   client: BodyClient,
   dial: ChaosDial,
   scope: string,
   tagStore: TagStore | undefined,
-  input: WriteDocumentInput,
-  dissolvedAt?: string,
+  sourcePath: string,
+  blocks: readonly string[],
+  attrs: Map<string, string>,
 ): Promise<SinkResult> {
   const minted = await createNote(
     dial,
     scope,
-    { title: input.source_path },
+    { title: sourcePath },
     undefined, // tags ride the inline reconcile below, not the mint
   );
   if (isCreateNoteError(minted)) {
@@ -154,23 +152,24 @@ export async function sinkNoteVersion(
     );
   }
 
-  // Container-grain dedup: an identical active body writes nothing.
+  // Container-grain dedup: an elementwise-identical active body writes
+  // nothing — a retried or re-run dissolve converges.
   const active = await client.readBody(minted.node_id);
-  const activeText = active.map((s) => s.text).join("\n");
+  const same =
+    active.length === blocks.length &&
+    active.every((s, i) => s.text === blocks[i]);
   let generation: SinkResult["generation"];
-  if (active.length === 1 && activeText === input.body_text) {
+  if (same && active.length > 0) {
     generation = "nooped";
   } else {
-    await client.saveBody(minted.node_id, [{ text: input.body_text }]);
+    await client.saveBody(
+      minted.node_id,
+      blocks.map((text) => ({ text })),
+    );
     generation = active.length === 0 ? "minted" : "superseded";
   }
 
-  await reconcileAttrs(
-    dial,
-    scope,
-    minted.node_id,
-    provenanceAttrs(input, dissolvedAt),
-  );
+  await reconcileAttrs(dial, scope, minted.node_id, attrs);
 
   if (tagStore !== undefined) {
     try {
@@ -196,4 +195,88 @@ export async function sinkNoteVersion(
   }
 
   return { node_id: minted.node_id, created: minted.created, generation };
+}
+
+/**
+ * Land ONE dissolved document version as its note — mint/reuse the identity,
+ * write the body as the next one-block generation (or no-op), reconcile the
+ * provenance attributes and the inline tags.
+ *
+ * `dissolvedAt` is the version's original store timestamp when known (the
+ * migration passes the newest row's `created_at`; the live bridge passes
+ * nothing and the attribute records the write's own moment downstream of the
+ * table row until F7 retires it).
+ */
+export async function sinkNoteVersion(
+  client: BodyClient,
+  dial: ChaosDial,
+  scope: string,
+  tagStore: TagStore | undefined,
+  input: WriteDocumentInput,
+  dissolvedAt?: string,
+): Promise<SinkResult> {
+  return landContainer(
+    client,
+    dial,
+    scope,
+    tagStore,
+    input.source_path,
+    [input.body_text],
+    provenanceAttrs(input, dissolvedAt),
+  );
+}
+
+/** `dissolve_note`'s input — a whole container, block-grain (F9). */
+export interface DissolveContainerInput {
+  source_path: string;
+  /** The container's blocks, in display order. */
+  blocks: string[];
+  title?: string;
+  schema_type?: string;
+  source_kind?: string;
+  mtime?: string;
+  ctime?: string;
+  file_path?: string;
+  /** The local file's own content hash; defaults to sha256 of the blocks
+   *  joined with a blank line (the markdown projection separator). */
+  raw_hash?: string;
+}
+
+/**
+ * F9 Dissolve: promote ONE container — its blocks, provenance and tags —
+ * into the graph tenant. Per-note, human-chosen; the inversion that retires
+ * C6's bulk sweep. Conflict semantics are last-write-wins as a CoW
+ * generation (history keeps the old); identical content no-ops.
+ */
+export async function dissolveContainer(
+  client: BodyClient,
+  dial: ChaosDial,
+  scope: string,
+  tagStore: TagStore | undefined,
+  input: DissolveContainerInput,
+): Promise<SinkResult> {
+  const joined = input.blocks.join("\n\n");
+  return landContainer(
+    client,
+    dial,
+    scope,
+    tagStore,
+    input.source_path,
+    input.blocks,
+    provenanceAttrs({
+      source_path: input.source_path,
+      body_text: joined,
+      ...(input.raw_hash !== undefined ? { raw_hash: input.raw_hash } : {}),
+      ...(input.title !== undefined ? { subject: input.title } : {}),
+      ...(input.schema_type !== undefined
+        ? { schema_type: input.schema_type }
+        : {}),
+      ...(input.source_kind !== undefined
+        ? { source_kind: input.source_kind }
+        : {}),
+      ...(input.mtime !== undefined ? { mtime: input.mtime } : {}),
+      ...(input.ctime !== undefined ? { ctime: input.ctime } : {}),
+      ...(input.file_path !== undefined ? { file_path: input.file_path } : {}),
+    }),
+  );
 }

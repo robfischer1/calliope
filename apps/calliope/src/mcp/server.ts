@@ -39,7 +39,11 @@ import {
   writeBody,
 } from "./tools.js";
 import { readPlan, isReadPlanError } from "./plan-ingest.js";
-import { sinkNoteVersion, type SinkResult } from "../notes-sink.js";
+import {
+  dissolveContainer,
+  sinkNoteVersion,
+  type SinkResult,
+} from "../notes-sink.js";
 import {
   createNote,
   isCreateNoteError,
@@ -1047,6 +1051,159 @@ export function createServer(
 
   if (options?.chaos !== undefined) {
     const { dial, scope } = options.chaos;
+
+    server.registerTool(
+      "dissolve_note",
+      {
+        title: "Dissolve — promote one container into the constellation",
+        description:
+          "F9: per-note promotion, human-chosen (the inversion that retired " +
+          "C6's bulk sweep). Lands the container's blocks as ONE generation " +
+          "on its note (identity = source_path, the F6 key), reconciles the " +
+          "provenance attributes and materialises inline tags as hasTag " +
+          "edges. Identical content is a no-op; changed content is a " +
+          "superseding generation — history keeps the old (last-write-wins " +
+          "under append-only history). Returns { node_id, created, " +
+          "generation }.",
+        inputSchema: {
+          source_path: z
+            .string()
+            .min(1)
+            .describe("The container's local path — its stable identity."),
+          blocks: z
+            .array(z.object({ text: z.string() }))
+            .describe("The container's blocks, in display order."),
+          title: z.string().optional().describe("The display title."),
+          source_kind: z
+            .string()
+            .optional()
+            .describe("Capture-kind provenance (default vault-note)."),
+          mtime: z.string().optional().describe("Local modified time."),
+          ctime: z.string().optional().describe("Local created time."),
+          raw_hash: z
+            .string()
+            .optional()
+            .describe("The local file's content hash (default: derived)."),
+        },
+      },
+      async ({
+        source_path,
+        blocks,
+        title,
+        source_kind,
+        mtime,
+        ctime,
+        raw_hash,
+      }) => {
+        const result = await dissolveContainer(
+          client,
+          dial,
+          scope,
+          options.tags,
+          {
+            source_path,
+            blocks: blocks.map((b) => b.text),
+            ...(title !== undefined ? { title } : {}),
+            ...(source_kind !== undefined ? { source_kind } : {}),
+            ...(mtime !== undefined ? { mtime } : {}),
+            ...(ctime !== undefined ? { ctime } : {}),
+            ...(raw_hash !== undefined ? { raw_hash } : {}),
+          },
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Dissolved ${source_path} -> note ${result.node_id} (${result.generation}).`,
+            },
+          ],
+          structuredContent: structured(result),
+        };
+      },
+    );
+
+    server.registerTool(
+      "materialize_note",
+      {
+        title: "Materialize — land a remote container locally",
+        description:
+          "F9: the inverse of Dissolve — one read serving everything the " +
+          "local window needs to write the file: the blocks in order, the " +
+          "tags, and the provenance attributes. Handle: container_id, or " +
+          "source_path (the note's identity name). A miss is a structured " +
+          "container_not_found.",
+        inputSchema: {
+          container_id: z.string().optional().describe("The note's node id."),
+          source_path: z
+            .string()
+            .optional()
+            .describe("The note's identity path (resolves by name)."),
+        },
+      },
+      async ({ container_id, source_path }) => {
+        let nodeId = container_id;
+        if (nodeId === undefined && source_path !== undefined) {
+          const [hit] = await dial.findByName("Note", source_path);
+          nodeId = hit;
+        }
+        const edges = nodeId === undefined ? [] : await dial.edges(nodeId);
+        if (nodeId === undefined || edges.length === 0) {
+          const miss = {
+            error: "container_not_found",
+            detail:
+              container_id ??
+              source_path ??
+              "materialize_note needs a container_id or a source_path",
+          };
+          return {
+            content: [{ type: "text", text: `${miss.error}: ${miss.detail}` }],
+            structuredContent: structured(miss),
+            isError: true,
+          };
+        }
+        const body = await client.readBody(nodeId);
+        const tags = edges
+          .filter((e) => e.predicate === "hasTag" && !e.isNode)
+          .map((e) => e.value);
+        const PROVENANCE = [
+          "source_path",
+          "raw_hash",
+          "source_kind",
+          "mtime",
+          "ctime",
+          "title",
+          "schema_type",
+          "file_path",
+          "dissolved_at",
+        ];
+        const provenance: Record<string, string> = {};
+        for (const e of edges) {
+          if (!e.isNode && PROVENANCE.includes(e.predicate)) {
+            provenance[e.predicate] = e.value;
+          }
+        }
+        const result = {
+          container_id: nodeId,
+          blocks: body.map((s) => ({
+            id: s.id,
+            text: s.text,
+            orderKey: s.orderKey,
+          })),
+          tags,
+          provenance,
+        };
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${String(result.blocks.length)} block(s), ${String(tags.length)} tag(s).`,
+            },
+          ],
+          structuredContent: structured(result),
+        };
+      },
+    );
+
     server.registerTool(
       "create_note",
       {

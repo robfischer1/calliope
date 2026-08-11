@@ -192,3 +192,77 @@ describe("write_document / read_documents (the C3 verbs, wire-level)", () => {
     ]);
   });
 });
+
+describe("dissolve_note / materialize_note (F9, wire-level)", () => {
+  it("dissolves a container, materializes it back, no-ops the retry", async () => {
+    await rpc(initEnvelope(1));
+    const payload = {
+      source_path: "Notes/Round Trip.md",
+      title: "Round Trip",
+      blocks: [
+        { text: "# Round Trip" },
+        { text: "body para #roundtrip" },
+        { text: "tail para" },
+      ],
+      mtime: "2026-08-10T00:00:00Z",
+    };
+    const first = structuredOf(
+      await rpc(callEnvelope(2, "dissolve_note", payload)),
+    );
+    expect(first.created).toBe(true);
+    expect(first.generation).toBe("minted");
+    const nodeId = first.node_id as string;
+
+    // Materialize by source_path serves blocks + tags + provenance.
+    const mat = structuredOf(
+      await rpc(
+        callEnvelope(3, "materialize_note", {
+          source_path: "Notes/Round Trip.md",
+        }),
+      ),
+    );
+    expect(mat.container_id).toBe(nodeId);
+    expect((mat.blocks as { text: string }[]).map((b) => b.text)).toEqual([
+      "# Round Trip",
+      "body para #roundtrip",
+      "tail para",
+    ]);
+    expect(mat.tags).toEqual(["#roundtrip"]);
+    const prov = mat.provenance as Record<string, string>;
+    expect(prov.source_path).toBe("Notes/Round Trip.md");
+    expect(prov.title).toBe("Round Trip");
+    expect(prov.mtime).toBe("2026-08-10T00:00:00Z");
+
+    // Identical re-dissolve no-ops; changed content supersedes.
+    const retry = structuredOf(
+      await rpc(callEnvelope(4, "dissolve_note", payload)),
+    );
+    expect(retry.generation).toBe("nooped");
+    const v2 = structuredOf(
+      await rpc(
+        callEnvelope(5, "dissolve_note", {
+          ...payload,
+          blocks: [{ text: "# Round Trip" }, { text: "rewritten" }],
+        }),
+      ),
+    );
+    expect(v2.generation).toBe("superseded");
+
+    // Miss shape.
+    const miss = await rpc(
+      callEnvelope(6, "materialize_note", { source_path: "Notes/Nope.md" }),
+    );
+    expect(
+      (
+        miss.result as {
+          isError?: boolean;
+          structuredContent?: { error?: string };
+        }
+      ).isError,
+    ).toBe(true);
+    expect(
+      (miss.result as { structuredContent?: { error?: string } })
+        .structuredContent?.error,
+    ).toBe("container_not_found");
+  });
+});
