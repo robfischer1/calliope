@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   computeTagDelta,
   extractInlineTags,
+  isJunkTag,
   normalizeTag,
 } from "../src/tags.js";
 import { FixtureTagStore } from "../src/tag-store.js";
+import { planTagCleanup } from "../src/mcp/cleanup-tags.js";
 
 describe("extractInlineTags — the scan.ts grammar, mirrored", () => {
   it("extracts word-start tags, normalized lowercase, deduped + sorted", () => {
@@ -85,6 +87,53 @@ describe("computeTagDelta — the reconcile matrix", () => {
 });
 
 describe("FixtureTagStore", () => {
+  it("F11: normalizeTag strips trailing slashes; isJunkTag flags hex shapes", () => {
+    expect(normalizeTag("#brainsoup/")).toBe("#brainsoup");
+    expect(normalizeTag("brainsoup//")).toBe("#brainsoup");
+    expect(normalizeTag("#Brain-Soup")).toBe("#brain-soup");
+    // Hex-color shapes at CSS lengths are junk; others are not.
+    for (const junk of ["#a6d189", "#fff", "#cafe", "#deadbeef"]) {
+      expect(isJunkTag(junk), junk).toBe(true);
+    }
+    for (const fine of ["#brain-soup", "#f9", "#abcde", "#journal", "#cafes"]) {
+      expect(isJunkTag(fine), fine).toBe(false);
+    }
+  });
+
+  it("F11: computeTagDelta drops junk on both provenance paths", () => {
+    const delta = computeTagDelta([], {
+      explicit: ["#a6d189", "#keepme"],
+      inline: ["#babbf1", "#alsokeep"],
+    });
+    expect(delta.toAdd.map((r) => r.tag).sort()).toEqual([
+      "#alsokeep",
+      "#keepme",
+    ]);
+    // A standing junk row reconciles OUT on the next inline write.
+    const heal = computeTagDelta([{ tag: "#ca9ee6", source: "inline" }], {
+      inline: ["#fine"],
+    });
+    expect(heal.toRemove).toEqual(["#ca9ee6"]);
+  });
+
+  it("F11: planTagCleanup removes junk and merges slash variants", () => {
+    const plan = planTagCleanup([
+      { tag: "#a6d189", count: 1 },
+      { tag: "#brainsoup/", count: 1 },
+      { tag: "#brain-soup", count: 4 },
+      { tag: "#journal", count: 9 },
+    ]);
+    expect(plan.remove).toEqual(["#a6d189"]);
+    expect(plan.merge).toEqual([["#brainsoup/", "#brainsoup"]]);
+    // Idempotence: a clean enumeration plans nothing.
+    expect(
+      planTagCleanup([
+        { tag: "#brain-soup", count: 4 },
+        { tag: "#brainsoup", count: 1 },
+      ]),
+    ).toEqual({ remove: [], merge: [] });
+  });
+
   it("upsert keeps first provenance; distinct counts carriers", async () => {
     const store = new FixtureTagStore();
     await store.upsert("n1", "#a", "explicit");

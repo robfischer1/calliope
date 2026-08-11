@@ -291,6 +291,26 @@ describe("block verbs — CRUD + split/merge over FixtureBodyClient (F3)", () =>
   });
 });
 
+// ── F11: the explicit tag path rejects junk ──────────────────────────────────
+
+import { FixtureChaosDial as F11Dial } from "../src/chaos-client.js";
+import {
+  createNote as f11CreateNote,
+  isCreateNoteError as f11IsErr,
+} from "../src/mcp/tools.js";
+
+describe("create_note rejects hex-shaped tags (F11)", () => {
+  it("returns bad_tags for a hex-color-shaped explicit tag", async () => {
+    const dial = new F11Dial();
+    const res = await f11CreateNote(dial, "notes", {
+      title: "Tagged note",
+      tags: ["#a6d189"],
+    });
+    expect(f11IsErr(res)).toBe(true);
+    if (f11IsErr(res)) expect(res.error).toBe("bad_tags");
+  });
+});
+
 // ── C8: create_note over the FixtureChaosDial ────────────────────────────────
 
 import {

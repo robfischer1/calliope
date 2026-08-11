@@ -30,7 +30,12 @@ import {
   opCreate,
   opRemove,
 } from "../chaos-client.js";
-import { computeTagDelta, extractInlineTags, normalizeTag } from "../tags.js";
+import {
+  computeTagDelta,
+  extractInlineTags,
+  isJunkTag,
+  normalizeTag,
+} from "../tags.js";
 import type { TagCount, TagStore } from "../tag-store.js";
 import { between } from "../order-key.js";
 
@@ -560,6 +565,14 @@ export async function createNote(
   }
   if (input.tags?.some((t) => t.trim() === "")) {
     return { error: "bad_tags", detail: "tags must be non-empty strings" };
+  }
+  // F11: hex-color-shaped tokens are junk on the explicit path too.
+  const junk = input.tags?.find((t) => isJunkTag(normalizeTag(t)));
+  if (junk !== undefined) {
+    return {
+      error: "bad_tags",
+      detail: `tag ${junk} is hex-color-shaped (rejected by the F11 hygiene rule)`,
+    };
   }
 
   // Lazy parent resolve — shared by the mint and the heal-on-reuse paths.
