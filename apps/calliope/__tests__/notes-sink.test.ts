@@ -8,7 +8,11 @@ import { describe, expect, it } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { FixtureChaosDial } from "../src/chaos-client.js";
 import { FixtureTagStore } from "../src/tag-store.js";
-import { sinkNoteVersion, NotesSinkError } from "../src/notes-sink.js";
+import {
+  dissolveContainer,
+  sinkNoteVersion,
+  NotesSinkError,
+} from "../src/notes-sink.js";
 import { sha256 } from "../src/document-store.js";
 
 const SCOPE = "notes";
@@ -119,6 +123,58 @@ describe("sinkNoteVersion (F6)", () => {
         body_text: "x",
       }),
     ).rejects.toThrow(NotesSinkError);
+  });
+
+  it("dissolveContainer promotes a multi-block container with tags + provenance (F9)", async () => {
+    const { client, dial, tags } = rig();
+    const res = await dissolveContainer(client, dial, SCOPE, tags, {
+      source_path: "Notes/multi.md",
+      blocks: ["# Multi", "first para #f9", "second para"],
+      title: "Multi",
+      mtime: "2026-08-01T00:00:00Z",
+    });
+    expect(res.created).toBe(true);
+    expect(res.generation).toBe("minted");
+    const body = await client.readBody(res.node_id);
+    expect(body.map((s) => s.text)).toEqual([
+      "# Multi",
+      "first para #f9",
+      "second para",
+    ]);
+    const edges = await dial.edges(res.node_id);
+    const attr = (p: string) =>
+      edges.find((e) => e.predicate === p && !e.isNode)?.value;
+    expect(attr("source_path")).toBe("Notes/multi.md");
+    expect(attr("title")).toBe("Multi");
+    expect(attr("hasTag")).toBe("#f9");
+
+    // Identical re-dissolve: no-op at every layer.
+    const admits = dial.admits.length;
+    const again = await dissolveContainer(client, dial, SCOPE, tags, {
+      source_path: "Notes/multi.md",
+      blocks: ["# Multi", "first para #f9", "second para"],
+      title: "Multi",
+      mtime: "2026-08-01T00:00:00Z",
+    });
+    expect(again.generation).toBe("nooped");
+    expect(dial.admits.length).toBe(admits);
+
+    // Changed content: ONE superseding generation, history keeps the old.
+    const v2 = await dissolveContainer(client, dial, SCOPE, tags, {
+      source_path: "Notes/multi.md",
+      blocks: ["# Multi", "rewritten"],
+      title: "Multi",
+    });
+    expect(v2.generation).toBe("superseded");
+    const revs = await client.readRevisions(res.node_id);
+    expect(revs).toHaveLength(2);
+    const oldest = revs.at(-1);
+    if (!oldest) throw new Error("missing revision");
+    expect(
+      (await client.readRevisionAt(res.node_id, oldest.revision)).map(
+        (s) => s.text,
+      ),
+    ).toEqual(["# Multi", "first para #f9", "second para"]);
   });
 
   it("title collisions cannot collapse identities — paths are the key", async () => {
