@@ -39,11 +39,7 @@ import {
   writeBody,
 } from "./tools.js";
 import { readPlan, isReadPlanError } from "./plan-ingest.js";
-import {
-  dissolveContainer,
-  sinkNoteVersion,
-  type SinkResult,
-} from "../notes-sink.js";
+import { dissolveContainer, type SinkResult } from "../notes-sink.js";
 import {
   createNote,
   isCreateNoteError,
@@ -907,23 +903,12 @@ export function createServer(
         },
       },
       async (input) => {
+        // F7 — the strangler finished: the store IS the note-native sink;
+        // no table write exists anymore. Fresh dissolves carry no document
+        // id (the table's sequence died with it) — source_path is the
+        // durable handle; migrated ids resolve via the bridge attributes.
         const result = await documents.write(input);
-        // F6 — the strangler bridge: while the table remains the READ truth
-        // (until F7 cuts over), every dissolve ALSO lands note-natively —
-        // identity + one-block container + provenance attrs + tags. Both
-        // halves are idempotent, so a failed-then-retried dissolve
-        // converges; a sink failure fails the verb (silent loss = silent
-        // drift between the stores).
-        let note: SinkResult | undefined;
-        if (options?.chaos !== undefined) {
-          note = await sinkNoteVersion(
-            client,
-            options.chaos.dial,
-            options.chaos.scope,
-            options.tags,
-            input,
-          );
-        }
+        const note = (result as { note?: SinkResult }).note;
         return {
           content: [
             {
@@ -1085,7 +1070,8 @@ export function createServer(
         },
         title: "Read the file-revision archive",
         description:
-          "The git-for-ideas archive (frozen history, re-homed from phdb): " +
+          "FROZEN ARCHIVE (F7 scoping): the git-for-ideas record re-homed " +
+          "from phdb — read-only history, never a live write surface: " +
           "revisions by file_path / repo / id, newest first. Blob shas are " +
           "pointers into the vault's git repo. Returns { revisions: [...] }.",
         inputSchema: {
@@ -1129,7 +1115,8 @@ export function createServer(
         },
         title: "Read a revision's triple deltas",
         description:
-          "The frontmatter/link evolution record for one revision — " +
+          "FROZEN ARCHIVE (F7 scoping): the frontmatter/link evolution " +
+          "record for one revision — " +
           "denormalized (subject, predicate, object) labels, in stored " +
           "order. Returns { deltas: [...] }.",
         inputSchema: {

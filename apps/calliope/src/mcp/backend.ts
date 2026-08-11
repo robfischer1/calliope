@@ -25,7 +25,8 @@
 import { Pool } from "pg";
 import type { BodyClient } from "../types.js";
 import type { DocumentStore } from "../document-store.js";
-import { FixtureDocumentStore, PgDocumentStore } from "../document-store.js";
+import { PgDocumentStore } from "../document-store.js";
+import { NotesDocumentStore } from "../notes-document-store.js";
 import type { RevisionStore } from "../revision-store.js";
 import {
   type ChaosFacet,
@@ -193,23 +194,37 @@ export function makeBackend(
   env: NodeJS.ProcessEnv = process.env,
 ): Backend {
   if (kind === "fixture") {
+    // F7: the fixture backend serves documents NOTES-BACKED, exactly like
+    // production — one model, so the fixture cannot drift from the store
+    // the fleet actually runs.
+    const client = new FixtureBodyClient();
+    const dial = new FixtureChaosDial();
+    const scope = notesScope(env);
+    const tags = new FixtureTagStore();
     return {
-      client: new FixtureBodyClient(),
-      documents: new FixtureDocumentStore(),
+      client,
+      documents: new NotesDocumentStore(client, dial, scope, tags),
       revisions: new FixtureRevisionStore(),
-      chaos: { dial: new FixtureChaosDial(), scope: notesScope(env) },
-      tags: new FixtureTagStore(),
+      chaos: { dial, scope },
+      tags,
     };
   }
   if (kind === "pg") {
     // ONE pool for every facet — the sovereign store is one database.
     const pool = new Pool({ connectionString: pgConnectionString(env) });
+    const client = withIndexPush(new PgBodyClient(pool), env);
+    const dial = new LiveChaosDial();
+    const scope = notesScope(env);
+    const tags = new PgTagStore(pool);
     return {
-      client: withIndexPush(new PgBodyClient(pool), env),
-      documents: new PgDocumentStore(pool),
+      client,
+      // F7: documents serve from the merged note store; the table-backed
+      // PgDocumentStore leaves the backend (its ensureSchema no longer
+      // runs, so a post-drop boot cannot resurrect the table).
+      documents: new NotesDocumentStore(client, dial, scope, tags),
       revisions: new PgRevisionStore(pool),
-      chaos: { dial: new LiveChaosDial(), scope: notesScope(env) },
-      tags: new PgTagStore(pool),
+      chaos: { dial, scope },
+      tags,
     };
   }
   return { client: makeBodyClient(kind, env) };
