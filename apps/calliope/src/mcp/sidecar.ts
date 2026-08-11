@@ -21,6 +21,7 @@ import { statSync, writeSync } from "node:fs";
 import { argv, exit } from "node:process";
 import { pathToFileURL } from "node:url";
 import { FsBodyClient } from "../fs-client.js";
+import { fsListByTag, fsListTags } from "../fs-tags.js";
 import type { SectionInput } from "../types.js";
 import {
   applySectionOps,
@@ -111,6 +112,16 @@ async function dispatch(client: FsBodyClient, body: unknown): Promise<unknown> {
         client,
         nodeId,
         typeof args.revision === "string" ? args.revision : "",
+      );
+    // F12 — tags offline: a COMPUTED index over the served directory, no
+    // graph call anywhere (the sidecar carries no dial, so "no hasTag edge
+    // offline" holds by construction).
+    case "list_tags":
+      return fsListTags(client.root);
+    case "list_by_tag":
+      return fsListByTag(
+        client.root,
+        typeof args.tag === "string" ? args.tag : "",
       );
     default:
       throw new Error(`unsupported_verb: ${envelope.verb}`);
