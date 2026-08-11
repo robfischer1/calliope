@@ -64,6 +64,25 @@ export interface MigrateNotesReport {
  * `isArchived` exclusion predicate. The ` :: ` joiner never appears in a
  * vault path, so the two families cannot collide.
  */
+/** Every predicate the sink family writes — the unwind's retraction set. */
+const SINK_PREDICATES = new Set([
+  "hasName",
+  "hasType",
+  "parent",
+  "hasTag",
+  "source_path",
+  "raw_hash",
+  "source_kind",
+  "mtime",
+  "ctime",
+  "title",
+  "schema_type",
+  "file_path",
+  "dissolved_at",
+  "isArchived",
+  "document_id",
+]);
+
 export function identityOf(row: DocumentRow): {
   name: string;
   archived: boolean;
@@ -134,7 +153,14 @@ export async function migrateNotes(
     ) {
       const [stale] = await dial.findByName("Note", sourcePath);
       if (stale !== undefined) {
-        const edges = await dial.edges(stale);
+        // Retract ONLY the predicates the sink family wrote. System edges
+        // (ownedBy — the substrate's tenancy stamp) are not ours to
+        // retract, and the substrate re-asserts them: retracting them made
+        // every re-run "unwind" 442 phantom batches forever (measured on
+        // the first live run — the loop this allowlist ends).
+        const edges = (await dial.edges(stale)).filter((e) =>
+          SINK_PREDICATES.has(e.predicate),
+        );
         const ops: ChaosOp[] = edges.map((e) =>
           opRemove(
             stale,

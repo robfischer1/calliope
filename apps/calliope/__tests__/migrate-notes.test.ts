@@ -185,12 +185,26 @@ describe("migrateNotes (F6)", () => {
     const client = new FixtureBodyClient();
     const dial = new FixtureChaosDial();
 
-    // Simulate the F6 run: a mega-note keyed on the bare container path.
+    // Simulate the F6 run: a mega-note keyed on the bare container path,
+    // plus the substrate's own tenancy edge (ownedBy — system-written, not
+    // the sink's; the unwind must leave it alone).
     const mega = await sinkNoteVersion(client, dial, SCOPE, undefined, {
       source_path: "F:\\OneDrive",
       body_text: "doc body",
       source_kind: "phdb-migration",
     });
+    await dial.admit(
+      [
+        {
+          op: "addEdge",
+          from_id: mega.node_id,
+          predicate: "ownedBy",
+          to_literal: null,
+          to_node: "0".repeat(64),
+        },
+      ],
+      SCOPE,
+    );
     expect((await dial.edges(mega.node_id)).length).toBeGreaterThan(0);
 
     const deleted: string[] = [];
@@ -207,8 +221,12 @@ describe("migrateNotes (F6)", () => {
     );
     expect(report.unwound).toEqual(["F:\\OneDrive"]);
     expect(deleted).toEqual([mega.node_id]);
-    // The graph half: every edge of the mega-note retracted.
-    expect(await dial.edges(mega.node_id)).toEqual([]);
+    // The graph half: every SINK-owned edge retracted; system edges (the
+    // substrate's ownedBy tenancy stamp) are not ours and survive — the
+    // allowlist that ends the phantom re-unwind loop measured live.
+    expect((await dial.edges(mega.node_id)).map((e) => e.predicate)).toEqual([
+      "ownedBy",
+    ]);
     // The replacement exists under the composite identity.
     const [fresh] = await dial.findByName(
       "Note",
