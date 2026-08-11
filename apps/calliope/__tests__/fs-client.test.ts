@@ -164,3 +164,76 @@ describe("FsBodyClient.editSection", () => {
     expect(await disk("note.md")).toBe("mutated outside");
   });
 });
+
+// ── F13: the .grace/ revlog — local history, git-free ────────────────────────
+
+describe("FsBodyClient revisions — the .grace/ revlog (F13)", () => {
+  it("N edits resolve N revisions, each byte-exact on reconstruction", async () => {
+    const client = new FsBodyClient(root);
+    await client.saveBody("note.md", [{ text: "v1" }]);
+    await client.saveBody("note.md", [{ text: "v2" }]);
+    const body = await client.readBody("note.md");
+    const only = body.at(0);
+    if (!only) throw new Error("body missing");
+    await client.editSection("note.md", only.id, "v3");
+
+    const revs = await client.readRevisions("note.md");
+    expect(revs.map((r) => r.kind)).toEqual(["edit", "save", "save"]);
+    expect(revs.every((r) => r.sections === 1)).toBe(true);
+    const [newest, mid, oldest] = revs;
+    if (!newest || !mid || !oldest) throw new Error("missing revisions");
+    expect(
+      (await client.readRevisionAt("note.md", oldest.revision)).map(
+        (s) => s.text,
+      ),
+    ).toEqual(["v1"]);
+    expect(
+      (await client.readRevisionAt("note.md", mid.revision)).map((s) => s.text),
+    ).toEqual(["v2"]);
+    const atNewest = await client.readRevisionAt("note.md", newest.revision);
+    expect(atNewest.map((s) => s.text)).toEqual(["v3"]);
+    // The reconstruction carries the derive shape — generation-hash id.
+    expect(atNewest.at(0)?.id).toMatch(/^[0-9a-f]{64}:0$/);
+    // Predates history → [].
+    expect(
+      await client.readRevisionAt("note.md", "2000-01-01T00:00:00.000Z"),
+    ).toEqual([]);
+  });
+
+  it("captures an EXTERNAL edit lazily at history-read time", async () => {
+    const client = new FsBodyClient(root);
+    await client.saveBody("ext.md", [{ text: "internal" }]);
+    // Another app rewrites the file behind the backend's back.
+    await writeFile(path.join(root, "ext.md"), "external state", "utf8");
+    const revs = await client.readRevisions("ext.md");
+    expect(revs.at(0)?.kind).toBe("save");
+    expect(
+      (await client.readRevisionAt("ext.md", revs.at(0)?.revision ?? "")).map(
+        (s) => s.text,
+      ),
+    ).toEqual(["external state"]);
+    // Head-dedup: reading again captures nothing new.
+    const again = await client.readRevisions("ext.md");
+    expect(again.length).toBe(revs.length);
+  });
+
+  it("caps entries and survives revlog deletion (bounded + prunable)", async () => {
+    const client = new FsBodyClient(root);
+    for (let i = 0; i < 205; i++) {
+      await client.saveBody("cap.md", [{ text: `state ${String(i)}` }]);
+    }
+    const revs = await client.readRevisions("cap.md", 500);
+    expect(revs.length).toBe(200);
+    expect(
+      (await client.readRevisionAt("cap.md", revs.at(0)?.revision ?? "")).map(
+        (s) => s.text,
+      ),
+    ).toEqual(["state 204"]);
+
+    // Pruning is deletion-safe: history restarts, the body is untouched.
+    await rm(path.join(root, ".grace"), { recursive: true, force: true });
+    expect((await client.readBody("cap.md")).at(0)?.text).toBe("state 204");
+    const fresh = await client.readRevisions("cap.md");
+    expect(fresh.length).toBe(1); // the lazy capture restarts the log
+  });
+});

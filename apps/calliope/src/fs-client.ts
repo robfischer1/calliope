@@ -27,8 +27,14 @@
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import type { BodyClient, Section, SectionInput } from "./types.js";
+import type {
+  BodyClient,
+  RevisionMeta,
+  Section,
+  SectionInput,
+} from "./types.js";
 import { sequence } from "./order-key.js";
+import { FsRevlog } from "./fs-revlog.js";
 
 /** The editor's block separator (aglaia BLOCK_SEP) — the JOIN seam only:
  *  a multi-block save writes blocks joined; reads never split on it. */
@@ -61,9 +67,12 @@ export class FsBodyClient implements BodyClient {
   readonly #root: string;
   /** Per-path write serialization: the tail of each path's op chain. */
   readonly #locks = new Map<string, Promise<unknown>>();
+  /** F13: the .grace/ revlog — local history, Rob's decision 2026-08-10. */
+  readonly #revlog: FsRevlog;
 
   constructor(root: string) {
     this.#root = path.resolve(root);
+    this.#revlog = new FsRevlog(this.#root);
   }
 
   /** The absolute served root (the sidecar's /health reports it). */
@@ -134,6 +143,7 @@ export class FsBodyClient implements BodyClient {
     return this.#serialized(abs, async () => {
       const text = sections.map((s) => s.text).join(SECTION_SEP);
       await this.#writeAtomic(abs, text);
+      await this.#revlog.append(nodeId, "save", text);
     });
   }
 
@@ -157,6 +167,7 @@ export class FsBodyClient implements BodyClient {
       await this.#writeAtomic(abs, texts.join(SECTION_SEP));
       const rewritten = await this.#readBytes(abs);
       const fresh = rewritten === null ? [] : derive(rewritten);
+      await this.#revlog.append(nodeId, "edit", texts.join(SECTION_SEP));
       const head = fresh[Math.min(index, fresh.length - 1)];
       if (head === undefined) {
         throw new Error(
@@ -165,5 +176,55 @@ export class FsBodyClient implements BodyClient {
       }
       return head;
     });
+  }
+
+  /**
+   * F13 — list the node's revlog states, newest first. An externally
+   * changed file (another app wrote it) is CAPTURED here before listing,
+   * so every observed state becomes recoverable once seen; there is no
+   * watcher, deliberately (lazy capture is the whole invalidation model).
+   */
+  async readRevisions(nodeId: string, limit = 50): Promise<RevisionMeta[]> {
+    const abs = this.#resolve(nodeId);
+    return this.#serialized(abs, async () => {
+      const bytes = await this.#readBytes(abs);
+      if (bytes !== null) {
+        const current = derive(bytes)
+          .map((s) => s.text)
+          .join(SECTION_SEP);
+        // Head-deduped: an unchanged file appends nothing.
+        await this.#revlog.append(nodeId, "save", current);
+      }
+      const entries = await this.#revlog.entries(nodeId);
+      return entries
+        .slice()
+        .reverse()
+        .slice(0, limit)
+        .map((e) => ({
+          revision: e.revision,
+          kind: e.kind,
+          authoredBy: "human",
+          sections: 1,
+        }));
+    });
+  }
+
+  /**
+   * F13 — reconstruct the body as of `revision`: the latest recorded state
+   * at or before that moment, in the exact one-section shape {@link derive}
+   * produces (id = generation hash of the text bytes). Predates-history →
+   * `[]`, matching the store backends' contract.
+   */
+  async readRevisionAt(nodeId: string, revision: string): Promise<Section[]> {
+    this.#resolve(nodeId); // path validation, same refusals as every verb
+    const entries = await this.#revlog.entries(nodeId);
+    let hit: string | null = null;
+    for (const e of entries) {
+      if (e.revision <= revision) hit = e.text;
+      else break;
+    }
+    if (hit === null) return [];
+    const bytes = Buffer.from(hit, "utf8");
+    return derive(bytes);
   }
 }

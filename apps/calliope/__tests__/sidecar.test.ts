@@ -104,12 +104,34 @@ describe("the ferry wire", () => {
   it("unsupported and unknown verbs answer 4xx/5xx without crashing", async () => {
     const unknown = await ferry("no_such_verb", {});
     expect(unknown.status).toBe(400);
+  });
+
+  it("F13: the revision verbs went LIVE — history serves from the .grace/ revlog", async () => {
+    // This assertion used to be its inverse ("does not support") — the
+    // drawer was dark on the fs backend by design until Rob's 2026-08-10
+    // revlog decision. The sidecar dispatch never changed; the optional
+    // client methods lit it up.
+    await ferry("write_body", {
+      node_id: "note.md",
+      sections: [{ text: "history seed" }],
+    });
     const revisions = await ferry("read_body_revisions", {
       node_id: "note.md",
     });
-    expect(revisions.status).toBe(500);
-    const body = (await revisions.json()) as { error: string };
-    expect(body.error).toMatch(/does not support/);
+    expect(revisions.status).toBe(200);
+    const body = (await revisions.json()) as {
+      revisions: { revision: string; kind: string }[];
+    };
+    expect(body.revisions.length).toBeGreaterThan(0);
+    const at = await ferry("read_body_at", {
+      node_id: "note.md",
+      revision: body.revisions[0]?.revision ?? "",
+    });
+    expect(at.status).toBe(200);
+    const reconstructed = (await at.json()) as {
+      sections: { text: string }[];
+    };
+    expect(reconstructed.sections.length).toBe(1);
   });
 
   it("answers the CORS preflight the webview sends", async () => {
