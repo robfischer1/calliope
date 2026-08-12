@@ -5,9 +5,18 @@
 # run before a push reaches the door/CI. CI (the baked frontend-ci image) is the
 # hard enforce; a dev box missing opengrep gets a notice, not a block.
 #
-# Install (copier _tasks does this on scaffold): `uvx pre-commit install` — a bun
-# repo has no uv project, so pre-commit rides uvx the way the go/rust templates do.
-# default_install_hook_types wires pre-commit + pre-push in that one call.
+# Install (copier _tasks does this, on copy AND update): `uvx pre-commit install`
+# — a bun repo has no uv project, so pre-commit rides uvx the way the go/rust
+# templates do. default_install_hook_types wires all three types in that one call.
+#
+# PRE-COMMIT OWNS THE HOOKS, as of 2026-08-11. husky is gone: it set
+# `core.hooksPath=.husky/_`, and `pre-commit install` refuses against that
+# ("Cowardly refusing to install hooks with core.hooksPath set"), while
+# `prepare: husky` re-set the path on every `bun install` so unsetting it never
+# stuck. Two hook managers in one repo, mutually exclusive, husky winning by
+# construction — which is why every hook below had never run anywhere. The
+# lint-staged + gate pair husky used to carry is now the pre-commit stage here,
+# unchanged in behaviour; `git commit --no-verify` still skips it.
 #
 # NOTE: no detect-secrets here — the frontend CI gate doesn't run it (opengrep +
 # bun audit cover the security surface), and seeding a .secrets.baseline in _tasks
@@ -49,6 +58,25 @@ repos:
       - id: check-merge-conflict
   - repo: local
     hooks:
+      # PRE-COMMIT stage — husky's former job, moved here verbatim. lint-staged
+      # autofixes staged files, then `bun run gate` runs the exact checks CI
+      # runs. Restrictive on purpose; `git commit --no-verify` skips it on a WIP
+      # commit. pass_filenames is false because both read their own scope
+      # (lint-staged from package.json, gate from turbo).
+      - id: lint-staged
+        name: lint-staged (autofix staged files)
+        entry: bunx lint-staged
+        language: system
+        stages: [pre-commit]
+        pass_filenames: false
+        always_run: true
+      - id: bun-gate-commit
+        name: bun run gate (format/lint/typecheck/test/build — CI parity, pre-commit)
+        entry: bun run gate
+        language: system
+        stages: [pre-commit]
+        pass_filenames: false
+        always_run: true
       # CI-parity heavy gate (pre-push): the three steps of the reusable
       # frontend-ci.yml. `bun run gate` is the exact script CI calls
       # (format:check + turbo lint/typecheck/test/build). bun/turbo are always
