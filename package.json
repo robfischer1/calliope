@@ -22,8 +22,7 @@
     "test": "turbo run test",
     "format": "prettier --write \"**/*.{ts,tsx,json,css}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,json,css}\"",
-    "gate": "bun run format:check && turbo run lint typecheck test build",
-    "prepare": "husky"
+    "gate": "bun run format:check && turbo run lint typecheck test build"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
@@ -37,7 +36,6 @@
   "devDependencies": {
     "@eslint/js": "^10.0.0",
     "eslint": "^10.0.0",
-    "husky": "^9.1.7",
     "lint-staged": "^15.2.10",
     "prettier": "^3.4.2",
     "turbo": "^2.3.3",
