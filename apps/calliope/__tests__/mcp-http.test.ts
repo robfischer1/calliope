@@ -115,6 +115,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "read_documents",
       "read_plan",
       "revision_deltas",
+      "search", // Findability F2 — licensed by its Exposes row `search(query, scope)`
       "split_block",
       "unpin",
       "update_block",
@@ -144,6 +145,8 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       copy_reference: [true, false, true],
       look: [true, false, true],
       list_comments: [true, false, true],
+      search: [true, false, true], // Findability F2 — read-only, idempotent
+
       unpin: [false, true, true],
       // additive writes (each call mints new ids)
       create_block: [false, false, false],

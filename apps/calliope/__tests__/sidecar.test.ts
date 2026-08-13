@@ -5,6 +5,7 @@ import type { Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FsBodyClient } from "../src/fs-client.js";
 import { createSidecarServer, parseArgs } from "../src/mcp/sidecar.js";
+import { LocalSearchIndex } from "../src/fs-search/index.js";
 
 let root: string;
 let server: Server;
@@ -234,6 +235,7 @@ describe("the sidecar MCP endpoint (031 / Look At This F12)", () => {
     expect(names).toContain("read_body");
     expect(names).toContain("write_body");
     expect(names).toContain("look");
+    expect(names).toContain("search"); // Findability F2 — the surface pin
     // chaos-gated verbs stay absent — no graph on the sidecar
     expect(names).not.toContain("create_note");
   });
@@ -263,5 +265,66 @@ describe("the sidecar MCP endpoint (031 / Look At This F12)", () => {
     };
     expect(called.result?.structuredContent?.focus).toBeNull();
     expect(called.result?.structuredContent?.pins).toEqual([]);
+  });
+});
+
+describe("Findability F2 — the search verb on the ferry wire", () => {
+  it("without an index answers honest darkness (both arms named)", async () => {
+    const res = await ferry("search", { query: "anything" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      hits: unknown[];
+      armsQueried: string[];
+      armsDark: string[];
+    };
+    expect(body.hits).toEqual([]);
+    expect(body.armsQueried).toEqual([]);
+    expect(body.armsDark.sort()).toEqual(["fts", "semantic"]);
+  });
+
+  it("refuses an empty query with bad_request", async () => {
+    const res = await ferry("search", { query: "  " });
+    expect(res.status).toBe(400);
+  });
+
+  it("with an index wired, the ferry serves ranked hits with snippets", async () => {
+    await writeFile(
+      path.join(root, "wired.md"),
+      "the wired heron answers",
+      "utf8",
+    );
+    const index = LocalSearchIndex.open(root, { embedder: null, watch: false });
+    const wired = createSidecarServer(new FsBodyClient(root), {
+      search: index,
+    });
+    await new Promise<void>((resolve) => {
+      wired.listen(0, "127.0.0.1", resolve);
+    });
+    const address = wired.address();
+    if (address === null || typeof address !== "object")
+      throw new Error("no address");
+    try {
+      await index.started;
+      const res = await fetch(`http://127.0.0.1:${String(address.port)}/body`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          verb: "search",
+          args: { query: "wired heron" },
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        hits: { id: string; snippet: string }[];
+        armsQueried: string[];
+        armsDark: string[];
+      };
+      expect(body.hits[0]?.id).toBe("wired.md");
+      expect(body.armsQueried).toEqual(["fts"]);
+      expect(body.armsDark).toEqual(["semantic"]);
+    } finally {
+      index.close();
+      await new Promise((resolve) => wired.close(resolve));
+    }
   });
 });

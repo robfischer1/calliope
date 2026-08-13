@@ -20,7 +20,8 @@
   "scripts": {
     "dev": "bun run --watch src/mcp/http.ts",
     "build": "bun build src/mcp/http.ts --target=bun --outfile dist/server.js",
-    "build:sidecar": "bun build --compile --target=bun-windows-x64 src/mcp/sidecar.ts --outfile dist/calliope-sidecar.exe && bun build --compile --target=bun-linux-x64 src/mcp/sidecar.ts --outfile dist/calliope-sidecar",
+    "build:sidecar": "bun build --compile --target=bun-windows-x64 src/mcp/sidecar.ts --outfile dist/calliope-sidecar.exe && bun build --compile --target=bun-linux-x64 src/mcp/sidecar.ts --outfile dist/calliope-sidecar && bun run scripts/copy-search-assets.ts",
+    "fetch-search-assets": "bun run scripts/fetch-search-assets.ts",
     "start": "bun run src/mcp/main.ts",
     "start:http": "bun run src/mcp/http.ts",
     "lint": "eslint .",
@@ -31,6 +32,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "kafkajs": "^2.2.4",
+    "onnxruntime-web": "^1.27.0",
     "pg": "^8.22.0",
     "zod": "^3.25.0"
   },

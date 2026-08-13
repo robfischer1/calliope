@@ -69,10 +69,15 @@ export class FsBodyClient implements BodyClient {
   readonly #locks = new Map<string, Promise<unknown>>();
   /** F13: the .grace/ revlog — local history, Rob's decision 2026-08-10. */
   readonly #revlog: FsRevlog;
+  /** Findability F2 — index-only write hook: fires AFTER a write lands so
+   *  the search index absorbs sidecar-authored edits without a watcher
+   *  round-trip. Never observes or alters the body grain. */
+  readonly #onWrite: ((nodeId: string) => void) | undefined;
 
-  constructor(root: string) {
+  constructor(root: string, opts?: { onWrite?: (nodeId: string) => void }) {
     this.#root = path.resolve(root);
     this.#revlog = new FsRevlog(this.#root);
+    this.#onWrite = opts?.onWrite;
   }
 
   /** The absolute served root (the sidecar's /health reports it). */
@@ -144,6 +149,7 @@ export class FsBodyClient implements BodyClient {
       const text = sections.map((s) => s.text).join(SECTION_SEP);
       await this.#writeAtomic(abs, text);
       await this.#revlog.append(nodeId, "save", text);
+      this.#onWrite?.(nodeId);
     });
   }
 
@@ -168,6 +174,7 @@ export class FsBodyClient implements BodyClient {
       const rewritten = await this.#readBytes(abs);
       const fresh = rewritten === null ? [] : derive(rewritten);
       await this.#revlog.append(nodeId, "edit", texts.join(SECTION_SEP));
+      this.#onWrite?.(nodeId);
       const head = fresh[Math.min(index, fresh.length - 1)];
       if (head === undefined) {
         throw new Error(
