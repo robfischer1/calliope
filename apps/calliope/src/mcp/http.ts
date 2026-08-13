@@ -41,6 +41,7 @@ import type { ChaosFacet } from "../chaos-client.js";
 import type { TagStore } from "../tag-store.js";
 import { startHeartbeat } from "./heartbeat.js";
 import { FocusRegister, startFocusConsumer } from "../focus-register.js";
+import { makeErosProvider } from "../fs-search/eros-provider.js";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
 const MCP_PATH = "/mcp";
@@ -87,12 +88,16 @@ async function handleMcp(
   tags?: TagStore,
   focus?: FocusRegister,
 ): Promise<void> {
+  // Findability F4: the pg arm — eros-routed when CALLIOPE_EROS_URL is set;
+  // absent, the search verb answers honest darkness (F2's contract).
+  const search = makeErosProvider();
   const server = createServer(client, {
     ...(documents !== undefined ? { documents } : {}),
     ...(revisions !== undefined ? { revisions } : {}),
     ...(chaos !== undefined ? { chaos } : {}),
     ...(tags !== undefined ? { tags } : {}),
     ...(focus !== undefined ? { focus } : {}),
+    ...(search !== undefined ? { search } : {}),
   });
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session id, no server-initiated streams to keep alive.
