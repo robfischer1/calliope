@@ -185,3 +185,83 @@ describe("the ferry wire", () => {
     ).toBe(400);
   });
 });
+
+// ── 031 ("Look At This" F12): the local MCP endpoint ─────────────────────────
+
+describe("the sidecar MCP endpoint (031 / Look At This F12)", () => {
+  async function mcp(payload: unknown, sessionInit = true): Promise<unknown> {
+    if (sessionInit) {
+      await fetch(`${base}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "test", version: "0" },
+          },
+        }),
+      });
+    }
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify(payload),
+    });
+    const text = await res.text();
+    // streamable-http answers SSE-framed or plain JSON; take the data line
+    const line = text.split("\n").find((l) => l.startsWith("data:"));
+    return JSON.parse(line !== undefined ? line.slice(5) : text) as unknown;
+  }
+
+  it("serves the fs-supported body surface plus look over MCP", async () => {
+    const listed = (await mcp({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    })) as { result?: { tools?: { name: string }[] } };
+    const names = (listed.result?.tools ?? []).map((t) => t.name);
+    expect(names).toContain("read_body");
+    expect(names).toContain("write_body");
+    expect(names).toContain("look");
+    // chaos-gated verbs stay absent — no graph on the sidecar
+    expect(names).not.toContain("create_note");
+  });
+
+  it("round-trips a body read over MCP against the served directory", async () => {
+    await writeFile(path.join(root, "agent.md"), "hello agent", "utf8");
+    const called = (await mcp({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "read_body", arguments: { node_id: "agent.md" } },
+    })) as {
+      result?: { structuredContent?: { sections?: { text: string }[] } };
+    };
+    const sections = called.result?.structuredContent?.sections ?? [];
+    expect(sections.map((s) => s.text)).toEqual(["hello agent"]);
+  });
+
+  it("look answers the honest empty register", async () => {
+    const called = (await mcp({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "look", arguments: {} },
+    })) as {
+      result?: { structuredContent?: { focus: unknown; pins: unknown[] } };
+    };
+    expect(called.result?.structuredContent?.focus).toBeNull();
+    expect(called.result?.structuredContent?.pins).toEqual([]);
+  });
+});
