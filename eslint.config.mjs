@@ -8,6 +8,7 @@ export default tseslint.config(
     ignores: [
       "**/dist/**",
       "**/node_modules/**",
+      "**/spikes/**",
       "**/*.config.*",
       "vitest.config.ts",
       "eslint.config.mjs",
