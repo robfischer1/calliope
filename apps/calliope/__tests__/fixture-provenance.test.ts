@@ -72,4 +72,29 @@ describe("FixtureBodyClient — 024 per-call author threading", () => {
       "human",
     ]);
   });
+
+  describe("025 — the offset stamp (fixture parity)", () => {
+    it("records the per-event kafkaOffset and null when absent", async () => {
+      const client = new FixtureBodyClient();
+      await client.saveBody("n5", [{ text: "one" }], PRINCIPAL, 42);
+      await client.applySectionOps(
+        "n5",
+        [{ op: "add", text: "two", orderKey: "zz" }],
+        PRINCIPAL,
+        43,
+      );
+      await client.saveBody("n5", [{ text: "three" }], PRINCIPAL);
+      const revs = await client.readRevisions("n5");
+      // Newest first.
+      expect(revs.map((r) => r.kafkaOffset)).toEqual([null, 43, 42]);
+    });
+
+    it("refuses an offset without a session principal", async () => {
+      const client = new FixtureBodyClient();
+      await expect(
+        client.saveBody("n6", [{ text: "nope" }], "human", 42),
+      ).rejects.toThrow(/session-principal/);
+      expect(await client.readRevisions("n6")).toEqual([]);
+    });
+  });
 });

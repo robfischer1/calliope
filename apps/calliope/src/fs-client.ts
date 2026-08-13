@@ -204,6 +204,8 @@ export class FsBodyClient implements BodyClient {
           revision: e.revision,
           kind: e.kind,
           authoredBy: "human",
+          // The fs grain has no session bus: never a stamp (025).
+          kafkaOffset: null,
           sections: 1,
         }));
     });

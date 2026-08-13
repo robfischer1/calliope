@@ -27,6 +27,7 @@ import type {
   SectionOp,
 } from "./types.js";
 import type { AuthoredBy } from "./urania-client.js";
+import { validateWriteProvenance } from "./types.js";
 import { between, sequence } from "./order-key.js";
 
 const SCHEMA_SQL = `
@@ -52,6 +53,11 @@ CREATE INDEX IF NOT EXISTS sections_node_active
 -- content and never surface in reads. Idempotent, default false — every
 -- pre-A11 row is a content row.
 ALTER TABLE sections ADD COLUMN IF NOT EXISTS tombstone boolean NOT NULL DEFAULT false;
+-- 025 provenance: where in the writing session's log the write happened.
+-- NULL = no session context — never defaulted, never guessed. Only valid
+-- alongside a session-principal authored_by (enforced in the clients, not as
+-- a CHECK: the regex lives in one place, types.ts).
+ALTER TABLE sections ADD COLUMN IF NOT EXISTS kafka_offset bigint;
 -- F1 lineage join table: one row per (successor, predecessor) edge within an
 -- owning node, so a merge (A+B->C) can record N predecessors — inexpressible
 -- in the single supersedes column. The column stays (and is still written)
@@ -134,8 +140,11 @@ export class PgBodyClient implements BodyClient {
     nodeId: string,
     sections: SectionInput[],
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<void> {
     const author = authoredBy ?? this.#authoredBy;
+    validateWriteProvenance(author, kafkaOffset);
+    const offset = kafkaOffset ?? null;
     const keys = sequence(sections.length);
     const client = await this.#pool.connect();
     try {
@@ -148,14 +157,15 @@ export class PgBodyClient implements BodyClient {
         const text = sections[i]?.text ?? "";
         const orderKey = keys[i] ?? "";
         await client.query(
-          `INSERT INTO sections (id, node_id, text, order_key, authored_by)
-           VALUES ($1, $2, $3, $4, $5)`,
+          `INSERT INTO sections (id, node_id, text, order_key, authored_by, kafka_offset)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
           [
             mintSectionId(nodeId, text, orderKey),
             nodeId,
             text,
             orderKey,
             author,
+            offset,
           ],
         );
       }
@@ -173,8 +183,11 @@ export class PgBodyClient implements BodyClient {
     sectionId: string,
     text: string,
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<Section> {
     const author = authoredBy ?? this.#authoredBy;
+    validateWriteProvenance(author, kafkaOffset);
+    const offset = kafkaOffset ?? null;
     const client = await this.#pool.connect();
     try {
       await client.query("BEGIN");
@@ -203,9 +216,9 @@ export class PgBodyClient implements BodyClient {
         [nodeId, sectionId],
       );
       await client.query(
-        `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [nextId, nodeId, text, target.order_key, author, sectionId],
+        `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes, kafka_offset)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [nextId, nodeId, text, target.order_key, author, sectionId, offset],
       );
       await this.#writeEdge(client, nodeId, nextId, sectionId);
       await client.query("COMMIT");
@@ -241,8 +254,11 @@ export class PgBodyClient implements BodyClient {
     nodeId: string,
     ops: SectionOp[],
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<ApplySectionOpsResult> {
     const author = authoredBy ?? this.#authoredBy;
+    validateWriteProvenance(author, kafkaOffset);
+    const offset = kafkaOffset ?? null;
     const referenced = ops.flatMap((op) =>
       op.op === "add" ? [] : [op.sectionId],
     );
@@ -274,9 +290,9 @@ export class PgBodyClient implements BodyClient {
         if (op.op === "add") {
           const id = mintSectionId(nodeId, op.text, op.orderKey);
           await client.query(
-            `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
-             VALUES ($1, $2, $3, $4, $5, '')`,
-            [id, nodeId, op.text, op.orderKey, author],
+            `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes, kafka_offset)
+             VALUES ($1, $2, $3, $4, $5, '', $6)`,
+            [id, nodeId, op.text, op.orderKey, author, offset],
           );
           applied.push({ id, orderKey: op.orderKey });
           continue;
@@ -297,9 +313,9 @@ export class PgBodyClient implements BodyClient {
           const stone = mintSectionId(nodeId, "", target.order_key);
           await client.query(
             `INSERT INTO sections
-               (id, node_id, text, order_key, authored_by, supersedes, active, tombstone)
-             VALUES ($1, $2, '', $3, $4, $5, false, true)`,
-            [stone, nodeId, target.order_key, author, op.sectionId],
+               (id, node_id, text, order_key, authored_by, supersedes, active, tombstone, kafka_offset)
+             VALUES ($1, $2, '', $3, $4, $5, false, true, $6)`,
+            [stone, nodeId, target.order_key, author, op.sectionId, offset],
           );
           await this.#writeEdge(client, nodeId, stone, op.sectionId);
           applied.push({ id: target.id, orderKey: target.order_key });
@@ -310,9 +326,9 @@ export class PgBodyClient implements BodyClient {
           op.op === "reorder" ? op.orderKey : (op.orderKey ?? target.order_key);
         const nextId = mintSectionId(nodeId, text, orderKey);
         await client.query(
-          `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [nextId, nodeId, text, orderKey, author, op.sectionId],
+          `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes, kafka_offset)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [nextId, nodeId, text, orderKey, author, op.sectionId, offset],
         );
         await this.#writeEdge(client, nodeId, nextId, op.sectionId);
         applied.push({ id: nextId, orderKey });
@@ -353,8 +369,11 @@ export class PgBodyClient implements BodyClient {
     sectionId: string,
     offset: number,
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<[Section, Section]> {
     const author = authoredBy ?? this.#authoredBy;
+    validateWriteProvenance(author, kafkaOffset);
+    const logOffset = kafkaOffset ?? null;
     if (!Number.isInteger(offset) || offset < 0) {
       throw new Error(
         `bad_offset: split offset must be a non-negative integer (got ${String(offset)}).`,
@@ -399,9 +418,9 @@ export class PgBodyClient implements BodyClient {
         [secondId, secondText, secondKey],
       ] as const) {
         await client.query(
-          `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [id, nodeId, text, key, author, sectionId],
+          `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes, kafka_offset)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [id, nodeId, text, key, author, sectionId, logOffset],
         );
         await this.#writeEdge(client, nodeId, id, sectionId);
       }
@@ -431,8 +450,11 @@ export class PgBodyClient implements BodyClient {
     secondId: string,
     separator = "",
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<Section> {
     const author = authoredBy ?? this.#authoredBy;
+    validateWriteProvenance(author, kafkaOffset);
+    const offset = kafkaOffset ?? null;
     const client = await this.#pool.connect();
     try {
       await client.query("BEGIN");
@@ -467,9 +489,9 @@ export class PgBodyClient implements BodyClient {
         [nodeId, [firstId, secondId]],
       );
       await client.query(
-        `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [mergedId, nodeId, text, first.order_key, author, firstId],
+        `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes, kafka_offset)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [mergedId, nodeId, text, first.order_key, author, firstId, offset],
       );
       await this.#writeEdge(client, nodeId, mergedId, firstId);
       await this.#writeEdge(client, nodeId, mergedId, secondId);
@@ -705,6 +727,7 @@ export class PgBodyClient implements BodyClient {
       is_save: boolean;
       is_ops: boolean;
       authored_by: string;
+      kafka_offset: string | null;
       sections: number;
     }>(
       `SELECT to_char(created_at AT TIME ZONE 'UTC',
@@ -716,6 +739,8 @@ export class PgBodyClient implements BodyClient {
                OR bool_or(tombstone)
                OR bool_or(supersedes = '')) AS is_ops,
               max(authored_by) AS authored_by,
+              -- 025: one event = one caller = one offset (or none).
+              max(kafka_offset) AS kafka_offset,
               count(*)::int AS sections
          FROM sections
         WHERE node_id = $1
@@ -728,6 +753,7 @@ export class PgBodyClient implements BodyClient {
       revision: r.revision,
       kind: r.is_save ? "save" : r.is_ops ? "ops" : "edit",
       authoredBy: r.authored_by,
+      kafkaOffset: r.kafka_offset === null ? null : Number(r.kafka_offset),
       sections: r.sections,
     }));
   }

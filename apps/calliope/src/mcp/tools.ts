@@ -121,8 +121,9 @@ export async function writeBody(
   nodeId: string,
   sections: SectionInput[],
   authoredBy?: AuthoredBy,
+  kafkaOffset?: number,
 ): Promise<WriteBodyResult> {
-  await client.saveBody(nodeId, sections, authoredBy);
+  await client.saveBody(nodeId, sections, authoredBy, kafkaOffset);
   return { ok: true, count: sections.length };
 }
 
@@ -139,13 +140,14 @@ export async function appendSection(
   nodeId: string,
   text: string,
   authoredBy?: AuthoredBy,
+  kafkaOffset?: number,
 ): Promise<AppendSectionResult> {
   const current = await client.readBody(nodeId);
   const next: SectionInput[] = [
     ...current.map((s) => ({ text: s.text })),
     { text },
   ];
-  await client.saveBody(nodeId, next, authoredBy);
+  await client.saveBody(nodeId, next, authoredBy, kafkaOffset);
 
   const after = await client.readBody(nodeId);
   const appended = after.at(-1);
@@ -171,6 +173,7 @@ export async function editSection(
   sectionId: string,
   text: string,
   authoredBy?: AuthoredBy,
+  kafkaOffset?: number,
 ): Promise<EditSectionResult> {
   if (client.editSection === undefined) {
     throw new Error(
@@ -178,7 +181,13 @@ export async function editSection(
         "single-section edits (no editSection method).",
     );
   }
-  const section = await client.editSection(nodeId, sectionId, text, authoredBy);
+  const section = await client.editSection(
+    nodeId,
+    sectionId,
+    text,
+    authoredBy,
+    kafkaOffset,
+  );
   return { section: toToolSection(section) };
 }
 
@@ -229,6 +238,7 @@ export async function applySectionOps(
   nodeId: string,
   ops: WireSectionOp[],
   authoredBy?: AuthoredBy,
+  kafkaOffset?: number,
 ): Promise<ApplySectionOpsToolResult> {
   if (client.applySectionOps === undefined) {
     throw new Error(
@@ -237,7 +247,12 @@ export async function applySectionOps(
     );
   }
   const decoded = ops.map((w, i) => decodeOp(w, i));
-  const result = await client.applySectionOps(nodeId, decoded, authoredBy);
+  const result = await client.applySectionOps(
+    nodeId,
+    decoded,
+    authoredBy,
+    kafkaOffset,
+  );
   return {
     sections: result.sections.map(toToolSection),
     applied: result.applied.map((a) => ({ id: a.id, orderKey: a.orderKey })),
@@ -329,6 +344,7 @@ export async function createBlock(
   text: string,
   afterBlockId?: string,
   authoredBy?: AuthoredBy,
+  kafkaOffset?: number,
 ): Promise<BlockResult> {
   if (client.applySectionOps === undefined) {
     throw new Error(
@@ -358,6 +374,7 @@ export async function createBlock(
     nodeId,
     [{ op: "add", text, orderKey }],
     authoredBy,
+    kafkaOffset,
   );
   const applied = result.applied.at(0);
   if (applied === undefined) {
@@ -447,8 +464,16 @@ export async function updateBlock(
   blockId: string,
   text: string,
   authoredBy?: AuthoredBy,
+  kafkaOffset?: number,
 ): Promise<BlockResult> {
-  const result = await editSection(client, nodeId, blockId, text, authoredBy);
+  const result = await editSection(
+    client,
+    nodeId,
+    blockId,
+    text,
+    authoredBy,
+    kafkaOffset,
+  );
   return { block: result.section };
 }
 
@@ -461,6 +486,7 @@ export async function deleteBlock(
   nodeId: string,
   blockId: string,
   authoredBy?: AuthoredBy,
+  kafkaOffset?: number,
 ): Promise<DeleteBlockResult> {
   if (client.applySectionOps === undefined) {
     throw new Error(
@@ -472,6 +498,7 @@ export async function deleteBlock(
     nodeId,
     [{ op: "delete", sectionId: blockId }],
     authoredBy,
+    kafkaOffset,
   );
   const applied = result.applied.at(0);
   if (applied === undefined) {
@@ -491,6 +518,7 @@ export async function splitBlock(
   blockId: string,
   offset: number,
   authoredBy?: AuthoredBy,
+  kafkaOffset?: number,
 ): Promise<SplitBlockResult> {
   if (client.splitSection === undefined) {
     throw new Error(
@@ -503,6 +531,7 @@ export async function splitBlock(
     blockId,
     offset,
     authoredBy,
+    kafkaOffset,
   );
   return { blocks: [toToolSection(first), toToolSection(second)] };
 }
@@ -519,6 +548,7 @@ export async function mergeBlock(
   secondBlockId: string,
   separator?: string,
   authoredBy?: AuthoredBy,
+  kafkaOffset?: number,
 ): Promise<BlockResult> {
   if (client.mergeSections === undefined) {
     throw new Error(
@@ -532,6 +562,7 @@ export async function mergeBlock(
     secondBlockId,
     separator,
     authoredBy,
+    kafkaOffset,
   );
   return { block: toToolSection(section) };
 }

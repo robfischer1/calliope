@@ -258,3 +258,117 @@ describe("024 — authored_by on the write verbs (fixture-backed)", () => {
     expect(new Set(authors)).toEqual(new Set([PRINCIPAL]));
   });
 });
+
+describe("025 — kafka_offset on the write verbs (fixture-backed)", () => {
+  async function revisionOffsets(nodeId: string): Promise<(number | null)[]> {
+    const res = await call("read_body_revisions", { node_id: nodeId });
+    const revs = (
+      res.structured as { revisions?: { kafkaOffset: number | null }[] }
+    ).revisions;
+    return (revs ?? []).map((r) => r.kafkaOffset);
+  }
+
+  it("create_block with principal + offset lands and the revision reports the offset", async () => {
+    const created = await call("create_block", {
+      container_id: "o1",
+      text: "stamped block",
+      authored_by: PRINCIPAL,
+      kafka_offset: 1234,
+    });
+    expect(created.isError).toBeFalsy();
+    expect(await revisionOffsets("o1")).toEqual([1234]);
+  });
+
+  it("absent kafka_offset stores null — 024 behavior unchanged", async () => {
+    await call("create_block", {
+      container_id: "o2",
+      text: "plain",
+      authored_by: PRINCIPAL,
+    });
+    expect(await revisionOffsets("o2")).toEqual([null]);
+  });
+
+  it("an offset without a session author rejects naming the rule; nothing lands", async () => {
+    const res = await call("create_block", {
+      container_id: "o3",
+      text: "should not land",
+      kafka_offset: 42,
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.raw)).toMatch(/session-principal/);
+    expect(await revisionOffsets("o3")).toEqual([]);
+
+    const legacy = await call("create_block", {
+      container_id: "o3",
+      text: "still no",
+      authored_by: "human",
+      kafka_offset: 42,
+    });
+    expect(legacy.isError).toBe(true);
+    expect(await revisionOffsets("o3")).toEqual([]);
+  });
+
+  it("a negative or fractional offset rejects via schema", async () => {
+    const negative = await call("create_block", {
+      container_id: "o4",
+      text: "no",
+      authored_by: PRINCIPAL,
+      kafka_offset: -1,
+    });
+    expect(negative.isError).toBe(true);
+    const fractional = await call("create_block", {
+      container_id: "o4",
+      text: "no",
+      authored_by: PRINCIPAL,
+      kafka_offset: 1.5,
+    });
+    expect(fractional.isError).toBe(true);
+    expect(await revisionOffsets("o4")).toEqual([]);
+  });
+
+  it("the remaining write verbs thread the offset", async () => {
+    const seeded = await call("apply_section_ops", {
+      node_id: "o5",
+      ops: [{ op: "add", text: "alpha", order_key: "a0" }],
+      authored_by: PRINCIPAL,
+      kafka_offset: 100,
+    });
+    expect(seeded.isError).toBeFalsy();
+
+    const body = (
+      (await call("read_body", { node_id: "o5" })).structured as {
+        sections: { id: string }[];
+      }
+    ).sections;
+    const alpha = body[0];
+    if (!alpha) throw new Error("seed failed");
+
+    const updated = await call("update_block", {
+      container_id: "o5",
+      block_id: alpha.id,
+      text: "alpha edited",
+      authored_by: PRINCIPAL,
+      kafka_offset: 101,
+    });
+    expect(updated.isError).toBeFalsy();
+
+    const appended = await call("append_section", {
+      node_id: "o5",
+      text: "beta",
+      authored_by: PRINCIPAL,
+      kafka_offset: 102,
+    });
+    expect(appended.isError).toBeFalsy();
+
+    const written = await call("write_body", {
+      node_id: "o5",
+      sections: [{ text: "fresh" }],
+      authored_by: PRINCIPAL,
+      kafka_offset: 103,
+    });
+    expect(written.isError).toBeFalsy();
+
+    // Newest first: write_body, append_section, update_block, seed.
+    expect(await revisionOffsets("o5")).toEqual([103, 102, 101, 100]);
+  });
+});

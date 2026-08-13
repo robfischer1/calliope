@@ -18,7 +18,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { isAuthoredBy } from "../types.js";
+import { isAuthoredBy, validateWriteProvenance } from "../types.js";
 import type { AuthoredBy, BodyClient } from "../types.js";
 import type { DocumentStore } from "../document-store.js";
 import type { RevisionStore } from "../revision-store.js";
@@ -120,6 +120,21 @@ export function createServer(
   const asAuthor = (v: string | undefined): AuthoredBy | undefined =>
     v !== undefined && isAuthoredBy(v) ? v : undefined;
 
+  // 025: the session's log offset at the moment of the write. Only valid
+  // alongside a session-principal authored_by (validateWriteProvenance in
+  // each handler); absent = NULL stored, never a guess.
+  const kafkaOffsetField = z
+    .number()
+    .int()
+    .min(0)
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional()
+    .describe(
+      "Optional session-log position of this write (the session-turns " +
+        "offset). Requires a session-principal authored_by on the same " +
+        "call; absent = no session context (stored NULL).",
+    );
+
   // C9: the inline-tag reconcile — fires after any successful body write
   // when the chaos facet + tag mirror are wired. Non-fatal: a tag failure
   // never fails the body write it rides behind (logged loudly instead).
@@ -201,15 +216,24 @@ export function createServer(
           .optional()
           .describe("Insert after this block; omitted = append at the end."),
         authored_by: authoredByField,
+        kafka_offset: kafkaOffsetField,
       },
     },
-    async ({ container_id, text, after_block_id, authored_by }) => {
+    async ({
+      container_id,
+      text,
+      after_block_id,
+      authored_by,
+      kafka_offset,
+    }) => {
+      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
       const result = await createBlock(
         client,
         container_id,
         text,
         after_block_id,
         asAuthor(authored_by),
+        kafka_offset,
       );
       await afterBodyWrite(container_id);
       return {
@@ -440,15 +464,18 @@ export function createServer(
         block_id: z.string().describe("The block to rewrite."),
         text: z.string().describe("The block's new prose."),
         authored_by: authoredByField,
+        kafka_offset: kafkaOffsetField,
       },
     },
-    async ({ container_id, block_id, text, authored_by }) => {
+    async ({ container_id, block_id, text, authored_by, kafka_offset }) => {
+      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
       const result = await updateBlock(
         client,
         container_id,
         block_id,
         text,
         asAuthor(authored_by),
+        kafka_offset,
       );
       await afterBodyWrite(container_id);
       return {
@@ -475,14 +502,17 @@ export function createServer(
         container_id: z.string().describe("The container owning the block."),
         block_id: z.string().describe("The block to remove."),
         authored_by: authoredByField,
+        kafka_offset: kafkaOffsetField,
       },
     },
-    async ({ container_id, block_id, authored_by }) => {
+    async ({ container_id, block_id, authored_by, kafka_offset }) => {
+      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
       const result = await deleteBlock(
         client,
         container_id,
         block_id,
         asAuthor(authored_by),
+        kafka_offset,
       );
       await afterBodyWrite(container_id);
       return {
@@ -518,15 +548,18 @@ export function createServer(
           .min(0)
           .describe("The caret offset (UTF-16 code units into the text)."),
         authored_by: authoredByField,
+        kafka_offset: kafkaOffsetField,
       },
     },
-    async ({ container_id, block_id, offset, authored_by }) => {
+    async ({ container_id, block_id, offset, authored_by, kafka_offset }) => {
+      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
       const result = await splitBlock(
         client,
         container_id,
         block_id,
         offset,
         asAuthor(authored_by),
+        kafka_offset,
       );
       await afterBodyWrite(container_id);
       return {
@@ -570,6 +603,7 @@ export function createServer(
           .optional()
           .describe("Joined between the two texts (default: none)."),
         authored_by: authoredByField,
+        kafka_offset: kafkaOffsetField,
       },
     },
     async ({
@@ -578,7 +612,9 @@ export function createServer(
       second_block_id,
       separator,
       authored_by,
+      kafka_offset,
     }) => {
+      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
       const result = await mergeBlock(
         client,
         container_id,
@@ -586,6 +622,7 @@ export function createServer(
         second_block_id,
         separator,
         asAuthor(authored_by),
+        kafka_offset,
       );
       await afterBodyWrite(container_id);
       return {
@@ -680,14 +717,17 @@ export function createServer(
           .array(z.object({ text: z.string() }))
           .describe("The new sections, in display order."),
         authored_by: authoredByField,
+        kafka_offset: kafkaOffsetField,
       },
     },
-    async ({ node_id, sections, authored_by }) => {
+    async ({ node_id, sections, authored_by, kafka_offset }) => {
+      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
       const result = await writeBody(
         client,
         node_id,
         sections,
         asAuthor(authored_by),
+        kafka_offset,
       );
       await afterBodyWrite(node_id);
       return {
@@ -715,14 +755,17 @@ export function createServer(
         node_id: z.string().describe("The node to append to."),
         text: z.string().describe("The new section's prose."),
         authored_by: authoredByField,
+        kafka_offset: kafkaOffsetField,
       },
     },
-    async ({ node_id, text, authored_by }) => {
+    async ({ node_id, text, authored_by, kafka_offset }) => {
+      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
       const result = await appendSection(
         client,
         node_id,
         text,
         asAuthor(authored_by),
+        kafka_offset,
       );
       await afterBodyWrite(node_id);
       return {
@@ -755,15 +798,18 @@ export function createServer(
         section_id: z.string().describe("The section to edit."),
         text: z.string().describe("The section's new prose."),
         authored_by: authoredByField,
+        kafka_offset: kafkaOffsetField,
       },
     },
-    async ({ node_id, section_id, text, authored_by }) => {
+    async ({ node_id, section_id, text, authored_by, kafka_offset }) => {
+      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
       const result = await editSection(
         client,
         node_id,
         section_id,
         text,
         asAuthor(authored_by),
+        kafka_offset,
       );
       await afterBodyWrite(node_id);
       return {
@@ -835,14 +881,17 @@ export function createServer(
             "The op batch, in apply order; at most one op per section.",
           ),
         authored_by: authoredByField,
+        kafka_offset: kafkaOffsetField,
       },
     },
-    async ({ node_id, ops, authored_by }) => {
+    async ({ node_id, ops, authored_by, kafka_offset }) => {
+      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
       const result = await applySectionOps(
         client,
         node_id,
         ops,
         asAuthor(authored_by),
+        kafka_offset,
       );
       await afterBodyWrite(node_id);
       return {
