@@ -739,10 +739,24 @@ export function createServer(
           .string()
           .optional()
           .describe("Focus on one block's thread (lineage-following)."),
+        resolve_anchors: z
+          .boolean()
+          .optional()
+          .describe(
+            "027: also resolve, per comment, the target's prose as the " +
+              "commenter saw it (anchorText), its current prose " +
+              "(currentText), and a drift flag. Costs a read per comment; " +
+              "default false.",
+          ),
       },
     },
-    async ({ container_id, block_id }) => {
-      const result = await listComments(client, container_id, block_id);
+    async ({ container_id, block_id, resolve_anchors }) => {
+      const result = await listComments(
+        client,
+        container_id,
+        block_id,
+        resolve_anchors,
+      );
       return {
         content: [
           {

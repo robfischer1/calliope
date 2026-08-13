@@ -105,6 +105,17 @@ export interface CommentRecord {
   createdAt: string;
   /** The block this comment's edge points at (a block, or a parent comment). */
   commentsOn: string;
+  /**
+   * 027 (present only under `resolveAnchors`): the target's prose as of this
+   * comment's creation — the exact text the commenting session was reading
+   * (`readRevisionAt` at `createdAt`); null when the target was not in that
+   * reconstruction.
+   */
+  anchorText?: string | null;
+  /** 027 (with `resolveAnchors`): the target's current prose, or null. */
+  currentText?: string | null;
+  /** 027 (with `resolveAnchors`): anchor and current disagree. */
+  drift?: boolean;
 }
 
 /** One block's thread: the target's current state + its comments (026). */
@@ -384,6 +395,7 @@ export interface BodyClient {
   listComments?(
     containerId: string,
     blockId?: string,
+    resolveAnchors?: boolean,
   ): Promise<CommentThread[]>;
 
   /**

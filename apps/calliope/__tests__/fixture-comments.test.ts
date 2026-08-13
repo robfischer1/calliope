@@ -142,6 +142,24 @@ describe("FixtureBodyClient — 026 comments", () => {
     expect(all[0]?.comments.map((c) => c.text)).toEqual(["on doomed"]);
   });
 
+  it("027: anchored reads give the as-of prose with drift (fixture twin)", async () => {
+    const client = new FixtureBodyClient();
+    const target = await seedOneBlock(client, "doc8", "v1 prose");
+    await client.createComment("doc8", target, "about v1", PRINCIPAL);
+    await client.editSection("doc8", target, "v2 prose");
+
+    const anchored = await client.listComments("doc8", undefined, true);
+    const rec = anchored[0]?.comments[0];
+    expect(rec?.anchorText).toBe("v1 prose");
+    expect(rec?.currentText).toBe("v2 prose");
+    expect(rec?.drift).toBe(true);
+
+    const plain = await client.listComments("doc8");
+    expect(plain[0]?.comments[0] && "drift" in plain[0].comments[0]).toBe(
+      false,
+    );
+  });
+
   it("the document body is untouched by commentary", async () => {
     const client = new FixtureBodyClient();
     const target = await seedOneBlock(client, "doc7", "only block");
