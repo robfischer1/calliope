@@ -328,3 +328,40 @@ describe("Findability F2 — the search verb on the ferry wire", () => {
     }
   });
 });
+
+describe("Findability F11 — the mentions verb on the ferry wire", () => {
+  it("answers linked + unlinked over a wired index; empty id refuses", async () => {
+    await writeFile(path.join(root, "target.md"), "the target prose", "utf8");
+    await writeFile(path.join(root, "linker.md"), "see [[target]]", "utf8");
+    const index = LocalSearchIndex.open(root, { embedder: null, watch: false });
+    const wired = createSidecarServer(new FsBodyClient(root), {
+      search: index,
+    });
+    await new Promise<void>((resolve) => {
+      wired.listen(0, "127.0.0.1", resolve);
+    });
+    const address = wired.address();
+    if (address === null || typeof address !== "object")
+      throw new Error("no address");
+    try {
+      await index.started;
+      const call = (args: unknown): Promise<Response> =>
+        fetch(`http://127.0.0.1:${String(address.port)}/body`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ verb: "mentions", args }),
+        });
+      const res = await call({ id: "target.md" });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        linked: { id: string }[];
+        unlinked: { id: string }[];
+      };
+      expect(body.linked.map((m) => m.id)).toEqual(["linker.md"]);
+      expect((await call({ id: " " })).status).toBe(400);
+    } finally {
+      index.close();
+      await new Promise((resolve) => wired.close(resolve));
+    }
+  });
+});
