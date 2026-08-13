@@ -346,3 +346,49 @@ export interface RevisionMeta {
   kafkaOffset: number | null;
   sections: number;
 }
+
+/**
+ * 028 ("Look At This" F5, mirroring theia 058/F3): the focus-pointer
+ * payload — discriminated from day one so a shell-level register is a
+ * widening, not a rewrite. This is a byte-compatible MIRROR of theia's
+ * `packages/aglaia/src/types.ts` BodyPointer; both sides pin the shape with
+ * tests, so a divergence goes red on whichever side moved.
+ *
+ * The body variant carries CAPTURE-TIME-RESOLVED coordinates — a stable
+ * section (block) id + UTF-16 offsets into the section's rendered plain
+ * text + the resolved excerpt (the drift witness) — never raw editor
+ * positions.
+ */
+export interface BodyPointer {
+  kind: "body";
+  /** The note/node the pointer addresses (the backend's node id). */
+  node: string;
+  /** The stable section (block) placement id inside the node's body. */
+  section: string;
+  /** UTF-16 code-unit offset range into the section's plain text. */
+  offsetFrom: number;
+  offsetTo: number;
+  /** The excerpt as resolved AT CAPTURE — the drift witness. */
+  text: string;
+  /** ISO-8601 UTC capture moment. */
+  ts: string;
+}
+
+/** The focus-pointer union — one variant today; widened by adding kinds. */
+export type FocusPointer = BodyPointer;
+
+/** Narrow an unknown payload to a {@link BodyPointer}. Unknown kinds and
+ *  malformed shapes answer false — tolerated, never thrown. */
+export function isBodyPointer(p: unknown): p is BodyPointer {
+  if (p === null || typeof p !== "object") return false;
+  const c = p as Record<string, unknown>;
+  return (
+    c.kind === "body" &&
+    typeof c.node === "string" &&
+    typeof c.section === "string" &&
+    typeof c.offsetFrom === "number" &&
+    typeof c.offsetTo === "number" &&
+    typeof c.text === "string" &&
+    typeof c.ts === "string"
+  );
+}

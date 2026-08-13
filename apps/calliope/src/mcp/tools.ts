@@ -38,6 +38,8 @@ import {
   normalizeTag,
 } from "../tags.js";
 import type { TagCount, TagStore } from "../tag-store.js";
+import type { FocusRegister } from "../focus-register.js";
+import type { BodyPointer } from "../types.js";
 import { between } from "../order-key.js";
 
 /** A section as the MCP returns it (the lib {@link Section} shape, verbatim). */
@@ -892,4 +894,68 @@ export async function copyReference(
     };
   }
   return { ...formatCompoundReference(title, nodeId), address_form: "node" };
+}
+
+/**
+ * 028 ("Look At This" F5): the `look` result. `focus: null` means no focus
+ * has ever arrived — an empty register is an answer, not an error. A
+ * present focus carries the pointer, when this star received it, and an
+ * HONEST drift verdict computed against the live block at read time:
+ *
+ *  - `none`    — the excerpt still exists in the block (exact at offsets,
+ *                or present elsewhere — offsets are a hint, the TEXT is the
+ *                witness; capture space is rendered plain text, storage is
+ *                markdown source).
+ *  - `drifted` — the block resolves but the excerpt is GONE from it;
+ *                `current_text` carries the block's live text so the caller
+ *                can compare or diff.
+ *  - `gone`    — the block no longer resolves under its node (deleted, or
+ *                superseded by a merge that did not preserve the id).
+ */
+export interface LookResult {
+  focus: null | {
+    pointer: BodyPointer;
+    received_at: string;
+    drift: "none" | "drifted" | "gone";
+    current_text?: string;
+  };
+}
+
+/**
+ * look() — read the focus register, verify the witness. Reading never
+ * mutates the register; the drift check is a plain read of the pointed-at
+ * block through the same client every other read verb uses.
+ */
+export async function look(
+  client: BodyClient,
+  register: FocusRegister,
+): Promise<LookResult> {
+  const entry = register.current();
+  if (entry === null) return { focus: null };
+  const { pointer, receivedAt } = entry;
+  const block = await readBlock(client, pointer.node, pointer.section);
+  if (isBlockMiss(block)) {
+    return {
+      focus: { pointer, received_at: receivedAt, drift: "gone" },
+    };
+  }
+  // The offsets index the RENDERED plain text (theia 059's capture space);
+  // the stored block text is markdown source, so the slice only lines up on
+  // plain prose. The excerpt is the real witness: an exact slice match OR
+  // the excerpt appearing anywhere in the live block both mean the pointed-at
+  // prose still exists; only an ABSENT excerpt is drift.
+  const current = block.block.text;
+  const drift =
+    current.slice(pointer.offsetFrom, pointer.offsetTo) === pointer.text ||
+    current.includes(pointer.text)
+      ? "none"
+      : "drifted";
+  return {
+    focus: {
+      pointer,
+      received_at: receivedAt,
+      drift,
+      ...(drift === "drifted" ? { current_text: current } : {}),
+    },
+  };
 }
