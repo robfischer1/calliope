@@ -741,6 +741,104 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     await client.retainOnly("node-m", []);
     expect(await client.readBody("node-m")).toEqual([]);
   });
+
+  describe("024 — per-call author (session principal) threading", () => {
+    const PRINCIPAL =
+      "spiffe://notusmi.com/session/aa579121-1a2b-4c3d-8e4f-a5b6c7d8e9f0";
+
+    async function authorOf(id: string): Promise<string | undefined> {
+      const res = await pool.query<{ authored_by: string }>(
+        "SELECT authored_by FROM sections WHERE id = $1",
+        [id],
+      );
+      return res.rows[0]?.authored_by;
+    }
+
+    it("applySectionOps stamps the caller's principal on an add", async () => {
+      const result = await client.applySectionOps(
+        "node-p1",
+        [{ op: "add", text: "session-authored", orderKey: "a0" }],
+        PRINCIPAL,
+      );
+      const added = result.applied.at(0);
+      if (!added) throw new Error("no applied op");
+      expect(await authorOf(added.id)).toBe(PRINCIPAL);
+    });
+
+    it("absent per-call author stamps the instance default exactly as before", async () => {
+      const result = await client.applySectionOps("node-p2", [
+        { op: "add", text: "default-authored", orderKey: "a0" },
+      ]);
+      const added = result.applied.at(0);
+      if (!added) throw new Error("no applied op");
+      expect(await authorOf(added.id)).toBe("human");
+    });
+
+    it("saveBody / editSection / splitSection / mergeSections all honor the override", async () => {
+      await client.saveBody(
+        "node-p3",
+        [{ text: "one" }, { text: "two" }],
+        PRINCIPAL,
+      );
+      const body = await client.readBody("node-p3");
+      for (const s of body) expect(await authorOf(s.id)).toBe(PRINCIPAL);
+
+      const first = body.at(0);
+      if (!first) throw new Error("fixture body missing");
+      const edited = await client.editSection(
+        "node-p3",
+        first.id,
+        "one edited",
+        PRINCIPAL,
+      );
+      expect(await authorOf(edited.id)).toBe(PRINCIPAL);
+
+      const [head, tail] = await client.splitSection(
+        "node-p3",
+        edited.id,
+        3,
+        PRINCIPAL,
+      );
+      expect(await authorOf(head.id)).toBe(PRINCIPAL);
+      expect(await authorOf(tail.id)).toBe(PRINCIPAL);
+
+      const merged = await client.mergeSections(
+        "node-p3",
+        head.id,
+        tail.id,
+        "",
+        PRINCIPAL,
+      );
+      expect(await authorOf(merged.id)).toBe(PRINCIPAL);
+    });
+
+    it("a delete tombstone carries the deleting session's principal", async () => {
+      const setup = await client.applySectionOps("node-p4", [
+        { op: "add", text: "doomed", orderKey: "a0" },
+      ]);
+      const doomed = setup.applied.at(0);
+      if (!doomed) throw new Error("no applied op");
+      await client.applySectionOps(
+        "node-p4",
+        [{ op: "delete", sectionId: doomed.id }],
+        PRINCIPAL,
+      );
+      const stones = await pool.query<{ authored_by: string }>(
+        "SELECT authored_by FROM sections WHERE node_id = 'node-p4' AND tombstone",
+      );
+      expect(stones.rows.map((r) => r.authored_by)).toEqual([PRINCIPAL]);
+    });
+
+    it("readRevisions reports each event's author verbatim — principal and legacy in one history", async () => {
+      await client.saveBody("node-p5", [{ text: "v1" }]); // instance default: human
+      const body = await client.readBody("node-p5");
+      const target = body.at(0);
+      if (!target) throw new Error("fixture body missing");
+      await client.editSection("node-p5", target.id, "v2", PRINCIPAL);
+      const revs = await client.readRevisions("node-p5");
+      expect(revs.map((r) => r.authoredBy)).toEqual([PRINCIPAL, "human"]);
+    });
+  });
 });
 
 describe.skipIf(HAVE_DOCKER)("PgBodyClient (docker unavailable)", () => {

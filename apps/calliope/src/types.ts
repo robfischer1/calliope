@@ -36,6 +36,42 @@ export interface SectionInput {
 }
 
 /**
+ * A fleet session identity — the SPIFFE form Kairos mints per session and
+ * Terpsichore resolves back to a transcript. The tail is the session uuid.
+ */
+export type SessionPrincipal = `spiffe://${string}/session/${string}`;
+
+/**
+ * The provenance identity carried on every body write (024 — widened).
+ *
+ * - `"human"`    — attributed to Rob; the gateway issues `SET ROLE human` so
+ *                  block-ops written to Mnemosyne carry `authored_by = human`.
+ * - `"calliope"` — machine-authored (the default for legacy / direct-engine
+ *                  writes that predate the gateway auth seam).
+ * - a {@link SessionPrincipal} — attributed to a specific agent session
+ *   (`spiffe://{td}/session/{uuid}`), resolvable to that session's history.
+ *
+ * The storage column (`sections.authored_by`) is `text`; only this type and
+ * the boundary validation widen. Authenticity of a supplied principal is NOT
+ * verified here — form-only validation (the Kairos-vs-gateway trust posture
+ * is a surfaced open item of the master plan, not decided in 024).
+ */
+export type AuthoredBy = "human" | "calliope" | SessionPrincipal;
+
+/**
+ * The session-principal grammar: UUID-tailed (lowercase hex), matching what
+ * Kairos mints and what Terpsichore can resolve. A looser tail would store a
+ * citation no read rung can ever answer.
+ */
+export const SESSION_PRINCIPAL_RE =
+  /^spiffe:\/\/[^/]+\/session\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Runtime guard for the widened union — the MCP boundary's validator. */
+export function isAuthoredBy(v: string): v is AuthoredBy {
+  return v === "human" || v === "calliope" || SESSION_PRINCIPAL_RE.test(v);
+}
+
+/**
  * One block-grain write op (A11) — the editor's diff carried as-is through
  * the wire, the store write, the block-op log, and the revision surface.
  *
@@ -92,8 +128,9 @@ export interface ApplySectionOpsResult {
  * - `order_key`     — the fractional sort key at the time of the op (the new
  *                     key for `add`/`reorder`; the last known key for `delete`).
  * - `timestamp`     — ISO-8601 UTC string minted at emission time.
- * - `authored_by`   — provenance from the write path (`"human"` when the gateway
- *                     auth seam enforces `SET ROLE human`; `"calliope"` otherwise).
+ * - `authored_by`   — provenance from the write path: `"human"` (gateway
+ *                     `SET ROLE human` seam), `"calliope"`, or a session
+ *                     principal (see {@link AuthoredBy}).
  * - `node_id`       — the owning note/node id (the subject of the `hasPart` edge).
  */
 export interface BlockOp {
@@ -102,7 +139,7 @@ export interface BlockOp {
   content_delta: string;
   order_key: string;
   timestamp: string;
-  authored_by: "human" | "calliope";
+  authored_by: AuthoredBy;
   node_id: string;
 }
 
@@ -145,7 +182,11 @@ export interface BodyClient {
    * fractional `order_key` literals and, for the substrate, copy-on-write
    * versioning of changed prose + rewiring `hasPart`.
    */
-  saveBody(nodeId: string, sections: SectionInput[]): Promise<void>;
+  saveBody(
+    nodeId: string,
+    sections: SectionInput[],
+    authoredBy?: AuthoredBy,
+  ): Promise<void>;
 
   /**
    * Single-section copy-on-write edit: replace the prose of the section
@@ -171,6 +212,7 @@ export interface BodyClient {
     nodeId: string,
     sectionId: string,
     text: string,
+    authoredBy?: AuthoredBy,
   ): Promise<Section>;
 
   /**
@@ -186,6 +228,7 @@ export interface BodyClient {
   applySectionOps?(
     nodeId: string,
     ops: SectionOp[],
+    authoredBy?: AuthoredBy,
   ): Promise<ApplySectionOpsResult>;
 
   /**
@@ -205,6 +248,7 @@ export interface BodyClient {
     nodeId: string,
     sectionId: string,
     offset: number,
+    authoredBy?: AuthoredBy,
   ): Promise<[Section, Section]>;
 
   /**
@@ -222,6 +266,7 @@ export interface BodyClient {
     firstId: string,
     secondId: string,
     separator?: string,
+    authoredBy?: AuthoredBy,
   ): Promise<Section>;
 
   /**

@@ -18,7 +18,8 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { BodyClient } from "../types.js";
+import { isAuthoredBy } from "../types.js";
+import type { AuthoredBy, BodyClient } from "../types.js";
 import type { DocumentStore } from "../document-store.js";
 import type { RevisionStore } from "../revision-store.js";
 import {
@@ -100,6 +101,25 @@ export function createServer(
     version: "0.1.0",
   });
 
+  // 024: optional per-call write provenance, shared by every sections-writing
+  // verb. Form-only validation — authenticity is the master plan's surfaced
+  // open item, not decided here.
+  const authoredByField = z
+    .string()
+    .refine(isAuthoredBy, {
+      message:
+        'authored_by must be "human", "calliope", or a SPIFFE session ' +
+        "principal (spiffe://{trust-domain}/session/{uuid}).",
+    })
+    .optional()
+    .describe(
+      'Optional write provenance: "human", "calliope", or a SPIFFE session ' +
+        "principal (spiffe://{trust-domain}/session/{uuid}). Absent = the " +
+        "backend's default.",
+    );
+  const asAuthor = (v: string | undefined): AuthoredBy | undefined =>
+    v !== undefined && isAuthoredBy(v) ? v : undefined;
+
   // C9: the inline-tag reconcile — fires after any successful body write
   // when the chaos facet + tag mirror are wired. Non-fatal: a tag failure
   // never fails the body write it rides behind (logged loudly instead).
@@ -180,14 +200,16 @@ export function createServer(
           .string()
           .optional()
           .describe("Insert after this block; omitted = append at the end."),
+        authored_by: authoredByField,
       },
     },
-    async ({ container_id, text, after_block_id }) => {
+    async ({ container_id, text, after_block_id, authored_by }) => {
       const result = await createBlock(
         client,
         container_id,
         text,
         after_block_id,
+        asAuthor(authored_by),
       );
       await afterBodyWrite(container_id);
       return {
@@ -417,10 +439,17 @@ export function createServer(
         container_id: z.string().describe("The container owning the block."),
         block_id: z.string().describe("The block to rewrite."),
         text: z.string().describe("The block's new prose."),
+        authored_by: authoredByField,
       },
     },
-    async ({ container_id, block_id, text }) => {
-      const result = await updateBlock(client, container_id, block_id, text);
+    async ({ container_id, block_id, text, authored_by }) => {
+      const result = await updateBlock(
+        client,
+        container_id,
+        block_id,
+        text,
+        asAuthor(authored_by),
+      );
       await afterBodyWrite(container_id);
       return {
         content: [{ type: "text", text: `Updated block ${result.block.id}.` }],
@@ -445,10 +474,16 @@ export function createServer(
       inputSchema: {
         container_id: z.string().describe("The container owning the block."),
         block_id: z.string().describe("The block to remove."),
+        authored_by: authoredByField,
       },
     },
-    async ({ container_id, block_id }) => {
-      const result = await deleteBlock(client, container_id, block_id);
+    async ({ container_id, block_id, authored_by }) => {
+      const result = await deleteBlock(
+        client,
+        container_id,
+        block_id,
+        asAuthor(authored_by),
+      );
       await afterBodyWrite(container_id);
       return {
         content: [
@@ -482,10 +517,17 @@ export function createServer(
           .int()
           .min(0)
           .describe("The caret offset (UTF-16 code units into the text)."),
+        authored_by: authoredByField,
       },
     },
-    async ({ container_id, block_id, offset }) => {
-      const result = await splitBlock(client, container_id, block_id, offset);
+    async ({ container_id, block_id, offset, authored_by }) => {
+      const result = await splitBlock(
+        client,
+        container_id,
+        block_id,
+        offset,
+        asAuthor(authored_by),
+      );
       await afterBodyWrite(container_id);
       return {
         content: [
@@ -527,15 +569,23 @@ export function createServer(
           .string()
           .optional()
           .describe("Joined between the two texts (default: none)."),
+        authored_by: authoredByField,
       },
     },
-    async ({ container_id, first_block_id, second_block_id, separator }) => {
+    async ({
+      container_id,
+      first_block_id,
+      second_block_id,
+      separator,
+      authored_by,
+    }) => {
       const result = await mergeBlock(
         client,
         container_id,
         first_block_id,
         second_block_id,
         separator,
+        asAuthor(authored_by),
       );
       await afterBodyWrite(container_id);
       return {
@@ -629,10 +679,16 @@ export function createServer(
         sections: z
           .array(z.object({ text: z.string() }))
           .describe("The new sections, in display order."),
+        authored_by: authoredByField,
       },
     },
-    async ({ node_id, sections }) => {
-      const result = await writeBody(client, node_id, sections);
+    async ({ node_id, sections, authored_by }) => {
+      const result = await writeBody(
+        client,
+        node_id,
+        sections,
+        asAuthor(authored_by),
+      );
       await afterBodyWrite(node_id);
       return {
         content: [
@@ -658,10 +714,16 @@ export function createServer(
       inputSchema: {
         node_id: z.string().describe("The node to append to."),
         text: z.string().describe("The new section's prose."),
+        authored_by: authoredByField,
       },
     },
-    async ({ node_id, text }) => {
-      const result = await appendSection(client, node_id, text);
+    async ({ node_id, text, authored_by }) => {
+      const result = await appendSection(
+        client,
+        node_id,
+        text,
+        asAuthor(authored_by),
+      );
       await afterBodyWrite(node_id);
       return {
         content: [
@@ -692,10 +754,17 @@ export function createServer(
         node_id: z.string().describe("The node owning the section."),
         section_id: z.string().describe("The section to edit."),
         text: z.string().describe("The section's new prose."),
+        authored_by: authoredByField,
       },
     },
-    async ({ node_id, section_id, text }) => {
-      const result = await editSection(client, node_id, section_id, text);
+    async ({ node_id, section_id, text, authored_by }) => {
+      const result = await editSection(
+        client,
+        node_id,
+        section_id,
+        text,
+        asAuthor(authored_by),
+      );
       await afterBodyWrite(node_id);
       return {
         content: [
@@ -765,10 +834,16 @@ export function createServer(
           .describe(
             "The op batch, in apply order; at most one op per section.",
           ),
+        authored_by: authoredByField,
       },
     },
-    async ({ node_id, ops }) => {
-      const result = await applySectionOps(client, node_id, ops);
+    async ({ node_id, ops, authored_by }) => {
+      const result = await applySectionOps(
+        client,
+        node_id,
+        ops,
+        asAuthor(authored_by),
+      );
       await afterBodyWrite(node_id);
       return {
         content: [

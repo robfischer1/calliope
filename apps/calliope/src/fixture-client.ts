@@ -1,6 +1,7 @@
 import type {
   AppliedOp,
   ApplySectionOpsResult,
+  AuthoredBy,
   BodyClient,
   RevisionMeta,
   Section,
@@ -20,6 +21,7 @@ interface FixtureSection {
 interface FixtureRevision {
   revision: string;
   kind: "save" | "edit" | "ops";
+  authoredBy: AuthoredBy;
   sections: number;
   snapshot: FixtureSection[];
 }
@@ -60,9 +62,13 @@ export class FixtureBodyClient implements BodyClient {
     return Promise.resolve(sorted);
   }
 
-  saveBody(nodeId: string, sections: SectionInput[]): Promise<void> {
+  saveBody(
+    nodeId: string,
+    sections: SectionInput[],
+    authoredBy?: AuthoredBy,
+  ): Promise<void> {
     this.bodies.set(nodeId, this.materialize(nodeId, sections));
-    this.record(nodeId, "save");
+    this.record(nodeId, "save", undefined, authoredBy);
     return Promise.resolve();
   }
 
@@ -76,6 +82,7 @@ export class FixtureBodyClient implements BodyClient {
     nodeId: string,
     sectionId: string,
     text: string,
+    authoredBy?: AuthoredBy,
   ): Promise<Section> {
     const rows = this.bodies.get(nodeId);
     const target = rows?.find((r) => r.id === sectionId);
@@ -103,7 +110,7 @@ export class FixtureBodyClient implements BodyClient {
       nodeId,
       rows.map((r) => (r.id === sectionId ? next : r)),
     );
-    this.record(nodeId, "edit");
+    this.record(nodeId, "edit", undefined, authoredBy);
     return Promise.resolve({
       id: next.id,
       text: next.text,
@@ -122,6 +129,7 @@ export class FixtureBodyClient implements BodyClient {
   applySectionOps(
     nodeId: string,
     ops: SectionOp[],
+    authoredBy?: AuthoredBy,
   ): Promise<ApplySectionOpsResult> {
     const rows = [...(this.bodies.get(nodeId) ?? [])];
     for (const op of ops) {
@@ -175,7 +183,7 @@ export class FixtureBodyClient implements BodyClient {
       }
     }
     this.bodies.set(nodeId, next);
-    this.record(nodeId, "ops", ops.length);
+    this.record(nodeId, "ops", ops.length, authoredBy);
     const sections = [...next]
       .sort((a, b) => compareKeys(a.orderKey, b.orderKey))
       .map((r) => ({ id: r.id, text: r.text, orderKey: r.orderKey }));
@@ -192,6 +200,7 @@ export class FixtureBodyClient implements BodyClient {
     nodeId: string,
     sectionId: string,
     offset: number,
+    authoredBy?: AuthoredBy,
   ): Promise<[Section, Section]> {
     if (!Number.isInteger(offset) || offset < 0) {
       return Promise.reject(
@@ -236,7 +245,7 @@ export class FixtureBodyClient implements BodyClient {
       first,
       second,
     ]);
-    this.record(nodeId, "ops", 2);
+    this.record(nodeId, "ops", 2, authoredBy);
     return Promise.resolve([{ ...first }, { ...second }]);
   }
 
@@ -249,6 +258,7 @@ export class FixtureBodyClient implements BodyClient {
     firstId: string,
     secondId: string,
     separator = "",
+    authoredBy?: AuthoredBy,
   ): Promise<Section> {
     const rows = [...(this.bodies.get(nodeId) ?? [])].sort((a, b) =>
       compareKeys(a.orderKey, b.orderKey),
@@ -282,7 +292,7 @@ export class FixtureBodyClient implements BodyClient {
       ...rows.filter((r) => r.id !== firstId && r.id !== secondId),
       merged,
     ]);
-    this.record(nodeId, "edit");
+    this.record(nodeId, "edit", undefined, authoredBy);
     return Promise.resolve({ ...merged });
   }
 
@@ -296,7 +306,7 @@ export class FixtureBodyClient implements BodyClient {
         .map((e) => ({
           revision: e.revision,
           kind: e.kind,
-          authoredBy: "human",
+          authoredBy: e.authoredBy,
           sections: e.sections,
         })),
     );
@@ -324,6 +334,7 @@ export class FixtureBodyClient implements BodyClient {
     nodeId: string,
     kind: "save" | "edit" | "ops",
     opCount?: number,
+    authoredBy?: AuthoredBy,
   ): void {
     const now = Math.max(Date.now(), this.lastEventMs + 1);
     this.lastEventMs = now;
@@ -332,6 +343,7 @@ export class FixtureBodyClient implements BodyClient {
     events.push({
       revision: new Date(now).toISOString(),
       kind,
+      authoredBy: authoredBy ?? "human",
       sections:
         kind === "edit" ? 1 : kind === "ops" ? (opCount ?? 0) : snapshot.length,
       snapshot,
