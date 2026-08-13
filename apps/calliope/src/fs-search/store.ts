@@ -12,6 +12,7 @@
 
 import type { CompatDatabase } from "./sqlite-compat.js";
 import { openDatabase } from "./sqlite-compat.js";
+import { extractWikilinks } from "./chunker.js";
 import type { Paragraph } from "./chunker.js";
 
 /** Snippet highlight markers — control chars, never legal prose. */
@@ -54,6 +55,13 @@ CREATE TABLE IF NOT EXISTS vectors (
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(
   text, content='blocks', content_rowid='id'
 );
+CREATE TABLE IF NOT EXISTS links (
+  path   TEXT NOT NULL,
+  ord    INTEGER NOT NULL,
+  target TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS links_by_target ON links(target);
+CREATE INDEX IF NOT EXISTS links_by_path ON links(path);
 `;
 
 export class SearchStore {
@@ -127,9 +135,16 @@ export class SearchStore {
       const ftsInsert = db.prepare(
         "INSERT INTO fts (rowid, text) VALUES (?, ?)",
       );
+      const linkInsert = db.prepare(
+        "INSERT INTO links (path, ord, target) VALUES (?, ?, ?)",
+      );
+      db.prepare("DELETE FROM links WHERE path = ?").run(filePath);
       for (const p of paragraphs) {
         const info = insert.run(filePath, p.ord, p.hash, p.text);
         ftsInsert.run(info.lastInsertRowid, p.text);
+        for (const target of extractWikilinks(p.text)) {
+          linkInsert.run(filePath, p.ord, target);
+        }
       }
       db.prepare(
         "INSERT INTO files (path, mtime, size) VALUES (?, ?, ?) " +
@@ -158,6 +173,7 @@ export class SearchStore {
     db.exec("BEGIN");
     try {
       this.#deleteBlocksFor(db, filePath);
+      db.prepare("DELETE FROM links WHERE path = ?").run(filePath);
       db.prepare("DELETE FROM files WHERE path = ?").run(filePath);
       this.#sweepOrphanVectors(db);
       db.exec("COMMIT");
@@ -255,6 +271,21 @@ export class SearchStore {
     }));
   }
 
+  /** F11: every note whose links carry `target` (normalized note name) —
+   *  TRUE linked mentions, corpus-wide, never extent-bounded. One row per
+   *  referring note with its first linking block as the snippet. */
+  async linkedMentions(target: string): Promise<MentionRow[]> {
+    const db = await this.#ready();
+    const rows = db
+      .prepare(
+        "SELECT l.path AS path, MIN(b.text) AS snippet FROM links l " +
+          "JOIN blocks b ON b.path = l.path AND b.ord = l.ord " +
+          "WHERE l.target = ? GROUP BY l.path ORDER BY l.path",
+      )
+      .all(target.toLowerCase()) as MentionRow[];
+    return rows;
+  }
+
   /** FTS arm: ranked paths with marked snippets (best block per path). */
   async ftsSearch(
     query: string,
@@ -284,6 +315,12 @@ export class SearchStore {
     }
     return out;
   }
+}
+
+/** One linked (or candidate) mention: the referring note + a snippet. */
+export interface MentionRow {
+  path: string;
+  snippet: string;
 }
 
 /** A subtree scope becomes a GLOB pattern, or null for the whole root. */

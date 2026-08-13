@@ -47,6 +47,25 @@ export function chunk(body: string): Paragraph[] {
   return out;
 }
 
+/** A wikilink's normalized target: the note name, lowercased, alias and
+ *  heading/block refs stripped — `[[Notes/The Heron|the bird]]` and
+ *  `[[the heron#Habits]]` both normalize to `the heron` (basename form,
+ *  matching how links resolve against note names). */
+export function extractWikilinks(text: string): string[] {
+  const out: string[] = [];
+  const re = /\[\[([^\][|#\n]+)(?:#[^\][|\n]*)?(?:\|[^\][\n]*)?\]\]/g;
+  let match = re.exec(text);
+  while (match !== null) {
+    const raw = (match[1] ?? "").trim();
+    if (raw !== "") {
+      const base = raw.split("/").pop() ?? raw;
+      out.push(base.toLowerCase().replace(/\.(md|markdown)$/, ""));
+    }
+    match = re.exec(text);
+  }
+  return out;
+}
+
 /** Is this root-relative posix path a served markdown body? */
 export function isServedPath(relPath: string): boolean {
   if (relPath === "") return false;

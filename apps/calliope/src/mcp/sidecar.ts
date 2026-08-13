@@ -154,6 +154,16 @@ async function dispatch(
         client.root,
         typeof args.tag === "string" ? args.tag : "",
       );
+    // Findability F11 — mentions(id): true linked mentions + unlinked
+    // candidates over the same index; never extent-bounded.
+    case "mentions": {
+      const id = typeof args.id === "string" ? args.id : "";
+      if (id.trim() === "") {
+        throw new Error("bad_request: mentions needs a node id.");
+      }
+      if (search === undefined) return { linked: [], unlinked: [] };
+      return search.mentions(id);
+    }
     // Findability F2 — search(query, scope): the fs backend's two local arms
     // (FTS5 + semantic) RRF-fused; degraded arms are NAMED in the envelope.
     case "search": {

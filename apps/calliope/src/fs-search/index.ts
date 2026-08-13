@@ -38,6 +38,18 @@ export interface SearchResponse {
   armsDark: SearchArm[];
 }
 
+/** F11 — one mention (linked or unlinked candidate). */
+export interface Mention {
+  id: string;
+  snippet: string;
+}
+
+/** F11 — the mentions answer: true linked mentions + unlinked candidates. */
+export interface MentionsResponse {
+  linked: Mention[];
+  unlinked: Mention[];
+}
+
 /** The seam server.ts consumes (any backend can implement it). */
 export interface SearchProvider {
   search(query: string, scope?: string, k?: number): Promise<SearchResponse>;
@@ -329,6 +341,27 @@ export class LocalSearchIndex implements SearchProvider {
     return this.#cache;
   }
 
+  /**
+   * F11 — mentions of a note, over the index (never extent-bounded):
+   * linked = every note whose wikilinks resolve to this note's name;
+   * unlinked = FTS hits for the note's title that do not already link
+   * (candidates — the recorded false-positive trade), self excluded.
+   */
+  async mentions(nodeId: string): Promise<MentionsResponse> {
+    const base = nodeId.split("/").pop() ?? nodeId;
+    const title = base.replace(/\.(md|markdown)$/i, "");
+    const linkedRows = await this.#store.linkedMentions(title.toLowerCase());
+    const linked = linkedRows
+      .filter((m) => m.path !== nodeId)
+      .map((m) => ({ id: m.path, snippet: clip(m.snippet) }));
+    const linkedPaths = new Set(linked.map((m) => m.id));
+    const ftsHits = await this.#store.ftsSearch(title, undefined, ARM_DEPTH);
+    const unlinked = ftsHits
+      .filter((h) => h.path !== nodeId && !linkedPaths.has(h.path))
+      .map((h) => ({ id: h.path, snippet: h.snippet }));
+    return { linked, unlinked };
+  }
+
   async search(
     query: string,
     scope?: string,
@@ -441,4 +474,9 @@ function semanticScan(
     if (out.length >= depth) break;
   }
   return out;
+}
+
+/** Clip a block to snippet length. */
+function clip(text: string): string {
+  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 }
