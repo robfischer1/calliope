@@ -15,12 +15,15 @@
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { backendKind, initBackend, makeBackend } from "./backend.js";
+import { makeErosProvider } from "../fs-search/eros-provider.js";
 import { createServer } from "./server.js";
 
 async function main(): Promise<void> {
   const kind = backendKind();
   const backend = makeBackend(kind);
   await initBackend(backend);
+  // Findability F4: the eros-routed pg search arm (env-gated).
+  const search = makeErosProvider();
   const server = createServer(backend.client, {
     ...(backend.documents !== undefined
       ? { documents: backend.documents }
@@ -30,6 +33,7 @@ async function main(): Promise<void> {
       : {}),
     ...(backend.chaos !== undefined ? { chaos: backend.chaos } : {}),
     ...(backend.tags !== undefined ? { tags: backend.tags } : {}),
+    ...(search !== undefined ? { search } : {}),
   });
   const transport = new StdioServerTransport();
   await server.connect(transport);
