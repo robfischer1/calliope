@@ -60,6 +60,12 @@ export class FocusRegister {
     return this.#current;
   }
 
+  /** 030 (F7): opting out of live focus retires the ambient slot. Pins —
+   *  deliberate intent — are untouched by design. */
+  clearFocus(): void {
+    this.#current = null;
+  }
+
   /** Append a pin. The wire is at-least-once, so a pinId seen before is a
    *  redelivery — the pin exists once, at its original position. */
   pin(pinId: string, pointer: BodyPointer, receivedAt: string): void {
@@ -114,6 +120,9 @@ export function handleTelemetryMessage(
       isBodyPointer(e.pointer)
     ) {
       register.pin(e.pinId, e.pointer, now().toISOString());
+    } else if (e.type === "pointer-live-clear") {
+      // 030 (F7): the ambient opt-out retires the slot; pins survive.
+      register.clearFocus();
     }
   }
 }

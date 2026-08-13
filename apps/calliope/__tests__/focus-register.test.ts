@@ -240,3 +240,36 @@ describe("look with pins + the unpin verb", () => {
     expect(unpin(reg, "never")).toMatchObject({ error: "unknown_pin" });
   });
 });
+
+// ── 030 ("Look At This" F7): the live-clear fold ─────────────────────────────
+
+describe("pointer-live-clear (030 / Look At This F7)", () => {
+  const now = () => new Date("2026-08-13T12:00:00.000Z");
+
+  it("retires the ambient slot; pins survive; idempotent on empty", () => {
+    const reg = new FocusRegister();
+    reg.set(pointer({ section: "ambient" }), "t0");
+    reg.pin("p1", pointer({ section: "pinned" }), "t1");
+    handleTelemetryMessage(
+      reg,
+      JSON.stringify({ type: "pointer-live-clear" }),
+      now,
+    );
+    expect(reg.current()).toBeNull();
+    expect(reg.pins().map((p) => p.pinId)).toEqual(["p1"]);
+    // idempotent on empty
+    handleTelemetryMessage(
+      reg,
+      JSON.stringify({ type: "pointer-live-clear" }),
+      now,
+    );
+    expect(reg.current()).toBeNull();
+    // opting back in resumes normally
+    handleTelemetryMessage(
+      reg,
+      JSON.stringify({ type: "selection-change", pointer: pointer() }),
+      now,
+    );
+    expect(reg.current()?.pointer.section).toBe("s1");
+  });
+});
