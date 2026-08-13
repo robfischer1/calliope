@@ -1067,6 +1067,55 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       await client.createComment("cdoc5", target, "noise", PRINCIPAL);
       expect(await client.readBody("cdoc5")).toEqual(before);
     });
+
+    it("027: anchored reads give the prose the commenter saw, plus drift", async () => {
+      const target = await seedBlock("cdoc6", "v1 prose");
+      await client.createComment("cdoc6", target, "about v1", PRINCIPAL);
+      const edited = await client.editSection("cdoc6", target, "v2 prose");
+      await client.createComment("cdoc6", edited.id, "about v2", PRINCIPAL);
+
+      const anchored = await client.listComments("cdoc6", undefined, true);
+      const onV1 = anchored.find((t) => t.targetId === target);
+      const onV2 = anchored.find((t) => t.targetId === edited.id);
+      expect(onV1?.comments[0]?.anchorText).toBe("v1 prose");
+      expect(onV1?.comments[0]?.currentText).toBe("v2 prose");
+      expect(onV1?.comments[0]?.drift).toBe(true);
+      expect(onV2?.comments[0]?.anchorText).toBe("v2 prose");
+      expect(onV2?.comments[0]?.currentText).toBe("v2 prose");
+      expect(onV2?.comments[0]?.drift).toBe(false);
+
+      // Flag absent: byte-identical 026 records (no anchor fields).
+      const plain = await client.listComments("cdoc6");
+      for (const t of plain) {
+        for (const c of t.comments) {
+          expect("anchorText" in c).toBe(false);
+          expect("drift" in c).toBe(false);
+        }
+      }
+    });
+
+    it("027: a commented revision is an arc boundary — compaction skips it", async () => {
+      const b0 = await seedBlock("cdoc7", "one");
+      const startRevs = await client.readRevisions("cdoc7");
+      const start = startRevs.at(0);
+      if (!start) throw new Error("missing start revision");
+
+      const b1 = await client.editSection("cdoc7", b0, "one two");
+      await client.createComment("cdoc7", b1.id, "mid-arc note", PRINCIPAL);
+      const b2 = await client.editSection("cdoc7", b1.id, "one two three");
+
+      // Without the comment, b1 would be a removable pause-write. With it,
+      // the arc has no removable interior — compaction refuses the row a
+      // session reviewed.
+      const result = await client.coalesceArc("cdoc7", b2.id, start.revision);
+      expect(result.removed).toBe(0);
+
+      const anchored = await client.listComments("cdoc7", undefined, true);
+      const thread = anchored.find((t) => t.targetId === b1.id);
+      expect(thread?.comments[0]?.anchorText).toBe("one two");
+      expect(thread?.comments[0]?.currentText).toBe("one two three");
+      expect(thread?.comments[0]?.drift).toBe(true);
+    });
   });
 });
 

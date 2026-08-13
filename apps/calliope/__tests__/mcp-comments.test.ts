@@ -182,6 +182,45 @@ describe("026 — create_comment / list_comments", () => {
     expect(JSON.stringify(res.raw)).toMatch(/stale/);
   });
 
+  it("027: resolve_anchors returns anchor, current, and drift over the wire", async () => {
+    const target = await seedBlock("m5", "v1 wire");
+    await call("create_comment", {
+      container_id: "m5",
+      target_block_id: target,
+      text: "about v1",
+      authored_by: PRINCIPAL,
+    });
+    await call("update_block", {
+      container_id: "m5",
+      block_id: target,
+      text: "v2 wire",
+    });
+
+    const anchored = await call("list_comments", {
+      container_id: "m5",
+      resolve_anchors: true,
+    });
+    const rec = (
+      anchored.structured as {
+        threads: {
+          comments: {
+            anchorText?: string | null;
+            currentText?: string | null;
+            drift?: boolean;
+          }[];
+        }[];
+      }
+    ).threads[0]?.comments[0];
+    expect(rec?.anchorText).toBe("v1 wire");
+    expect(rec?.currentText).toBe("v2 wire");
+    expect(rec?.drift).toBe(true);
+
+    const plain = await call("list_comments", { container_id: "m5" });
+    const plainRec = (plain.structured as { threads: { comments: object[] }[] })
+      .threads[0]?.comments[0];
+    expect(plainRec !== undefined && "drift" in plainRec).toBe(false);
+  });
+
   it("replies thread and an edited target keeps its trail", async () => {
     const target = await seedBlock("m4", "v1");
     const parent = await call("create_comment", {

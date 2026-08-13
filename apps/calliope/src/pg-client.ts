@@ -613,6 +613,7 @@ export class PgBodyClient implements BodyClient {
   async listComments(
     containerId: string,
     blockId?: string,
+    resolveAnchors?: boolean,
   ): Promise<CommentThread[]> {
     const cc = commentContainerOf(containerId);
     const scopes = [containerId, cc];
@@ -646,7 +647,12 @@ export class PgBodyClient implements BodyClient {
         {
           targetId: blockId,
           targetState: await this.#targetState(blockId, scopes),
-          comments: await this.#resolveComments(mine, cc),
+          comments: await this.#resolveComments(
+            mine,
+            containerId,
+            cc,
+            resolveAnchors === true,
+          ),
         },
       ];
     }
@@ -665,7 +671,12 @@ export class PgBodyClient implements BodyClient {
       threads.push({
         targetId,
         targetState: await this.#targetState(targetId, scopes),
-        comments: await this.#resolveComments(bucket, cc),
+        comments: await this.#resolveComments(
+          bucket,
+          containerId,
+          cc,
+          resolveAnchors === true,
+        ),
       });
     }
     return threads;
@@ -697,10 +708,53 @@ export class PgBodyClient implements BodyClient {
     return "superseded";
   }
 
-  /** 026 — edges → records: original provenance, current prose. */
+  /** 027 — the target's active-successor prose, walking lineage forward. */
+  async #currentTextOf(id: string, scopes: string[]): Promise<string | null> {
+    const res = await this.#pool.query<{ text: string }>(
+      `WITH RECURSIVE succs AS (
+         SELECT $1::text AS id
+         UNION
+         SELECT s.successor_id FROM supersessions s
+           JOIN succs p ON s.predecessor_id = p.id
+          WHERE s.node_id = ANY($2::text[])
+       )
+       SELECT sec.text FROM sections sec
+         JOIN succs ON sec.id = succs.id
+        WHERE sec.node_id = ANY($2::text[]) AND sec.active
+        LIMIT 1`,
+      [id, scopes],
+    );
+    return res.rows[0]?.text ?? null;
+  }
+
+  /** 027 — the target's prose as the commenter saw it. Rows are
+   *  copy-on-write immutable, so the targeted revision-row's own text IS the
+   *  prose the session was reading — equivalent to the readRevisionAt
+   *  reconstruction for that block, without the whole-body pass (and correct
+   *  for ops-only bodies, whose reconstruction has no generation anchor).
+   *  Null only when the row is gone (pre-027 compacted history); 027's
+   *  boundary rule keeps commented rows immortal from here on. */
+  async #anchorTextOf(
+    targetId: string,
+    containerId: string,
+    cc: string,
+  ): Promise<string | null> {
+    const res = await this.#pool.query<{ text: string }>(
+      `SELECT text FROM sections
+        WHERE id = $1 AND node_id = ANY($2::text[]) LIMIT 1`,
+      [targetId, [containerId, cc]],
+    );
+    return res.rows[0]?.text ?? null;
+  }
+
+  /** 026 — edges → records: original provenance, current prose.
+   *  027 — with `anchors`, each record additionally carries the target's
+   *  as-of prose, current prose, and the drift flag. */
   async #resolveComments(
     edges: { comment_id: string; target_id: string }[],
+    containerId: string,
     cc: string,
+    anchors: boolean,
   ): Promise<CommentRecord[]> {
     const out: CommentRecord[] = [];
     for (const e of edges) {
@@ -732,7 +786,7 @@ export class PgBodyClient implements BodyClient {
           LIMIT 1`,
         [e.comment_id, cc],
       );
-      out.push({
+      const record: CommentRecord = {
         id: e.comment_id,
         text: current.rows[0]?.text ?? first.text,
         author: first.authored_by,
@@ -740,7 +794,22 @@ export class PgBodyClient implements BodyClient {
           first.kafka_offset === null ? null : Number(first.kafka_offset),
         createdAt: first.created_at,
         commentsOn: e.target_id,
-      });
+      };
+      if (anchors) {
+        const anchorText = await this.#anchorTextOf(
+          e.target_id,
+          containerId,
+          cc,
+        );
+        const currentText = await this.#currentTextOf(e.target_id, [
+          containerId,
+          cc,
+        ]);
+        record.anchorText = anchorText;
+        record.currentText = currentText;
+        record.drift = anchorText !== currentText;
+      }
+      out.push(record);
     }
     return out;
   }
@@ -818,6 +887,19 @@ export class PgBodyClient implements BodyClient {
       }
       const since = new Date(sinceRevision).getTime();
 
+      // 027: a commented revision is an arc BOUNDARY — compaction never
+      // removes what a session reviewed, so comment anchors stay exact.
+      // Edges live under the DOCUMENT container id (026), which for a
+      // comment-container arc is this node id minus the suffix.
+      const docId = nodeId.endsWith("#comments")
+        ? nodeId.slice(0, -"#comments".length)
+        : nodeId;
+      const commentedRes = await client.query<{ target_id: string }>(
+        `SELECT target_id FROM comments_on WHERE node_id = ANY($1::text[])`,
+        [[docId, nodeId]],
+      );
+      const commented = new Set(commentedRes.rows.map((r) => r.target_id));
+
       const removable: string[] = [];
       let to = "";
       let cur = blockId;
@@ -837,6 +919,7 @@ export class PgBodyClient implements BodyClient {
           p.created_at.getTime() <= since ||
           p.tombstone ||
           p.active ||
+          commented.has(pid) ||
           (succsOf.get(pid) ?? []).length !== 1 ||
           (predsOf.get(pid) ?? []).length !== 1 ||
           (eventPeers.get(p.created_at.getTime()) ?? 0) !== 1;

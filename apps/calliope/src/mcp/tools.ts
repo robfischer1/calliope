@@ -626,6 +626,7 @@ export async function listComments(
   client: BodyClient,
   containerId: string,
   blockId?: string,
+  resolveAnchors?: boolean,
 ): Promise<ListCommentsResult> {
   if (client.listComments === undefined) {
     throw new Error(
@@ -633,7 +634,11 @@ export async function listComments(
         "comments (no listComments method).",
     );
   }
-  const threads = await client.listComments(containerId, blockId);
+  const threads = await client.listComments(
+    containerId,
+    blockId,
+    resolveAnchors,
+  );
   return { threads };
 }
 

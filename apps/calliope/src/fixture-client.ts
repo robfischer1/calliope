@@ -446,10 +446,13 @@ export class FixtureBodyClient implements BodyClient {
     });
   }
 
-  /** 026 — the fixture twin of {@link PgBodyClient.listComments}. */
+  /** 026 — the fixture twin of {@link PgBodyClient.listComments}.
+   *  027 — `resolveAnchors` resolves each comment's as-of prose from the
+   *  per-event snapshots the fixture already records. */
   listComments(
     containerId: string,
     blockId?: string,
+    resolveAnchors?: boolean,
   ): Promise<CommentThread[]> {
     const cc = commentContainerOf(containerId);
     const edges = this.commentEdges.get(containerId) ?? [];
@@ -463,7 +466,9 @@ export class FixtureBodyClient implements BodyClient {
         {
           targetId: blockId,
           targetState: this.#targetState(containerId, cc, blockId),
-          comments: mine.map((e) => this.#toRecord(cc, e)),
+          comments: mine.map((e) =>
+            this.#toRecord(containerId, cc, e, resolveAnchors === true),
+          ),
         },
       ]);
     }
@@ -478,7 +483,9 @@ export class FixtureBodyClient implements BodyClient {
       [...byTarget.entries()].map(([targetId, bucket]) => ({
         targetId,
         targetState: this.#targetState(containerId, cc, targetId),
-        comments: bucket.map((e) => this.#toRecord(cc, e)),
+        comments: bucket.map((e) =>
+          this.#toRecord(containerId, cc, e, resolveAnchors === true),
+        ),
       })),
     );
   }
@@ -547,8 +554,57 @@ export class FixtureBodyClient implements BodyClient {
     return "superseded";
   }
 
+  /** 027 — the target's prose in the latest snapshot at/before `at`. */
+  #anchorTextOf(
+    containerId: string,
+    cc: string,
+    targetId: string,
+    at: string,
+  ): string | null {
+    for (const scope of [containerId, cc]) {
+      const events = this.revisions.get(scope) ?? [];
+      let snapshot: FixtureSection[] | null = null;
+      for (const ev of events) {
+        if (ev.revision <= at) snapshot = ev.snapshot;
+        else break;
+      }
+      const hit = snapshot?.find((r) => r.id === targetId);
+      if (hit !== undefined) return hit.text;
+    }
+    return null;
+  }
+
+  /** 027 — the target's current prose via the lineage walk, or null. */
+  #currentTextOf(
+    containerId: string,
+    cc: string,
+    targetId: string,
+  ): string | null {
+    const pairs = [
+      ...(this.lineage.get(containerId) ?? []),
+      ...(this.lineage.get(cc) ?? []),
+    ];
+    const succs = new Set([targetId]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const pr of pairs) {
+        if (succs.has(pr.pred) && !succs.has(pr.succ)) {
+          succs.add(pr.succ);
+          grew = true;
+        }
+      }
+    }
+    for (const scope of [containerId, cc]) {
+      const row = (this.bodies.get(scope) ?? []).find((r) => succs.has(r.id));
+      if (row !== undefined) return row.text;
+    }
+    return null;
+  }
+
   /** 026 — edge → record: original provenance, current prose. */
   #toRecord(
+    containerId: string,
     cc: string,
     e: {
       commentId: string;
@@ -557,6 +613,7 @@ export class FixtureBodyClient implements BodyClient {
       kafkaOffset: number | null;
       createdAt: string;
     },
+    anchors = false,
   ): CommentRecord {
     // Follow the comment's own lineage to its current revision's prose.
     const pairs = this.lineage.get(cc) ?? [];
@@ -572,7 +629,7 @@ export class FixtureBodyClient implements BodyClient {
       }
     }
     const row = (this.bodies.get(cc) ?? []).find((r) => r.id === currentId);
-    return {
+    const record: CommentRecord = {
       id: e.commentId,
       text: row?.text ?? "",
       author: e.author,
@@ -580,6 +637,19 @@ export class FixtureBodyClient implements BodyClient {
       createdAt: e.createdAt,
       commentsOn: e.targetId,
     };
+    if (anchors) {
+      const anchorText = this.#anchorTextOf(
+        containerId,
+        cc,
+        e.targetId,
+        e.createdAt,
+      );
+      const currentText = this.#currentTextOf(containerId, cc, e.targetId);
+      record.anchorText = anchorText;
+      record.currentText = currentText;
+      record.drift = anchorText !== currentText;
+    }
+    return record;
   }
 
   /** List write-events newest first — the fixture half of the A8 contract. */
