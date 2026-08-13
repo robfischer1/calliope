@@ -778,3 +778,67 @@ export async function listByTag(
 export async function listTags(store: TagStore): Promise<{ tags: TagCount[] }> {
   return { tags: await store.distinct() };
 }
+
+/**
+ * The compound reference (024/F1 — "Look At This"): a human-readable wikilink
+ * PLUS the resolvable address, `[[<title>]] (<id>)`. The wikilink half is
+ * display-only (honestly stale after a rename); the id half is the address of
+ * record — whatever node id the mounted backend uses, full-length (nothing
+ * resolves a prefix). `address_form` says which kind the caller holds.
+ */
+export interface CompoundReference {
+  compound: string;
+  wikilink: string;
+  id: string;
+  title: string;
+  address_form: "node" | "path";
+}
+
+/** `copy_reference` structured miss — surfaced, never thrown. */
+export interface CopyReferenceError {
+  error: "unknown_node";
+  detail: string;
+}
+
+/** Type guard for the miss shape. */
+export function isCopyReferenceError(
+  r: CompoundReference | CopyReferenceError,
+): r is CopyReferenceError {
+  return "error" in r;
+}
+
+/**
+ * The one formatter of the compound form in this repo. Newlines are stripped
+ * from the title (a multi-line wikilink is never valid); everything else is
+ * emitted verbatim — the id half carries resolution, so an odd title degrades
+ * recognition, never addressability.
+ */
+export function formatCompoundReference(
+  title: string,
+  id: string,
+): Pick<CompoundReference, "compound" | "wikilink" | "id" | "title"> {
+  const clean = title.replace(/[\r\n]+/g, " ").trim();
+  const wikilink = `[[${clean}]]`;
+  return { compound: `${wikilink} (${id})`, wikilink, id, title: clean };
+}
+
+/**
+ * copy_reference(node_id) -> the {@link CompoundReference} — graph-backend
+ * form. The title is the node's graph name (`resolveNodes`, the same
+ * dictionary create_note's reuse path reads); an unknown token is a
+ * structured miss, mirroring create_note's error style.
+ */
+export async function copyReference(
+  dial: ChaosDial,
+  nodeId: string,
+): Promise<CompoundReference | CopyReferenceError> {
+  const known = await dial.resolveNodes([nodeId]);
+  const title = known[nodeId];
+  if (title === undefined) {
+    return {
+      error: "unknown_node",
+      detail: `${nodeId} resolves to no node on the notes graph`,
+    };
+  }
+  return { ...formatCompoundReference(title, nodeId), address_form: "node" };
+}

@@ -24,10 +24,12 @@ import type { RevisionStore } from "../revision-store.js";
 import {
   appendSection,
   applySectionOps,
+  copyReference,
   createBlock,
   deleteBlock,
   editSection,
   isBlockMiss,
+  isCopyReferenceError,
   listContainerBlocks,
   mergeBlock,
   readBlock,
@@ -1432,6 +1434,45 @@ export function createServer(
               text: `note ${result.node_id} (${result.created ? "created" : "existing"})`,
             },
           ],
+          structuredContent: structured(result),
+        };
+      },
+    );
+
+    server.registerTool(
+      "copy_reference",
+      {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
+        title: "Compound copy-reference",
+        description:
+          "024/F1: the compound reference for a note — a human-readable " +
+          "wikilink plus the resolvable address, `[[<title>]] (<node id>)`. " +
+          "The title is the node's graph name; the id half is the full node " +
+          "token (the address of record — resolvable by read_body et al.). " +
+          "Unknown node → structured { error: 'unknown_node' }.",
+        inputSchema: {
+          node_id: z
+            .string()
+            .describe("The note whose compound reference to mint."),
+        },
+      },
+      async ({ node_id }) => {
+        const result = await copyReference(dial, node_id);
+        if (isCopyReferenceError(result)) {
+          return {
+            content: [
+              { type: "text", text: `${result.error}: ${result.detail}` },
+            ],
+            structuredContent: structured(result),
+            isError: true,
+          };
+        }
+        return {
+          content: [{ type: "text", text: result.compound }],
           structuredContent: structured(result),
         };
       },
