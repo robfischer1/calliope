@@ -17,6 +17,7 @@
 import type {
   AuthoredBy,
   BodyClient,
+  CommentThread,
   RevisionMeta,
   Section,
   SectionInput,
@@ -567,6 +568,73 @@ export async function mergeBlock(
     kafkaOffset,
   );
   return { block: toToolSection(section) };
+}
+
+// ── 026: comments — a block plus a commentsOn edge ───────────────────────────
+
+/** `create_comment` result: the comment block + where it lives. */
+export interface CreateCommentResult {
+  comment: ToolSection;
+  target_id: string;
+  comment_container_id: string;
+}
+
+/** `list_comments` result: threads keyed by target. */
+export interface ListCommentsResult {
+  threads: CommentThread[];
+}
+
+/**
+ * create_comment(container_id, target_block_id, text, authored_by,
+ * kafka_offset?) — one atomic block+edge creation. The store enforces the
+ * session-principal author requirement (a comment is attributed by
+ * definition); this handler only routes.
+ */
+export async function createComment(
+  client: BodyClient,
+  containerId: string,
+  targetBlockId: string,
+  text: string,
+  authoredBy: AuthoredBy,
+  kafkaOffset?: number,
+): Promise<CreateCommentResult> {
+  if (client.createComment === undefined) {
+    throw new Error(
+      "create_comment: the configured body backend does not support " +
+        "comments (no createComment method).",
+    );
+  }
+  const result = await client.createComment(
+    containerId,
+    targetBlockId,
+    text,
+    authoredBy,
+    kafkaOffset,
+  );
+  return {
+    comment: toToolSection(result.comment),
+    target_id: result.targetId,
+    comment_container_id: result.commentContainerId,
+  };
+}
+
+/**
+ * list_comments(container_id, block_id?) — threads for one block (lineage-
+ * following) or the whole document. Both edge directions in one read.
+ */
+export async function listComments(
+  client: BodyClient,
+  containerId: string,
+  blockId?: string,
+): Promise<ListCommentsResult> {
+  if (client.listComments === undefined) {
+    throw new Error(
+      "list_comments: the configured body backend does not support " +
+        "comments (no listComments method).",
+    );
+  }
+  const threads = await client.listComments(containerId, blockId);
+  return { threads };
 }
 
 // ── C8: the note-native mint ─────────────────────────────────────────────────

@@ -8,7 +8,12 @@ import type {
   SectionInput,
   SectionOp,
 } from "./types.js";
-import { validateWriteProvenance } from "./types.js";
+import {
+  SESSION_PRINCIPAL_RE,
+  commentContainerOf,
+  validateWriteProvenance,
+} from "./types.js";
+import type { CommentRecord, CommentThread, TargetState } from "./types.js";
 import { between, compareKeys, sequence } from "./order-key.js";
 
 /** An in-memory section row, mirroring the substrate's `{ text, order_key }`. */
@@ -43,8 +48,33 @@ interface FixtureRevision {
 export class FixtureBodyClient implements BodyClient {
   private readonly bodies = new Map<string, FixtureSection[]>();
   private readonly revisions = new Map<string, FixtureRevision[]>();
+  /** 026 — copy-on-write lineage pairs per container (the supersessions twin). */
+  private readonly lineage = new Map<
+    string,
+    { succ: string; pred: string }[]
+  >();
+  /** 026 — ids removed by a delete op, per container (tombstone twin). */
+  private readonly deleted = new Map<string, Set<string>>();
+  /** 026 — commentsOn edges per DOCUMENT container, creation-ordered. */
+  private readonly commentEdges = new Map<
+    string,
+    {
+      commentId: string;
+      targetId: string;
+      author: string;
+      kafkaOffset: number | null;
+      createdAt: string;
+    }[]
+  >();
   private seq = 0;
   private lastEventMs = 0;
+
+  /** 026 — record one supersession pair (edit/reorder/split/merge). */
+  private supersede(nodeId: string, succ: string, pred: string): void {
+    const pairs = this.lineage.get(nodeId) ?? [];
+    pairs.push({ succ, pred });
+    this.lineage.set(nodeId, pairs);
+  }
 
   /** Seed a node's body up front (e.g. for stories / standalone demo). */
   constructor(seed?: Record<string, readonly SectionInput[]>) {
@@ -128,6 +158,7 @@ export class FixtureBodyClient implements BodyClient {
       nodeId,
       rows.map((r) => (r.id === sectionId ? next : r)),
     );
+    this.supersede(nodeId, next.id, sectionId);
     this.record(nodeId, "edit", undefined, authoredBy, kafkaOffset);
     return Promise.resolve({
       id: next.id,
@@ -197,9 +228,13 @@ export class FixtureBodyClient implements BodyClient {
           orderKey: op.orderKey ?? target.orderKey,
         };
         next = next.map((r) => (r.id === op.sectionId ? row : r));
+        this.supersede(nodeId, row.id, op.sectionId);
         applied.push({ id: row.id, orderKey: row.orderKey });
       } else if (op.op === "delete") {
         next = next.filter((r) => r.id !== op.sectionId);
+        const gone = this.deleted.get(nodeId) ?? new Set<string>();
+        gone.add(op.sectionId);
+        this.deleted.set(nodeId, gone);
         applied.push({ id: target.id, orderKey: target.orderKey });
       } else {
         next = next.map((r) =>
@@ -279,6 +314,8 @@ export class FixtureBodyClient implements BodyClient {
       first,
       second,
     ]);
+    this.supersede(nodeId, first.id, sectionId);
+    this.supersede(nodeId, second.id, sectionId);
     this.record(nodeId, "ops", 2, authoredBy, kafkaOffset);
     return Promise.resolve([{ ...first }, { ...second }]);
   }
@@ -334,8 +371,215 @@ export class FixtureBodyClient implements BodyClient {
       ...rows.filter((r) => r.id !== firstId && r.id !== secondId),
       merged,
     ]);
+    this.supersede(nodeId, merged.id, firstId);
+    this.supersede(nodeId, merged.id, secondId);
     this.record(nodeId, "edit", undefined, authoredBy, kafkaOffset);
     return Promise.resolve({ ...merged });
+  }
+
+  /**
+   * 026 — the fixture twin of {@link PgBodyClient.createComment}: validate
+   * FIRST (atomicity — a rejected comment leaves no block and no edge),
+   * then land the block in the derived comment container and the edge in
+   * this document's edge list.
+   */
+  createComment(
+    containerId: string,
+    targetBlockId: string,
+    text: string,
+    authoredBy: AuthoredBy,
+    kafkaOffset?: number,
+  ): Promise<{
+    comment: Section;
+    targetId: string;
+    commentContainerId: string;
+  }> {
+    try {
+      validateWriteProvenance(authoredBy, kafkaOffset);
+    } catch (err) {
+      return Promise.reject(
+        err instanceof Error ? err : new Error(String(err)),
+      );
+    }
+    if (!SESSION_PRINCIPAL_RE.test(authoredBy)) {
+      return Promise.reject(
+        new Error(
+          "comment_author_required: a comment is attributed to a session — " +
+            "authored_by must be a session principal " +
+            "(spiffe://{td}/session/{uuid}).",
+        ),
+      );
+    }
+    const cc = commentContainerOf(containerId);
+    if (!this.#isKnownBlock(containerId, cc, targetBlockId)) {
+      return Promise.reject(
+        new Error(
+          `stale_section: block ${targetBlockId} is not part of container ` +
+            `${containerId} or its comments.`,
+        ),
+      );
+    }
+    const current = [...(this.bodies.get(cc) ?? [])].sort((a, b) =>
+      compareKeys(a.orderKey, b.orderKey),
+    );
+    const orderKey = between(current.at(-1)?.orderKey ?? null, null);
+    const row: FixtureSection = {
+      id: `${cc}#${String(this.seq++)}`,
+      text,
+      orderKey,
+    };
+    this.bodies.set(cc, [...(this.bodies.get(cc) ?? []), row]);
+    this.record(cc, "ops", 1, authoredBy, kafkaOffset);
+    const edges = this.commentEdges.get(containerId) ?? [];
+    edges.push({
+      commentId: row.id,
+      targetId: targetBlockId,
+      author: authoredBy,
+      kafkaOffset: kafkaOffset ?? null,
+      createdAt: new Date(this.lastEventMs).toISOString(),
+    });
+    this.commentEdges.set(containerId, edges);
+    return Promise.resolve({
+      comment: { id: row.id, text: row.text, orderKey: row.orderKey },
+      targetId: targetBlockId,
+      commentContainerId: cc,
+    });
+  }
+
+  /** 026 — the fixture twin of {@link PgBodyClient.listComments}. */
+  listComments(
+    containerId: string,
+    blockId?: string,
+  ): Promise<CommentThread[]> {
+    const cc = commentContainerOf(containerId);
+    const edges = this.commentEdges.get(containerId) ?? [];
+    if (edges.length === 0) return Promise.resolve([]);
+
+    if (blockId !== undefined) {
+      const members = this.#lineagePreds(containerId, cc, blockId);
+      const mine = edges.filter((e) => members.has(e.targetId));
+      if (mine.length === 0) return Promise.resolve([]);
+      return Promise.resolve([
+        {
+          targetId: blockId,
+          targetState: this.#targetState(containerId, cc, blockId),
+          comments: mine.map((e) => this.#toRecord(cc, e)),
+        },
+      ]);
+    }
+
+    const byTarget = new Map<string, typeof edges>();
+    for (const e of edges) {
+      const bucket = byTarget.get(e.targetId) ?? [];
+      bucket.push(e);
+      byTarget.set(e.targetId, bucket);
+    }
+    return Promise.resolve(
+      [...byTarget.entries()].map(([targetId, bucket]) => ({
+        targetId,
+        targetState: this.#targetState(containerId, cc, targetId),
+        comments: bucket.map((e) => this.#toRecord(cc, e)),
+      })),
+    );
+  }
+
+  /** 026 — target known to the document's universe (body, history, comments). */
+  #isKnownBlock(containerId: string, cc: string, id: string): boolean {
+    const inBody = (n: string): boolean =>
+      (this.bodies.get(n) ?? []).some((r) => r.id === id);
+    if (inBody(containerId) || inBody(cc)) return true;
+    const pairs = [
+      ...(this.lineage.get(containerId) ?? []),
+      ...(this.lineage.get(cc) ?? []),
+    ];
+    if (pairs.some((p) => p.pred === id || p.succ === id)) return true;
+    return (
+      (this.deleted.get(containerId)?.has(id) ?? false) ||
+      (this.deleted.get(cc)?.has(id) ?? false)
+    );
+  }
+
+  /** 026 — {id} ∪ transitive predecessors, across body + comment containers. */
+  #lineagePreds(containerId: string, cc: string, id: string): Set<string> {
+    const pairs = [
+      ...(this.lineage.get(containerId) ?? []),
+      ...(this.lineage.get(cc) ?? []),
+    ];
+    const members = new Set([id]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const p of pairs) {
+        if (members.has(p.succ) && !members.has(p.pred)) {
+          members.add(p.pred);
+          grew = true;
+        }
+      }
+    }
+    return members;
+  }
+
+  /** 026 — active | superseded | deleted, walking lineage FORWARD. */
+  #targetState(containerId: string, cc: string, id: string): TargetState {
+    const active = (n: string): boolean =>
+      (this.bodies.get(n) ?? []).some((r) => r.id === id);
+    if (active(containerId) || active(cc)) return "active";
+    const pairs = [
+      ...(this.lineage.get(containerId) ?? []),
+      ...(this.lineage.get(cc) ?? []),
+    ];
+    const gone = new Set([
+      ...(this.deleted.get(containerId) ?? []),
+      ...(this.deleted.get(cc) ?? []),
+    ]);
+    const succs = new Set([id]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const p of pairs) {
+        if (succs.has(p.pred) && !succs.has(p.succ)) {
+          succs.add(p.succ);
+          grew = true;
+        }
+      }
+    }
+    for (const s of succs) if (gone.has(s)) return "deleted";
+    return "superseded";
+  }
+
+  /** 026 — edge → record: original provenance, current prose. */
+  #toRecord(
+    cc: string,
+    e: {
+      commentId: string;
+      targetId: string;
+      author: string;
+      kafkaOffset: number | null;
+      createdAt: string;
+    },
+  ): CommentRecord {
+    // Follow the comment's own lineage to its current revision's prose.
+    const pairs = this.lineage.get(cc) ?? [];
+    let currentId = e.commentId;
+    let moved = true;
+    while (moved) {
+      moved = false;
+      for (const p of pairs) {
+        if (p.pred === currentId) {
+          currentId = p.succ;
+          moved = true;
+        }
+      }
+    }
+    const row = (this.bodies.get(cc) ?? []).find((r) => r.id === currentId);
+    return {
+      id: e.commentId,
+      text: row?.text ?? "",
+      author: e.author,
+      kafkaOffset: e.kafkaOffset,
+      createdAt: e.createdAt,
+      commentsOn: e.targetId,
+    };
   }
 
   /** List write-events newest first — the fixture half of the A8 contract. */

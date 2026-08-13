@@ -27,8 +27,10 @@ import {
   applySectionOps,
   copyReference,
   createBlock,
+  createComment,
   deleteBlock,
   editSection,
+  listComments,
   isBlockMiss,
   isCopyReferenceError,
   look,
@@ -637,6 +639,117 @@ export function createServer(
       await afterBodyWrite(container_id);
       return {
         content: [{ type: "text", text: `Merged into ${result.block.id}.` }],
+        structuredContent: structured(result),
+      };
+    },
+  );
+
+  // ── 026: comments — the attributed-review surface ────────────────────────
+
+  server.registerTool(
+    "create_comment",
+    {
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+      },
+      title: "Comment on a block",
+      description:
+        "026: attach a comment to a block — an ordinary block plus a " +
+        "commentsOn edge, landed atomically. Target a comment to reply. " +
+        "REQUIRES a session-principal authored_by: sessions comment as " +
+        "users, with identity (TURN 258); anonymous and legacy-authored " +
+        "comments are refused. The document's own body is untouched. " +
+        "Returns { comment, target_id, comment_container_id }.",
+      inputSchema: {
+        container_id: z
+          .string()
+          .describe("The DOCUMENT container owning the target block."),
+        target_block_id: z
+          .string()
+          .describe("The block to comment on (or a comment id, to reply)."),
+        text: z.string().describe("The comment's prose."),
+        authored_by: z
+          .string()
+          .refine(isAuthoredBy, {
+            message:
+              'authored_by must be "human", "calliope", or a SPIFFE session ' +
+              "principal (spiffe://{trust-domain}/session/{uuid}).",
+          })
+          .describe(
+            "REQUIRED: the commenting session's principal " +
+              "(spiffe://{trust-domain}/session/{uuid}).",
+          ),
+        kafka_offset: kafkaOffsetField,
+      },
+    },
+    async ({
+      container_id,
+      target_block_id,
+      text,
+      authored_by,
+      kafka_offset,
+    }) => {
+      const author = asAuthor(authored_by);
+      if (author === undefined) {
+        // Unreachable past the schema refine; keeps the type narrow honest.
+        throw new Error("create_comment: authored_by failed validation.");
+      }
+      validateWriteProvenance(author, kafka_offset);
+      const result = await createComment(
+        client,
+        container_id,
+        target_block_id,
+        text,
+        author,
+        kafka_offset,
+      );
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Comment ${result.comment.id} on ${result.target_id}.`,
+          },
+        ],
+        structuredContent: structured(result),
+      };
+    },
+  );
+
+  server.registerTool(
+    "list_comments",
+    {
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+      title: "Read comment threads",
+      description:
+        "026: read a document's comment threads. With block_id: that " +
+        "block's thread, INCLUDING comments made on its lineage " +
+        "predecessors (an edit never orphans its review trail); without: " +
+        "every thread in the container. Each thread reports its target's " +
+        "state (active | superseded | deleted) and each comment's author, " +
+        "log offset, and creation stamp. Returns { threads }.",
+      inputSchema: {
+        container_id: z.string().describe("The DOCUMENT container."),
+        block_id: z
+          .string()
+          .optional()
+          .describe("Focus on one block's thread (lineage-following)."),
+      },
+    },
+    async ({ container_id, block_id }) => {
+      const result = await listComments(client, container_id, block_id);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${String(result.threads.length)} thread(s).`,
+          },
+        ],
         structuredContent: structured(result),
       };
     },
