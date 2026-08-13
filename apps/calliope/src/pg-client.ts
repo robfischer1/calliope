@@ -130,7 +130,12 @@ export class PgBodyClient implements BodyClient {
     }));
   }
 
-  async saveBody(nodeId: string, sections: SectionInput[]): Promise<void> {
+  async saveBody(
+    nodeId: string,
+    sections: SectionInput[],
+    authoredBy?: AuthoredBy,
+  ): Promise<void> {
+    const author = authoredBy ?? this.#authoredBy;
     const keys = sequence(sections.length);
     const client = await this.#pool.connect();
     try {
@@ -150,7 +155,7 @@ export class PgBodyClient implements BodyClient {
             nodeId,
             text,
             orderKey,
-            this.#authoredBy,
+            author,
           ],
         );
       }
@@ -167,7 +172,9 @@ export class PgBodyClient implements BodyClient {
     nodeId: string,
     sectionId: string,
     text: string,
+    authoredBy?: AuthoredBy,
   ): Promise<Section> {
+    const author = authoredBy ?? this.#authoredBy;
     const client = await this.#pool.connect();
     try {
       await client.query("BEGIN");
@@ -198,7 +205,7 @@ export class PgBodyClient implements BodyClient {
       await client.query(
         `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [nextId, nodeId, text, target.order_key, this.#authoredBy, sectionId],
+        [nextId, nodeId, text, target.order_key, author, sectionId],
       );
       await this.#writeEdge(client, nodeId, nextId, sectionId);
       await client.query("COMMIT");
@@ -233,7 +240,9 @@ export class PgBodyClient implements BodyClient {
   async applySectionOps(
     nodeId: string,
     ops: SectionOp[],
+    authoredBy?: AuthoredBy,
   ): Promise<ApplySectionOpsResult> {
+    const author = authoredBy ?? this.#authoredBy;
     const referenced = ops.flatMap((op) =>
       op.op === "add" ? [] : [op.sectionId],
     );
@@ -267,7 +276,7 @@ export class PgBodyClient implements BodyClient {
           await client.query(
             `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
              VALUES ($1, $2, $3, $4, $5, '')`,
-            [id, nodeId, op.text, op.orderKey, this.#authoredBy],
+            [id, nodeId, op.text, op.orderKey, author],
           );
           applied.push({ id, orderKey: op.orderKey });
           continue;
@@ -290,7 +299,7 @@ export class PgBodyClient implements BodyClient {
             `INSERT INTO sections
                (id, node_id, text, order_key, authored_by, supersedes, active, tombstone)
              VALUES ($1, $2, '', $3, $4, $5, false, true)`,
-            [stone, nodeId, target.order_key, this.#authoredBy, op.sectionId],
+            [stone, nodeId, target.order_key, author, op.sectionId],
           );
           await this.#writeEdge(client, nodeId, stone, op.sectionId);
           applied.push({ id: target.id, orderKey: target.order_key });
@@ -303,7 +312,7 @@ export class PgBodyClient implements BodyClient {
         await client.query(
           `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
            VALUES ($1, $2, $3, $4, $5, $6)`,
-          [nextId, nodeId, text, orderKey, this.#authoredBy, op.sectionId],
+          [nextId, nodeId, text, orderKey, author, op.sectionId],
         );
         await this.#writeEdge(client, nodeId, nextId, op.sectionId);
         applied.push({ id: nextId, orderKey });
@@ -343,7 +352,9 @@ export class PgBodyClient implements BodyClient {
     nodeId: string,
     sectionId: string,
     offset: number,
+    authoredBy?: AuthoredBy,
   ): Promise<[Section, Section]> {
+    const author = authoredBy ?? this.#authoredBy;
     if (!Number.isInteger(offset) || offset < 0) {
       throw new Error(
         `bad_offset: split offset must be a non-negative integer (got ${String(offset)}).`,
@@ -390,7 +401,7 @@ export class PgBodyClient implements BodyClient {
         await client.query(
           `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
            VALUES ($1, $2, $3, $4, $5, $6)`,
-          [id, nodeId, text, key, this.#authoredBy, sectionId],
+          [id, nodeId, text, key, author, sectionId],
         );
         await this.#writeEdge(client, nodeId, id, sectionId);
       }
@@ -419,7 +430,9 @@ export class PgBodyClient implements BodyClient {
     firstId: string,
     secondId: string,
     separator = "",
+    authoredBy?: AuthoredBy,
   ): Promise<Section> {
+    const author = authoredBy ?? this.#authoredBy;
     const client = await this.#pool.connect();
     try {
       await client.query("BEGIN");
@@ -456,7 +469,7 @@ export class PgBodyClient implements BodyClient {
       await client.query(
         `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [mergedId, nodeId, text, first.order_key, this.#authoredBy, firstId],
+        [mergedId, nodeId, text, first.order_key, author, firstId],
       );
       await this.#writeEdge(client, nodeId, mergedId, firstId);
       await this.#writeEdge(client, nodeId, mergedId, secondId);

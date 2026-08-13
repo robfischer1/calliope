@@ -15,6 +15,7 @@
  */
 
 import type {
+  AuthoredBy,
   BodyClient,
   RevisionMeta,
   Section,
@@ -119,8 +120,9 @@ export async function writeBody(
   client: BodyClient,
   nodeId: string,
   sections: SectionInput[],
+  authoredBy?: AuthoredBy,
 ): Promise<WriteBodyResult> {
-  await client.saveBody(nodeId, sections);
+  await client.saveBody(nodeId, sections, authoredBy);
   return { ok: true, count: sections.length };
 }
 
@@ -136,13 +138,14 @@ export async function appendSection(
   client: BodyClient,
   nodeId: string,
   text: string,
+  authoredBy?: AuthoredBy,
 ): Promise<AppendSectionResult> {
   const current = await client.readBody(nodeId);
   const next: SectionInput[] = [
     ...current.map((s) => ({ text: s.text })),
     { text },
   ];
-  await client.saveBody(nodeId, next);
+  await client.saveBody(nodeId, next, authoredBy);
 
   const after = await client.readBody(nodeId);
   const appended = after.at(-1);
@@ -167,6 +170,7 @@ export async function editSection(
   nodeId: string,
   sectionId: string,
   text: string,
+  authoredBy?: AuthoredBy,
 ): Promise<EditSectionResult> {
   if (client.editSection === undefined) {
     throw new Error(
@@ -174,7 +178,7 @@ export async function editSection(
         "single-section edits (no editSection method).",
     );
   }
-  const section = await client.editSection(nodeId, sectionId, text);
+  const section = await client.editSection(nodeId, sectionId, text, authoredBy);
   return { section: toToolSection(section) };
 }
 
@@ -224,6 +228,7 @@ export async function applySectionOps(
   client: BodyClient,
   nodeId: string,
   ops: WireSectionOp[],
+  authoredBy?: AuthoredBy,
 ): Promise<ApplySectionOpsToolResult> {
   if (client.applySectionOps === undefined) {
     throw new Error(
@@ -232,7 +237,7 @@ export async function applySectionOps(
     );
   }
   const decoded = ops.map((w, i) => decodeOp(w, i));
-  const result = await client.applySectionOps(nodeId, decoded);
+  const result = await client.applySectionOps(nodeId, decoded, authoredBy);
   return {
     sections: result.sections.map(toToolSection),
     applied: result.applied.map((a) => ({ id: a.id, orderKey: a.orderKey })),
@@ -323,6 +328,7 @@ export async function createBlock(
   nodeId: string,
   text: string,
   afterBlockId?: string,
+  authoredBy?: AuthoredBy,
 ): Promise<BlockResult> {
   if (client.applySectionOps === undefined) {
     throw new Error(
@@ -348,9 +354,11 @@ export async function createBlock(
     nextKey = null;
   }
   const orderKey = between(prevKey, nextKey);
-  const result = await client.applySectionOps(nodeId, [
-    { op: "add", text, orderKey },
-  ]);
+  const result = await client.applySectionOps(
+    nodeId,
+    [{ op: "add", text, orderKey }],
+    authoredBy,
+  );
   const applied = result.applied.at(0);
   if (applied === undefined) {
     throw new Error(`create_block: the store applied no op for ${nodeId}.`);
@@ -438,8 +446,9 @@ export async function updateBlock(
   nodeId: string,
   blockId: string,
   text: string,
+  authoredBy?: AuthoredBy,
 ): Promise<BlockResult> {
-  const result = await editSection(client, nodeId, blockId, text);
+  const result = await editSection(client, nodeId, blockId, text, authoredBy);
   return { block: result.section };
 }
 
@@ -451,6 +460,7 @@ export async function deleteBlock(
   client: BodyClient,
   nodeId: string,
   blockId: string,
+  authoredBy?: AuthoredBy,
 ): Promise<DeleteBlockResult> {
   if (client.applySectionOps === undefined) {
     throw new Error(
@@ -458,9 +468,11 @@ export async function deleteBlock(
         "block-grain writes (no applySectionOps method).",
     );
   }
-  const result = await client.applySectionOps(nodeId, [
-    { op: "delete", sectionId: blockId },
-  ]);
+  const result = await client.applySectionOps(
+    nodeId,
+    [{ op: "delete", sectionId: blockId }],
+    authoredBy,
+  );
   const applied = result.applied.at(0);
   if (applied === undefined) {
     throw new Error(`delete_block: the store applied no op for ${nodeId}.`);
@@ -478,6 +490,7 @@ export async function splitBlock(
   nodeId: string,
   blockId: string,
   offset: number,
+  authoredBy?: AuthoredBy,
 ): Promise<SplitBlockResult> {
   if (client.splitSection === undefined) {
     throw new Error(
@@ -485,7 +498,12 @@ export async function splitBlock(
         "identity-preserving splits (no splitSection method).",
     );
   }
-  const [first, second] = await client.splitSection(nodeId, blockId, offset);
+  const [first, second] = await client.splitSection(
+    nodeId,
+    blockId,
+    offset,
+    authoredBy,
+  );
   return { blocks: [toToolSection(first), toToolSection(second)] };
 }
 
@@ -500,6 +518,7 @@ export async function mergeBlock(
   firstBlockId: string,
   secondBlockId: string,
   separator?: string,
+  authoredBy?: AuthoredBy,
 ): Promise<BlockResult> {
   if (client.mergeSections === undefined) {
     throw new Error(
@@ -512,6 +531,7 @@ export async function mergeBlock(
     firstBlockId,
     secondBlockId,
     separator,
+    authoredBy,
   );
   return { block: toToolSection(section) };
 }

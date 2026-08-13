@@ -1,6 +1,7 @@
 import type {
   AppliedOp,
   ApplySectionOpsResult,
+  AuthoredBy,
   BlockOp,
   BlockOpEmitter,
   BodyClient,
@@ -35,14 +36,16 @@ export const TEXT = "text";
 export const ORDER_KEY = "order_key";
 
 /**
- * The provenance identity carried on every body write.
- *
- * - `"human"` — attributed to Rob; the gateway issues `SET ROLE human` so that
- *   block-ops written to Mnemosyne carry `authored_by = human`.
- * - `"calliope"` — machine-authored (the default for legacy / direct-engine
- *   writes that predate the gateway auth seam).
+ * The provenance identity carried on every body write. Defined in `types.ts`
+ * since 024 (the widened union admits a SPIFFE session principal); re-exported
+ * here so existing importers keep their path.
  */
-export type AuthoredBy = "human" | "calliope";
+export {
+  SESSION_PRINCIPAL_RE,
+  isAuthoredBy,
+  type AuthoredBy,
+  type SessionPrincipal,
+} from "./types.js";
 
 /** A capture op against the substrate (urania's mutation vocabulary). */
 export type UraniaOp =
