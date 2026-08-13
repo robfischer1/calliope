@@ -42,6 +42,14 @@ import { PgBodyClient } from "../pg-client.js";
 import { LiveUraniaCapture } from "./live-capture.js";
 import { HadesCapture, hadesEnabled } from "./hades-capture.js";
 import { IndexingBodyClient, UraniaIndexClient } from "./index-push.js";
+import type { IndexPusher } from "./index-push.js";
+import {
+  ErosNotesPusher,
+  fanOutPushers,
+  makeNotesProducer,
+  notesEmitEnabled,
+} from "./notes-emit.js";
+import { resolveBootstrap } from "./heartbeat.js";
 
 /** How the MCP reaches the body model. */
 export type BackendKind = "urania" | "hades" | "fixture" | "pg";
@@ -98,15 +106,20 @@ function indexUrl(env: NodeJS.ProcessEnv): string | undefined {
 
 /**
  * Wrap a directly-persisting body client so every write also pushes the
- * assembled prose to urania's similarity index (the write-side body push). A
- * no-op wrap when no urania endpoint is configured, so tests and the fixture
- * backend stay push-free.
+ * assembled prose to the configured projections: urania's similarity index
+ * and — Findability F8 — the `calliope-notes` eros stream. A no-op wrap when
+ * neither is configured, so tests and the fixture backend stay push-free.
  */
 function withIndexPush(client: BodyClient, env: NodeJS.ProcessEnv): BodyClient {
+  const pushers: IndexPusher[] = [];
   const url = indexUrl(env);
-  return url === undefined
-    ? client
-    : new IndexingBodyClient(client, new UraniaIndexClient(url));
+  if (url !== undefined) pushers.push(new UraniaIndexClient(url));
+  if (notesEmitEnabled(env)) {
+    pushers.push(new ErosNotesPusher(makeNotesProducer(resolveBootstrap(env))));
+  }
+  if (pushers.length === 0) return client;
+  const pusher = pushers.length === 1 ? pushers[0] : fanOutPushers(pushers);
+  return pusher === undefined ? client : new IndexingBodyClient(client, pusher);
 }
 
 /**
