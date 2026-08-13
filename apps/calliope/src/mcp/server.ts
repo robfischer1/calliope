@@ -1180,6 +1180,52 @@ export function createServer(
     },
   );
 
+  server.registerTool(
+    "has_body",
+    {
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+      title: "Bulk prose-presence",
+      description:
+        "Findability F10: active-block counts for a whole extent in ONE " +
+        "call — the browse list badges without N per-node reads (footgun " +
+        "#5). Returns { present: [{ node_id, blocks }] }; ids with no body " +
+        "are absent from the list. Bounded: at most 2048 ids per call.",
+      inputSchema: {
+        node_ids: z
+          .array(z.string())
+          .min(1)
+          .max(2048)
+          .describe("The extent to check (bounded at 2048 ids)."),
+      },
+    },
+    async ({ node_ids }) => {
+      if (client.hasBody === undefined) {
+        throw new Error(
+          "has_body: the configured body backend does not support bulk " +
+            "prose-presence (no hasBody method).",
+        );
+      }
+      const counts = await client.hasBody(node_ids);
+      const present = [...counts.entries()].map(([node_id, blocks]) => ({
+        node_id,
+        blocks,
+      }));
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${String(present.length)} of ${String(node_ids.length)} carry prose.`,
+          },
+        ],
+        structuredContent: structured({ present }),
+      };
+    },
+  );
+
   const documents = options?.documents;
   if (documents !== undefined) {
     server.registerTool(

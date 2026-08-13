@@ -1117,6 +1117,16 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       expect(thread?.comments[0]?.drift).toBe(true);
     });
   });
+
+  it("F10: hasBody counts active blocks for a whole extent in one query", async () => {
+    await client.saveBody("hb-1", [{ text: "a" }, { text: "b" }]);
+    await client.saveBody("hb-2", [{ text: "only" }]);
+    const counts = await client.hasBody(["hb-1", "hb-2", "hb-none"]);
+    expect(counts.get("hb-1")).toBe(2);
+    expect(counts.get("hb-2")).toBe(1);
+    expect(counts.has("hb-none")).toBe(false);
+    expect(await client.hasBody([])).toEqual(new Map());
+  });
 });
 
 describe.skipIf(HAVE_DOCKER)("PgBodyClient (docker unavailable)", () => {

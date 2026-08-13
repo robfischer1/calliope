@@ -101,6 +101,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "edit_section",
       "export_note",
       "file_revisions",
+      "has_body", // Findability F10 — licensed by its Exposes row (bulk has-body)
       "list_blocks",
       "list_by_tag",
       "list_comments",
@@ -146,6 +147,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       look: [true, false, true],
       list_comments: [true, false, true],
       search: [true, false, true], // Findability F2 — read-only, idempotent
+      has_body: [true, false, true], // Findability F10 — read-only, idempotent
 
       unpin: [false, true, true],
       // additive writes (each call mints new ids)
