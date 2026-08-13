@@ -943,6 +943,131 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       expect(await offsetsOf("node-o5")).toEqual([null]);
     });
   });
+
+  describe("026 — comments: block + edge, atomic, lineage-following", () => {
+    const PRINCIPAL =
+      "spiffe://notusmi.com/session/aa579121-1a2b-4c3d-8e4f-a5b6c7d8e9f0";
+
+    async function seedBlock(container: string, text: string): Promise<string> {
+      const result = await client.applySectionOps(container, [
+        { op: "add", text, orderKey: "a0" },
+      ]);
+      const added = result.applied.at(0);
+      if (!added) throw new Error("seed failed");
+      return added.id;
+    }
+
+    it("createComment lands block + edge in one transaction with provenance", async () => {
+      const target = await seedBlock("cdoc1", "the target");
+      const made = await client.createComment(
+        "cdoc1",
+        target,
+        "drift observed",
+        PRINCIPAL,
+        7,
+      );
+      expect(made.commentContainerId).toBe("cdoc1#comments");
+
+      const edge = await pool.query<{ node_id: string }>(
+        "SELECT node_id FROM comments_on WHERE comment_id = $1 AND target_id = $2",
+        [made.comment.id, target],
+      );
+      expect(edge.rows).toHaveLength(1);
+      expect(edge.rows[0]?.node_id).toBe("cdoc1");
+
+      const row = await pool.query<{
+        authored_by: string;
+        kafka_offset: string | null;
+      }>(
+        "SELECT authored_by, kafka_offset FROM sections WHERE id = $1 AND node_id = $2",
+        [made.comment.id, "cdoc1#comments"],
+      );
+      expect(row.rows[0]?.authored_by).toBe(PRINCIPAL);
+      expect(row.rows[0]?.kafka_offset).toBe("7");
+    });
+
+    it("rejects a legacy author and a stale target — zero rows either way", async () => {
+      const target = await seedBlock("cdoc2", "block");
+      await expect(
+        client.createComment("cdoc2", target, "anon", "human"),
+      ).rejects.toThrow(/session/);
+      await expect(
+        client.createComment("cdoc2", "0".repeat(64), "x", PRINCIPAL),
+      ).rejects.toThrow(/stale/);
+      const stray = await pool.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM sections WHERE node_id = 'cdoc2#comments'",
+      );
+      expect(stray.rows[0]?.n).toBe(0);
+      const edges = await pool.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM comments_on WHERE node_id = 'cdoc2'",
+      );
+      expect(edges.rows[0]?.n).toBe(0);
+    });
+
+    it("threads follow an edit, a merge, and report deletion (lineage walk)", async () => {
+      const target = await seedBlock("cdoc3", "v1");
+      await client.createComment("cdoc3", target, "about v1", PRINCIPAL);
+
+      // Edit supersedes: the CURRENT block inherits the thread.
+      const edited = await client.editSection("cdoc3", target, "v2");
+      let threads = await client.listComments("cdoc3", edited.id);
+      expect(threads[0]?.comments.map((c) => c.text)).toEqual(["about v1"]);
+      expect(threads[0]?.targetState).toBe("active");
+
+      // Merge with a sibling: the survivor still inherits.
+      const sibling = await client.applySectionOps("cdoc3", [
+        { op: "add", text: "sibling", orderKey: "b0" },
+      ]);
+      const sib = sibling.applied.at(0);
+      if (!sib) throw new Error("sibling seed failed");
+      const merged = await client.mergeSections("cdoc3", edited.id, sib.id);
+      threads = await client.listComments("cdoc3", merged.id);
+      expect(threads[0]?.comments.map((c) => c.text)).toEqual(["about v1"]);
+
+      // Delete the survivor: the thread reports deleted, not silence.
+      await client.applySectionOps("cdoc3", [
+        { op: "delete", sectionId: merged.id },
+      ]);
+      const all = await client.listComments("cdoc3");
+      expect(all).toHaveLength(1);
+      expect(all[0]?.targetState).toBe("deleted");
+      expect(all[0]?.comments.map((c) => c.text)).toEqual(["about v1"]);
+    });
+
+    it("replies chain and the container listing carries both threads", async () => {
+      const target = await seedBlock("cdoc4", "root block");
+      const parent = await client.createComment(
+        "cdoc4",
+        target,
+        "parent comment",
+        PRINCIPAL,
+      );
+      await client.createComment(
+        "cdoc4",
+        parent.comment.id,
+        "the reply",
+        PRINCIPAL,
+      );
+      const parentThread = await client.listComments(
+        "cdoc4",
+        parent.comment.id,
+      );
+      expect(parentThread[0]?.comments.map((c) => c.text)).toEqual([
+        "the reply",
+      ]);
+      const all = await client.listComments("cdoc4");
+      expect(all.map((t) => t.targetId).sort()).toEqual(
+        [target, parent.comment.id].sort(),
+      );
+    });
+
+    it("the document body is untouched by commentary", async () => {
+      const target = await seedBlock("cdoc5", "only block");
+      const before = await client.readBody("cdoc5");
+      await client.createComment("cdoc5", target, "noise", PRINCIPAL);
+      expect(await client.readBody("cdoc5")).toEqual(before);
+    });
+  });
 });
 
 describe.skipIf(HAVE_DOCKER)("PgBodyClient (docker unavailable)", () => {

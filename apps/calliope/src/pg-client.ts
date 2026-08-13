@@ -27,7 +27,12 @@ import type {
   SectionOp,
 } from "./types.js";
 import type { AuthoredBy } from "./urania-client.js";
-import { validateWriteProvenance } from "./types.js";
+import {
+  SESSION_PRINCIPAL_RE,
+  commentContainerOf,
+  validateWriteProvenance,
+} from "./types.js";
+import type { CommentRecord, CommentThread, TargetState } from "./types.js";
 import { between, sequence } from "./order-key.js";
 
 const SCHEMA_SQL = `
@@ -81,6 +86,21 @@ SELECT id, supersedes, node_id, created_at
   FROM sections
  WHERE supersedes IS NOT NULL AND supersedes <> ''
 ON CONFLICT (node_id, successor_id, predecessor_id) DO NOTHING;
+-- 026 comments: a comment is an ordinary section row in the target
+-- container's comment container plus ONE edge here. node_id is the DOCUMENT
+-- container (thread reads are per-document; replies carry the same node_id,
+-- so one query serves a whole review surface). created_at is the edge's
+-- birth — F8's revision-anchor input. No FKs: section ids are copy-on-write
+-- immortal (arc-coalesce removal is B2 F8's surfaced interaction).
+CREATE TABLE IF NOT EXISTS comments_on (
+  comment_id text NOT NULL,
+  target_id  text NOT NULL,
+  node_id    text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (comment_id, target_id)
+);
+CREATE INDEX IF NOT EXISTS comments_on_target
+  ON comments_on (node_id, target_id);
 `;
 
 /** Mint a section placement id: 64-hex, collision-safe via a random nonce. */
@@ -503,6 +523,226 @@ export class PgBodyClient implements BodyClient {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * 026 — create a comment: one section row in the comment container plus
+   * one `comments_on` edge, in ONE transaction (see
+   * {@link BodyClient.createComment}). The author must be a session
+   * principal — a comment is attributed by definition (TURN 258).
+   */
+  async createComment(
+    containerId: string,
+    targetBlockId: string,
+    text: string,
+    authoredBy: AuthoredBy,
+    kafkaOffset?: number,
+  ): Promise<{
+    comment: Section;
+    targetId: string;
+    commentContainerId: string;
+  }> {
+    validateWriteProvenance(authoredBy, kafkaOffset);
+    if (!SESSION_PRINCIPAL_RE.test(authoredBy)) {
+      throw new Error(
+        "comment_author_required: a comment is attributed to a session — " +
+          "authored_by must be a session principal " +
+          "(spiffe://{td}/session/{uuid}).",
+      );
+    }
+    const cc = commentContainerOf(containerId);
+    const offset = kafkaOffset ?? null;
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN");
+      // The target must be a block of this document's universe: its body,
+      // its history (commenting on a superseded row is legal — the thread
+      // resolves forward), or its comment container (a reply).
+      const known = await client.query(
+        `SELECT 1 FROM sections
+          WHERE id = $1 AND node_id = ANY($2::text[]) LIMIT 1`,
+        [targetBlockId, [containerId, cc]],
+      );
+      if (known.rowCount === 0) {
+        throw new Error(
+          `stale_section: block ${targetBlockId} is not part of container ` +
+            `${containerId} or its comments.`,
+        );
+      }
+      const last = await client.query<{ order_key: string }>(
+        `SELECT order_key FROM sections
+          WHERE node_id = $1 AND active
+          ORDER BY order_key COLLATE "C" DESC LIMIT 1`,
+        [cc],
+      );
+      const orderKey = between(last.rows[0]?.order_key ?? null, null);
+      const id = mintSectionId(cc, text, orderKey);
+      await client.query(
+        `INSERT INTO sections (id, node_id, text, order_key, authored_by, supersedes, kafka_offset)
+         VALUES ($1, $2, $3, $4, $5, '', $6)`,
+        [id, cc, text, orderKey, authoredBy, offset],
+      );
+      await client.query(
+        `INSERT INTO comments_on (comment_id, target_id, node_id)
+         VALUES ($1, $2, $3)`,
+        [id, targetBlockId, containerId],
+      );
+      await client.query("COMMIT");
+      return {
+        comment: { id, text, orderKey },
+        targetId: targetBlockId,
+        commentContainerId: cc,
+      };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * 026 — read comment threads (see {@link BodyClient.listComments}).
+   * A focused read (`blockId`) walks the block's `supersessions` lineage
+   * BACKWARD so comments made on predecessors ride forward to the current
+   * block; target state walks FORWARD (a tombstone anywhere downstream
+   * reads as deleted). Comment prose resolves through the comment's own
+   * lineage to its current revision; creation provenance (author, offset,
+   * created_at) stays the original row's.
+   */
+  async listComments(
+    containerId: string,
+    blockId?: string,
+  ): Promise<CommentThread[]> {
+    const cc = commentContainerOf(containerId);
+    const scopes = [containerId, cc];
+    const edges = await this.#pool.query<{
+      comment_id: string;
+      target_id: string;
+    }>(
+      `SELECT comment_id, target_id FROM comments_on
+        WHERE node_id = $1
+        ORDER BY created_at, comment_id`,
+      [containerId],
+    );
+    if (edges.rows.length === 0) return [];
+
+    if (blockId !== undefined) {
+      const preds = await this.#pool.query<{ id: string }>(
+        `WITH RECURSIVE lineage AS (
+           SELECT $1::text AS id
+           UNION
+           SELECT s.predecessor_id FROM supersessions s
+             JOIN lineage l ON s.successor_id = l.id
+            WHERE s.node_id = ANY($2::text[])
+         )
+         SELECT id FROM lineage`,
+        [blockId, scopes],
+      );
+      const members = new Set(preds.rows.map((r) => r.id));
+      const mine = edges.rows.filter((e) => members.has(e.target_id));
+      if (mine.length === 0) return [];
+      return [
+        {
+          targetId: blockId,
+          targetState: await this.#targetState(blockId, scopes),
+          comments: await this.#resolveComments(mine, cc),
+        },
+      ];
+    }
+
+    const byTarget = new Map<
+      string,
+      { comment_id: string; target_id: string }[]
+    >();
+    for (const e of edges.rows) {
+      const bucket = byTarget.get(e.target_id) ?? [];
+      bucket.push(e);
+      byTarget.set(e.target_id, bucket);
+    }
+    const threads: CommentThread[] = [];
+    for (const [targetId, bucket] of byTarget) {
+      threads.push({
+        targetId,
+        targetState: await this.#targetState(targetId, scopes),
+        comments: await this.#resolveComments(bucket, cc),
+      });
+    }
+    return threads;
+  }
+
+  /** 026 — a block's current standing, walking supersessions FORWARD. */
+  async #targetState(id: string, scopes: string[]): Promise<TargetState> {
+    const res = await this.#pool.query<{
+      self_active: boolean | null;
+      any_tomb: boolean | null;
+    }>(
+      `WITH RECURSIVE succs AS (
+         SELECT $1::text AS id
+         UNION
+         SELECT s.successor_id FROM supersessions s
+           JOIN succs p ON s.predecessor_id = p.id
+          WHERE s.node_id = ANY($2::text[])
+       )
+       SELECT bool_or(sec.active AND sec.id = $1) AS self_active,
+              bool_or(sec.tombstone) AS any_tomb
+         FROM sections sec
+         JOIN succs ON sec.id = succs.id
+        WHERE sec.node_id = ANY($2::text[])`,
+      [id, scopes],
+    );
+    const row = res.rows[0];
+    if (row?.self_active === true) return "active";
+    if (row?.any_tomb === true) return "deleted";
+    return "superseded";
+  }
+
+  /** 026 — edges → records: original provenance, current prose. */
+  async #resolveComments(
+    edges: { comment_id: string; target_id: string }[],
+    cc: string,
+  ): Promise<CommentRecord[]> {
+    const out: CommentRecord[] = [];
+    for (const e of edges) {
+      const orig = await this.#pool.query<{
+        text: string;
+        authored_by: string;
+        kafka_offset: string | null;
+        created_at: string;
+      }>(
+        `SELECT text, authored_by, kafka_offset,
+                to_char(created_at AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+           FROM sections WHERE id = $1 AND node_id = $2`,
+        [e.comment_id, cc],
+      );
+      const first = orig.rows[0];
+      if (first === undefined) continue; // dangling edge — skip, never throw
+      const current = await this.#pool.query<{ text: string }>(
+        `WITH RECURSIVE succs AS (
+           SELECT $1::text AS id
+           UNION
+           SELECT s.successor_id FROM supersessions s
+             JOIN succs p ON s.predecessor_id = p.id
+            WHERE s.node_id = $2
+         )
+         SELECT sec.text FROM sections sec
+           JOIN succs ON sec.id = succs.id
+          WHERE sec.node_id = $2 AND sec.active
+          LIMIT 1`,
+        [e.comment_id, cc],
+      );
+      out.push({
+        id: e.comment_id,
+        text: current.rows[0]?.text ?? first.text,
+        author: first.authored_by,
+        kafkaOffset:
+          first.kafka_offset === null ? null : Number(first.kafka_offset),
+        createdAt: first.created_at,
+        commentsOn: e.target_id,
+      });
+    }
+    return out;
   }
 
   /**

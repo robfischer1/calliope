@@ -72,6 +72,49 @@ export function isAuthoredBy(v: string): v is AuthoredBy {
 }
 
 /**
+ * 026: derive the comment container for a target container. Comments are
+ * ordinary blocks that live BESIDE the document, not in it — the target's
+ * body reads stay byte-identical however hard a plan gets reviewed. The
+ * derivation is idempotent on the suffix so a reply (a comment whose target
+ * is a comment) lands beside its parent rather than nesting containers.
+ * `#` cannot collide with real node tokens (64-hex / ULID).
+ */
+export const COMMENT_CONTAINER_SUFFIX = "#comments";
+
+/** See {@link COMMENT_CONTAINER_SUFFIX}. */
+export function commentContainerOf(containerId: string): string {
+  return containerId.endsWith(COMMENT_CONTAINER_SUFFIX)
+    ? containerId
+    : containerId + COMMENT_CONTAINER_SUFFIX;
+}
+
+/** How a comment's target stands right now (026 — thread resolution). */
+export type TargetState = "active" | "superseded" | "deleted";
+
+/** One comment as the thread read returns it (026). */
+export interface CommentRecord {
+  /** The comment block's section id. */
+  id: string;
+  /** The comment's prose. */
+  text: string;
+  /** The commenting session's principal (comments are attributed by definition). */
+  author: string;
+  /** The session-log position of the write, or null (025 semantics). */
+  kafkaOffset: number | null;
+  /** ISO-8601 UTC — the comment block's birth (F8's anchor input). */
+  createdAt: string;
+  /** The block this comment's edge points at (a block, or a parent comment). */
+  commentsOn: string;
+}
+
+/** One block's thread: the target's current state + its comments (026). */
+export interface CommentThread {
+  targetId: string;
+  targetState: TargetState;
+  comments: CommentRecord[];
+}
+
+/**
  * 025: the offset⇒session-principal invariant. A log offset names an exact
  * position in ONE session's event log; carried by a non-session write it is
  * a guess about provenance, and a guess poisons every replay that trusts it.
@@ -307,6 +350,41 @@ export interface BodyClient {
     blockId: string,
     sinceRevision: string,
   ): Promise<{ removed: number; from: string; to: string }>;
+
+  /**
+   * 026: create a comment — an ordinary block in the target container's
+   * comment container ({@link commentContainerOf}) plus one `commentsOn`
+   * edge — in ONE transaction (a block without its edge is an invisible
+   * orphan; an edge without its block is a dangling pointer; neither may
+   * ever be observable). The author MUST be a session principal — comments
+   * are attributed by definition (TURN 258) — and the target must be a
+   * block of `containerId`'s lineage universe (its body, its history, or
+   * its comment container for replies). Optional like {@link editSection}.
+   */
+  createComment?(
+    containerId: string,
+    targetBlockId: string,
+    text: string,
+    authoredBy: AuthoredBy,
+    kafkaOffset?: number,
+  ): Promise<{
+    comment: Section;
+    targetId: string;
+    commentContainerId: string;
+  }>;
+
+  /**
+   * 026: read comment threads. With `blockId`: that block's thread,
+   * INCLUDING comments made on its lineage predecessors (the supersessions
+   * walk — an edit must not orphan its review trail). Without: every thread
+   * in the container, keyed by target. Both directions of the edge are
+   * answered by this one read (a thread names its target; a comment record
+   * names what it comments on).
+   */
+  listComments?(
+    containerId: string,
+    blockId?: string,
+  ): Promise<CommentThread[]>;
 
   /**
    * List the body's stored revisions — the write-events of its copy-on-write
