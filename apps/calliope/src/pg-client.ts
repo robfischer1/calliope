@@ -142,6 +142,19 @@ export class PgBodyClient implements BodyClient {
     return res.rows.map((r) => r.node_id);
   }
 
+  /** F10: active-block counts for a whole extent in one query (the same
+   *  `active` predicate readBody serves — tombstones are inactive). */
+  async hasBody(nodeIds: readonly string[]): Promise<Map<string, number>> {
+    if (nodeIds.length === 0) return new Map();
+    const res = await this.#pool.query<{ node_id: string; blocks: string }>(
+      `SELECT node_id, COUNT(*) AS blocks FROM sections
+        WHERE node_id = ANY($1) AND active
+        GROUP BY node_id`,
+      [[...nodeIds]],
+    );
+    return new Map(res.rows.map((r) => [r.node_id, Number(r.blocks)]));
+  }
+
   async readBody(nodeId: string): Promise<Section[]> {
     const res = await this.#pool.query<SectionRow>(
       `SELECT id, text, order_key FROM sections

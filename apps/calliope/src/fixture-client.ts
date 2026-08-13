@@ -86,6 +86,16 @@ export class FixtureBodyClient implements BodyClient {
     }
   }
 
+  /** F10 — bulk prose-presence, mirroring the pg client's contract. */
+  hasBody(nodeIds: readonly string[]): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    for (const id of nodeIds) {
+      const n = this.bodies.get(id)?.length ?? 0;
+      if (n > 0) out.set(id, n);
+    }
+    return Promise.resolve(out);
+  }
+
   readBody(nodeId: string): Promise<Section[]> {
     const rows = this.bodies.get(nodeId) ?? [];
     const sorted = [...rows]

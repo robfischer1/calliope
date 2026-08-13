@@ -109,6 +109,9 @@ export class IndexingBodyClient implements BodyClient {
    * new verbs ("no readRevisions method") while the bare-client tests passed. */
   readonly readRevisions?: BodyClient["readRevisions"];
   readonly readRevisionAt?: BodyClient["readRevisionAt"];
+  /** F10: bulk prose-presence passes straight through (a read, no push);
+   *  conditional assignment preserves the capability signal (the A8 lesson). */
+  readonly hasBody?: BodyClient["hasBody"];
   /** A11: the block-grain apply is a write — push after, same as save/edit.
    *  Conditional assignment preserves the capability signal (the A8 lesson). */
   readonly applySectionOps?: BodyClient["applySectionOps"];
@@ -140,6 +143,7 @@ export class IndexingBodyClient implements BodyClient {
     }
     this.readRevisions = inner.readRevisions?.bind(inner);
     this.readRevisionAt = inner.readRevisionAt?.bind(inner);
+    this.hasBody = inner.hasBody?.bind(inner);
   }
 
   readBody(nodeId: string): Promise<Section[]> {
