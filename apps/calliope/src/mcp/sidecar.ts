@@ -17,11 +17,14 @@
 
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { statSync, writeSync } from "node:fs";
 import { argv, exit } from "node:process";
 import { pathToFileURL } from "node:url";
 import { FsBodyClient } from "../fs-client.js";
+import { FocusRegister } from "../focus-register.js";
 import { fsListByTag, fsListTags } from "../fs-tags.js";
+import { createServer as createMcpServer } from "./server.js";
 import type { SectionInput } from "../types.js";
 import {
   applySectionOps,
@@ -146,6 +149,10 @@ async function dispatch(client: FsBodyClient, body: unknown): Promise<unknown> {
 export function createSidecarServer(
   client: FsBodyClient,
 ): ReturnType<typeof createServer> {
+  // 031 ("Look At This" F12): one register for the sidecar's lifetime —
+  // honestly empty until something local feeds it; `look` answers
+  // { focus: null, pins: [] } rather than pretending.
+  const focus = new FocusRegister();
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     const path = (req.url ?? "").split("?", 1)[0];
     const cors = corsHeaders();
@@ -157,6 +164,34 @@ export function createSidecarServer(
     if (path === "/health" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "application/json", ...cors });
       res.end(JSON.stringify({ ok: true, root: client.root, backend: "fs" }));
+      return;
+    }
+    // 031 ("Look At This" F12, Fable Wave 6.3 pulled forward): the sidecar's
+    // verbs over MCP — the same contract agents already speak to calliope
+    // fleet-side, on the same loopback-only listener the ferry rides
+    // (off-host refusal is connection-level; the bind never widens). The
+    // proven calliope-mcp-http pattern: a stateless per-request server +
+    // transport over the SHARED FsBodyClient.
+    if (path === "/mcp" && req.method === "POST") {
+      void (async () => {
+        const server = createMcpServer(client, { focus });
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+        });
+        res.on("close", () => {
+          void transport.close();
+          void server.close();
+        });
+        await server.connect(transport);
+        const body = await readJson(req);
+        await transport.handleRequest(req, res, body);
+      })().catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "application/json", ...cors });
+        }
+        res.end(JSON.stringify({ error: message }));
+      });
       return;
     }
     if (path !== "/body" || req.method !== "POST") {
