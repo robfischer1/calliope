@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import type { Server } from "node:http";
@@ -146,5 +146,42 @@ describe("the ferry wire", () => {
   it("binds loopback paths only — traversal 400s", async () => {
     const res = await ferry("read_body", { node_id: "../escape.md" });
     expect(res.status).toBe(400);
+  });
+
+  // ── 024/F1: copy_reference — the path form ───────────────────────────────
+  it("copy_reference answers the compound with the path as the id half", async () => {
+    await mkdir(path.join(root, "Brain Soup"), { recursive: true });
+    await writeFile(path.join(root, "Brain Soup", "idea.md"), "x", "utf8");
+    const res = await ferry("copy_reference", {
+      node_id: "Brain Soup/idea.md",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      compound: string;
+      title: string;
+      id: string;
+      address_form: string;
+    };
+    expect(body.compound).toBe("[[idea]] (Brain Soup/idea.md)");
+    expect(body.title).toBe("idea");
+    expect(body.id).toBe("Brain Soup/idea.md");
+    expect(body.address_form).toBe("path");
+  });
+
+  it("copy_reference strips .markdown too and addresses a not-yet-written path", async () => {
+    // the path is the identity — a reference may precede the first write
+    const res = await ferry("copy_reference", { node_id: "fresh.markdown" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { compound: string };
+    expect(body.compound).toBe("[[fresh]] (fresh.markdown)");
+  });
+
+  it("copy_reference refuses escaping and non-markdown paths like every verb", async () => {
+    expect(
+      (await ferry("copy_reference", { node_id: "../out.md" })).status,
+    ).toBe(400);
+    expect(
+      (await ferry("copy_reference", { node_id: "binary.png" })).status,
+    ).toBe(400);
   });
 });

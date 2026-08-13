@@ -25,6 +25,7 @@ import { fsListByTag, fsListTags } from "../fs-tags.js";
 import type { SectionInput } from "../types.js";
 import {
   applySectionOps,
+  formatCompoundReference,
   readBody,
   readBodyAt,
   readBodyRevisions,
@@ -113,6 +114,20 @@ async function dispatch(client: FsBodyClient, body: unknown): Promise<unknown> {
         nodeId,
         typeof args.revision === "string" ? args.revision : "",
       );
+    // 024/F1 — the compound reference, path form: on the fs backend the
+    // path IS the node identity, so the id half is the path itself and the
+    // title is the basename. A missing file still gets a reference (the
+    // path is a valid address before its first write), but a malformed or
+    // escaping path refuses exactly as every other verb.
+    case "copy_reference": {
+      await readBody(client, nodeId); // path validation, same refusals
+      const base = nodeId.split("/").pop() ?? nodeId;
+      const title = base.replace(/\.(md|markdown)$/i, "");
+      return {
+        ...formatCompoundReference(title, nodeId),
+        address_form: "path",
+      };
+    }
     // F12 — tags offline: a COMPUTED index over the served directory, no
     // graph call anywhere (the sidecar carries no dial, so "no hasTag edge
     // offline" holds by construction).
