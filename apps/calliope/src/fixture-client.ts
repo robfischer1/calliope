@@ -8,6 +8,7 @@ import type {
   SectionInput,
   SectionOp,
 } from "./types.js";
+import { validateWriteProvenance } from "./types.js";
 import { between, compareKeys, sequence } from "./order-key.js";
 
 /** An in-memory section row, mirroring the substrate's `{ text, order_key }`. */
@@ -22,6 +23,7 @@ interface FixtureRevision {
   revision: string;
   kind: "save" | "edit" | "ops";
   authoredBy: AuthoredBy;
+  kafkaOffset: number | null;
   sections: number;
   snapshot: FixtureSection[];
 }
@@ -66,9 +68,17 @@ export class FixtureBodyClient implements BodyClient {
     nodeId: string,
     sections: SectionInput[],
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<void> {
+    try {
+      validateWriteProvenance(authoredBy ?? "human", kafkaOffset);
+    } catch (err) {
+      return Promise.reject(
+        err instanceof Error ? err : new Error(String(err)),
+      );
+    }
     this.bodies.set(nodeId, this.materialize(nodeId, sections));
-    this.record(nodeId, "save", undefined, authoredBy);
+    this.record(nodeId, "save", undefined, authoredBy, kafkaOffset);
     return Promise.resolve();
   }
 
@@ -83,7 +93,15 @@ export class FixtureBodyClient implements BodyClient {
     sectionId: string,
     text: string,
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<Section> {
+    try {
+      validateWriteProvenance(authoredBy ?? "human", kafkaOffset);
+    } catch (err) {
+      return Promise.reject(
+        err instanceof Error ? err : new Error(String(err)),
+      );
+    }
     const rows = this.bodies.get(nodeId);
     const target = rows?.find((r) => r.id === sectionId);
     if (rows === undefined || target === undefined) {
@@ -110,7 +128,7 @@ export class FixtureBodyClient implements BodyClient {
       nodeId,
       rows.map((r) => (r.id === sectionId ? next : r)),
     );
-    this.record(nodeId, "edit", undefined, authoredBy);
+    this.record(nodeId, "edit", undefined, authoredBy, kafkaOffset);
     return Promise.resolve({
       id: next.id,
       text: next.text,
@@ -130,7 +148,15 @@ export class FixtureBodyClient implements BodyClient {
     nodeId: string,
     ops: SectionOp[],
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<ApplySectionOpsResult> {
+    try {
+      validateWriteProvenance(authoredBy ?? "human", kafkaOffset);
+    } catch (err) {
+      return Promise.reject(
+        err instanceof Error ? err : new Error(String(err)),
+      );
+    }
     const rows = [...(this.bodies.get(nodeId) ?? [])];
     for (const op of ops) {
       if (op.op === "add") continue;
@@ -183,7 +209,7 @@ export class FixtureBodyClient implements BodyClient {
       }
     }
     this.bodies.set(nodeId, next);
-    this.record(nodeId, "ops", ops.length, authoredBy);
+    this.record(nodeId, "ops", ops.length, authoredBy, kafkaOffset);
     const sections = [...next]
       .sort((a, b) => compareKeys(a.orderKey, b.orderKey))
       .map((r) => ({ id: r.id, text: r.text, orderKey: r.orderKey }));
@@ -201,7 +227,15 @@ export class FixtureBodyClient implements BodyClient {
     sectionId: string,
     offset: number,
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<[Section, Section]> {
+    try {
+      validateWriteProvenance(authoredBy ?? "human", kafkaOffset);
+    } catch (err) {
+      return Promise.reject(
+        err instanceof Error ? err : new Error(String(err)),
+      );
+    }
     if (!Number.isInteger(offset) || offset < 0) {
       return Promise.reject(
         new Error(
@@ -245,7 +279,7 @@ export class FixtureBodyClient implements BodyClient {
       first,
       second,
     ]);
-    this.record(nodeId, "ops", 2, authoredBy);
+    this.record(nodeId, "ops", 2, authoredBy, kafkaOffset);
     return Promise.resolve([{ ...first }, { ...second }]);
   }
 
@@ -259,7 +293,15 @@ export class FixtureBodyClient implements BodyClient {
     secondId: string,
     separator = "",
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<Section> {
+    try {
+      validateWriteProvenance(authoredBy ?? "human", kafkaOffset);
+    } catch (err) {
+      return Promise.reject(
+        err instanceof Error ? err : new Error(String(err)),
+      );
+    }
     const rows = [...(this.bodies.get(nodeId) ?? [])].sort((a, b) =>
       compareKeys(a.orderKey, b.orderKey),
     );
@@ -292,7 +334,7 @@ export class FixtureBodyClient implements BodyClient {
       ...rows.filter((r) => r.id !== firstId && r.id !== secondId),
       merged,
     ]);
-    this.record(nodeId, "edit", undefined, authoredBy);
+    this.record(nodeId, "edit", undefined, authoredBy, kafkaOffset);
     return Promise.resolve({ ...merged });
   }
 
@@ -307,6 +349,7 @@ export class FixtureBodyClient implements BodyClient {
           revision: e.revision,
           kind: e.kind,
           authoredBy: e.authoredBy,
+          kafkaOffset: e.kafkaOffset,
           sections: e.sections,
         })),
     );
@@ -335,6 +378,7 @@ export class FixtureBodyClient implements BodyClient {
     kind: "save" | "edit" | "ops",
     opCount?: number,
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): void {
     const now = Math.max(Date.now(), this.lastEventMs + 1);
     this.lastEventMs = now;
@@ -344,6 +388,7 @@ export class FixtureBodyClient implements BodyClient {
       revision: new Date(now).toISOString(),
       kind,
       authoredBy: authoredBy ?? "human",
+      kafkaOffset: kafkaOffset ?? null,
       sections:
         kind === "edit" ? 1 : kind === "ops" ? (opCount ?? 0) : snapshot.length,
       snapshot,

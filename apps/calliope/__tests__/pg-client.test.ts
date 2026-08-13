@@ -839,6 +839,110 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       expect(revs.map((r) => r.authoredBy)).toEqual([PRINCIPAL, "human"]);
     });
   });
+
+  describe("025 — the session log-offset stamp", () => {
+    const PRINCIPAL =
+      "spiffe://notusmi.com/session/aa579121-1a2b-4c3d-8e4f-a5b6c7d8e9f0";
+
+    async function offsetsOf(nodeId: string): Promise<(string | null)[]> {
+      const res = await pool.query<{ kafka_offset: string | null }>(
+        "SELECT kafka_offset FROM sections WHERE node_id = $1 ORDER BY created_at, id",
+        [nodeId],
+      );
+      return res.rows.map((r) => r.kafka_offset);
+    }
+
+    it("ensureSchema is idempotent over a populated table (the ALTER re-runs)", async () => {
+      await client.ensureSchema();
+      await client.ensureSchema();
+      // Pre-025-style rows (written before any offset was supplied) read NULL.
+      const anyRow = await pool.query<{ kafka_offset: string | null }>(
+        "SELECT kafka_offset FROM sections LIMIT 1",
+      );
+      expect(anyRow.rows[0]?.kafka_offset ?? null).toBeNull();
+    });
+
+    it("applySectionOps stamps the caller's offset on every row of the event", async () => {
+      const result = await client.applySectionOps(
+        "node-o1",
+        [{ op: "add", text: "stamped", orderKey: "a0" }],
+        PRINCIPAL,
+        42,
+      );
+      const added = result.applied.at(0);
+      if (!added) throw new Error("no applied op");
+      expect(await offsetsOf("node-o1")).toEqual(["42"]);
+      // A delete under a later offset stamps the tombstone too.
+      await client.applySectionOps(
+        "node-o1",
+        [{ op: "delete", sectionId: added.id }],
+        PRINCIPAL,
+        43,
+      );
+      expect(await offsetsOf("node-o1")).toEqual(["42", "43"]);
+    });
+
+    it("absent offset stores NULL on every write method", async () => {
+      await client.saveBody("node-o2", [{ text: "plain" }], PRINCIPAL);
+      expect(await offsetsOf("node-o2")).toEqual([null]);
+    });
+
+    it("saveBody / editSection / splitSection / mergeSections all stamp", async () => {
+      await client.saveBody("node-o3", [{ text: "one two" }], PRINCIPAL, 7);
+      const body = await client.readBody("node-o3");
+      const target = body.at(0);
+      if (!target) throw new Error("body missing");
+      const edited = await client.editSection(
+        "node-o3",
+        target.id,
+        "one two edited",
+        PRINCIPAL,
+        8,
+      );
+      const [head, tail] = await client.splitSection(
+        "node-o3",
+        edited.id,
+        3,
+        PRINCIPAL,
+        9,
+      );
+      await client.mergeSections(
+        "node-o3",
+        head.id,
+        tail.id,
+        "",
+        PRINCIPAL,
+        10,
+      );
+      const offsets = await offsetsOf("node-o3");
+      expect(offsets).toEqual(["7", "8", "9", "9", "10"]);
+    });
+
+    it("the store refuses an offset without a session principal", async () => {
+      await expect(
+        client.saveBody("node-o4", [{ text: "nope" }], "human", 42),
+      ).rejects.toThrow(/session-principal/);
+      await expect(
+        client.applySectionOps(
+          "node-o4",
+          [{ op: "add", text: "nope", orderKey: "a0" }],
+          undefined,
+          42,
+        ),
+      ).rejects.toThrow(/session-principal/);
+      // Nothing landed.
+      expect(await offsetsOf("node-o4")).toEqual([]);
+    });
+
+    it("the machine import path never stamps an offset", async () => {
+      await client.importSection("node-o5", {
+        id: "a".repeat(64),
+        text: "machine",
+        orderKey: "01",
+      });
+      expect(await offsetsOf("node-o5")).toEqual([null]);
+    });
+  });
 });
 
 describe.skipIf(HAVE_DOCKER)("PgBodyClient (docker unavailable)", () => {

@@ -72,6 +72,27 @@ export function isAuthoredBy(v: string): v is AuthoredBy {
 }
 
 /**
+ * 025: the offset⇒session-principal invariant. A log offset names an exact
+ * position in ONE session's event log; carried by a non-session write it is
+ * a guess about provenance, and a guess poisons every replay that trusts it.
+ * Enforced at the MCP boundary (caller-facing error) AND by the store
+ * clients (so no internal caller can bypass it).
+ */
+export function validateWriteProvenance(
+  authoredBy?: AuthoredBy,
+  kafkaOffset?: number,
+): void {
+  if (kafkaOffset === undefined) return;
+  if (authoredBy === undefined || !SESSION_PRINCIPAL_RE.test(authoredBy)) {
+    throw new Error(
+      "kafka_offset requires a session-principal authored_by " +
+        "(spiffe://{td}/session/{uuid}) on the same call — an offset " +
+        "without a session is a guess, and the store refuses to record one.",
+    );
+  }
+}
+
+/**
  * One block-grain write op (A11) — the editor's diff carried as-is through
  * the wire, the store write, the block-op log, and the revision surface.
  *
@@ -186,6 +207,7 @@ export interface BodyClient {
     nodeId: string,
     sections: SectionInput[],
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<void>;
 
   /**
@@ -213,6 +235,7 @@ export interface BodyClient {
     sectionId: string,
     text: string,
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<Section>;
 
   /**
@@ -229,6 +252,7 @@ export interface BodyClient {
     nodeId: string,
     ops: SectionOp[],
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<ApplySectionOpsResult>;
 
   /**
@@ -249,6 +273,7 @@ export interface BodyClient {
     sectionId: string,
     offset: number,
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<[Section, Section]>;
 
   /**
@@ -267,6 +292,7 @@ export interface BodyClient {
     secondId: string,
     separator?: string,
     authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
   ): Promise<Section>;
 
   /**
@@ -308,6 +334,8 @@ export interface BodyClient {
  *                   `"edit"` (a single-section copy-on-write edit), or
  *                   `"ops"` (an A11 block-grain batch).
  * - `authoredBy`  — the provenance persisted with the event's rows.
+ * - `kafkaOffset` — the writing session's log offset (025), or null when the
+ *                   event carried no session context.
  * - `sections`    — how many section rows the event wrote (a save writes the
  *                   whole body; an edit writes one; an ops batch one per op).
  */
@@ -315,5 +343,6 @@ export interface RevisionMeta {
   revision: string;
   kind: "save" | "edit" | "ops";
   authoredBy: string;
+  kafkaOffset: number | null;
   sections: number;
 }
