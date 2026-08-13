@@ -114,6 +114,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "read_plan",
       "revision_deltas",
       "split_block",
+      "unpin",
       "update_block",
       "write_body",
       "write_document",
@@ -140,6 +141,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       materialize_note: [true, false, true],
       copy_reference: [true, false, true],
       look: [true, false, true],
+      unpin: [false, true, true],
       // additive writes (each call mints new ids)
       create_block: [false, false, false],
       append_section: [false, false, false],
