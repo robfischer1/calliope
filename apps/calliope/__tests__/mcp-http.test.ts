@@ -92,6 +92,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "append_section",
       "apply_section_ops",
       "coalesce_block_writes",
+      "copy_reference",
       "create_block",
       "create_note",
       "delete_block",
@@ -136,6 +137,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       list_tags: [true, false, true],
       export_note: [true, false, true],
       materialize_note: [true, false, true],
+      copy_reference: [true, false, true],
       // additive writes (each call mints new ids)
       create_block: [false, false, false],
       append_section: [false, false, false],
