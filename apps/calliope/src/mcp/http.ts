@@ -40,6 +40,7 @@ import { createServer } from "./server.js";
 import type { ChaosFacet } from "../chaos-client.js";
 import type { TagStore } from "../tag-store.js";
 import { startHeartbeat } from "./heartbeat.js";
+import { FocusRegister, startFocusConsumer } from "../focus-register.js";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
 const MCP_PATH = "/mcp";
@@ -84,12 +85,14 @@ async function handleMcp(
   revisions?: RevisionStore,
   chaos?: ChaosFacet,
   tags?: TagStore,
+  focus?: FocusRegister,
 ): Promise<void> {
   const server = createServer(client, {
     ...(documents !== undefined ? { documents } : {}),
     ...(revisions !== undefined ? { revisions } : {}),
     ...(chaos !== undefined ? { chaos } : {}),
     ...(tags !== undefined ? { tags } : {}),
+    ...(focus !== undefined ? { focus } : {}),
   });
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session id, no server-initiated streams to keep alive.
@@ -112,6 +115,9 @@ export function createCalliopeHttpServer(
   revisions?: RevisionStore,
   chaos?: ChaosFacet,
   tags?: TagStore,
+  // Every server carries a register (an empty one answers { focus: null });
+  // the boot passes the consumer-fed one so live focus flows in production.
+  focus: FocusRegister = new FocusRegister(),
 ): ReturnType<typeof createHttpServer> {
   // One backend for the server's lifetime: the store (or fixture memory)
   // is shared across every stateless request. A caller that needs async
@@ -150,24 +156,31 @@ export function createCalliopeHttpServer(
       return;
     }
 
-    handleMcp(req, res, client, docStore, revStore, chaosFacet, tagStore).catch(
-      (err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`calliope-mcp-http: request error: ${message}\n`);
-        if (!res.headersSent) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: { code: -32603, message: "Internal server error" },
-              id: null,
-            }),
-          );
-        } else {
-          res.end();
-        }
-      },
-    );
+    handleMcp(
+      req,
+      res,
+      client,
+      docStore,
+      revStore,
+      chaosFacet,
+      tagStore,
+      focus,
+    ).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`calliope-mcp-http: request error: ${message}\n`);
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32603, message: "Internal server error" },
+            id: null,
+          }),
+        );
+      } else {
+        res.end();
+      }
+    });
   });
 }
 
@@ -177,6 +190,11 @@ async function main(): Promise<void> {
   const host = process.env.HOST ?? "0.0.0.0";
   const backend = makeBackend(kind);
   await initBackend(backend);
+  // 028 ("Look At This" F5): one register for the process, written by the
+  // Pontus telemetry consumer, read by every stateless request's `look`.
+  const focusRegister = new FocusRegister();
+  const focusConsumer = startFocusConsumer(focusRegister);
+
   const httpServer = createCalliopeHttpServer(
     kind,
     backend.client,
@@ -184,6 +202,7 @@ async function main(): Promise<void> {
     backend.revisions,
     backend.chaos,
     backend.tags,
+    focusRegister,
   );
 
   await new Promise<void>((resolve) => {
@@ -199,6 +218,7 @@ async function main(): Promise<void> {
 
   const shutdown = (): void => {
     void heartbeat.stop();
+    void focusConsumer.stop();
     httpServer.close(() => {
       process.exit(0);
     });

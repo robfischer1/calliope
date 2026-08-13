@@ -31,6 +31,7 @@ import {
   editSection,
   isBlockMiss,
   isCopyReferenceError,
+  look,
   listContainerBlocks,
   mergeBlock,
   readBlock,
@@ -43,6 +44,7 @@ import {
 } from "./tools.js";
 import { readPlan, isReadPlanError } from "./plan-ingest.js";
 import { dissolveContainer, type SinkResult } from "../notes-sink.js";
+import type { FocusRegister } from "../focus-register.js";
 import {
   createNote,
   isCreateNoteError,
@@ -89,6 +91,13 @@ export interface ServerOptions {
    * reconcile + create_note's explicit tags.
    */
   tags?: TagStore;
+  /**
+   * The focus register (028 — "Look At This" F5). When present, the server
+   * additionally registers `look` — the attention-pointer read verb. The
+   * register itself is written by the Pontus telemetry consumer the boot
+   * wires (`focus-register.ts`); the verb only ever reads.
+   */
+  focus?: FocusRegister;
 }
 
 /** Build a configured MCP server bound to `client`, ready to `connect()`. */
@@ -1257,6 +1266,46 @@ export function createServer(
         return {
           content: [{ type: "text", text: `${String(rows.length)} delta(s).` }],
           structuredContent: { deltas: rows },
+        };
+      },
+    );
+  }
+
+  // 028 ("Look At This" F5): the attention-pointer read verb — served when
+  // the boot wired a focus register. Read-only: N sessions are N readers of
+  // one value; the verb never mutates the register.
+  if (options?.focus !== undefined) {
+    const register = options.focus;
+    server.registerTool(
+      "look",
+      {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
+        title: "Read the focus register",
+        description:
+          "028/F5: the attention pointer — the current focus Rob's editor " +
+          "last emitted (a capture-time-resolved block pointer), with an " +
+          "honest drift verdict against the live block: none / drifted " +
+          "(current_text included) / gone. No focus yet answers " +
+          "{ focus: null }, not an error. Reading never mutates.",
+        inputSchema: {},
+      },
+      async () => {
+        const result = await look(client, register);
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                result.focus === null
+                  ? "no focus"
+                  : `${result.focus.pointer.node} · ${result.focus.pointer.section} · drift: ${result.focus.drift}`,
+            },
+          ],
+          structuredContent: structured(result),
         };
       },
     );

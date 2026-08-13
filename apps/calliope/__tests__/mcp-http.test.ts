@@ -103,6 +103,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "list_blocks",
       "list_by_tag",
       "list_tags",
+      "look",
       "materialize_note",
       "merge_block",
       "read_block",
@@ -138,6 +139,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       export_note: [true, false, true],
       materialize_note: [true, false, true],
       copy_reference: [true, false, true],
+      look: [true, false, true],
       // additive writes (each call mints new ids)
       create_block: [false, false, false],
       append_section: [false, false, false],
