@@ -34,6 +34,11 @@ export interface FocusEntry {
   receivedAt: string;
 }
 
+/** 029 (F6): one deliberate pin — a FocusEntry with its editor-minted id. */
+export interface PinEntry extends FocusEntry {
+  pinId: string;
+}
+
 /**
  * The last-write-wins focus slot. Process-global by design for now — the
  * per-window vs global question is an open master-plan decision; one slot
@@ -41,6 +46,9 @@ export interface FocusEntry {
  */
 export class FocusRegister {
   #current: FocusEntry | null = null;
+  // 029 (F6): the second grain — deliberate pins, arrival-ordered. Live
+  // focus is LWW; pins STACK ("pin three things, compare these").
+  #pins: PinEntry[] = [];
 
   /** Fold a newer pointer in — last write wins. */
   set(pointer: BodyPointer, receivedAt: string): void {
@@ -50,6 +58,25 @@ export class FocusRegister {
   /** The current focus, or null when none has ever arrived. Never mutates. */
   current(): FocusEntry | null {
     return this.#current;
+  }
+
+  /** Append a pin. The wire is at-least-once, so a pinId seen before is a
+   *  redelivery — the pin exists once, at its original position. */
+  pin(pinId: string, pointer: BodyPointer, receivedAt: string): void {
+    if (this.#pins.some((p) => p.pinId === pinId)) return;
+    this.#pins.push({ pinId, pointer, receivedAt });
+  }
+
+  /** Remove one pin by id; answers whether it existed. */
+  unpin(pinId: string): boolean {
+    const before = this.#pins.length;
+    this.#pins = this.#pins.filter((p) => p.pinId !== pinId);
+    return this.#pins.length !== before;
+  }
+
+  /** The pins in arrival order. A fresh array each read; never mutates. */
+  pins(): PinEntry[] {
+    return [...this.#pins];
   }
 }
 
@@ -76,10 +103,18 @@ export function handleTelemetryMessage(
   const events: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
   for (const ev of events) {
     if (ev === null || typeof ev !== "object") continue;
-    const e = ev as { type?: unknown; pointer?: unknown };
-    if (e.type !== "selection-change") continue;
-    if (!isBodyPointer(e.pointer)) continue;
-    register.set(e.pointer, now().toISOString());
+    const e = ev as { type?: unknown; pointer?: unknown; pinId?: unknown };
+    if (e.type === "selection-change" && isBodyPointer(e.pointer)) {
+      register.set(e.pointer, now().toISOString());
+    } else if (
+      // 029 (F6): the deliberate grain — same guard, append not LWW.
+      e.type === "pointer-pin" &&
+      typeof e.pinId === "string" &&
+      e.pinId !== "" &&
+      isBodyPointer(e.pointer)
+    ) {
+      register.pin(e.pinId, e.pointer, now().toISOString());
+    }
   }
 }
 

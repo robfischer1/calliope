@@ -32,6 +32,7 @@ import {
   isBlockMiss,
   isCopyReferenceError,
   look,
+  unpin,
   listContainerBlocks,
   mergeBlock,
   readBlock,
@@ -1300,13 +1301,49 @@ export function createServer(
             {
               type: "text",
               text:
-                result.focus === null
+                (result.focus === null
                   ? "no focus"
-                  : `${result.focus.pointer.node} · ${result.focus.pointer.section} · drift: ${result.focus.drift}`,
+                  : `${result.focus.pointer.node} · ${result.focus.pointer.section} · drift: ${result.focus.drift}`) +
+                ` · ${String(result.pins.length)} pin(s)`,
             },
           ],
           structuredContent: structured(result),
         };
+      },
+    );
+
+    server.registerTool(
+      "unpin",
+      {
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: true,
+        },
+        title: "Remove one pin",
+        description:
+          "029/F6: clear one deliberate pin by its pin_id (as answered in " +
+          "look's pins[]). The conversational 'clear pin 2'. Unknown id " +
+          "answers a structured unknown_pin miss; live focus is untouched.",
+        inputSchema: {
+          pin_id: z.string().min(1).describe("The pin to remove."),
+        },
+      },
+      ({ pin_id }) => {
+        const result = unpin(register, pin_id);
+        const missed = "error" in result;
+        return Promise.resolve({
+          content: [
+            {
+              type: "text",
+              text: missed
+                ? `${result.error}: ${result.detail}`
+                : `unpinned ${result.pin_id}`,
+            },
+          ],
+          structuredContent: structured(result),
+          ...(missed ? { isError: true } : {}),
+        });
       },
     );
   }

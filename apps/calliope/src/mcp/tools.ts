@@ -913,37 +913,43 @@ export async function copyReference(
  *                superseded by a merge that did not preserve the id).
  */
 export interface LookResult {
-  focus: null | {
-    pointer: BodyPointer;
-    received_at: string;
-    drift: "none" | "drifted" | "gone";
-    current_text?: string;
-  };
+  focus: null | ResolvedPointer;
+  /** 029 (F6): the deliberate grain — every pin, arrival order, each with
+   *  its own verdict. Empty when nothing is pinned. */
+  pins: ResolvedPin[];
+}
+
+/** One pointer verified against the live block (the shared verdict shape). */
+export interface ResolvedPointer {
+  pointer: BodyPointer;
+  received_at: string;
+  drift: "none" | "drifted" | "gone";
+  current_text?: string;
+}
+
+/** A resolved pin: the verdict shape plus the pin's identity. */
+export interface ResolvedPin extends ResolvedPointer {
+  pin_id: string;
 }
 
 /**
- * look() — read the focus register, verify the witness. Reading never
- * mutates the register; the drift check is a plain read of the pointed-at
- * block through the same client every other read verb uses.
+ * Verify one pointer against the live block — the ONE verdict path both
+ * grains use (never forked). The offsets index the RENDERED plain text
+ * (theia 059's capture space); the stored block text is markdown source, so
+ * the slice only lines up on plain prose. The excerpt is the real witness:
+ * an exact slice match OR the excerpt appearing anywhere in the live block
+ * both mean the pointed-at prose still exists; only an ABSENT excerpt is
+ * drift.
  */
-export async function look(
+async function resolvePointerAgainstBody(
   client: BodyClient,
-  register: FocusRegister,
-): Promise<LookResult> {
-  const entry = register.current();
-  if (entry === null) return { focus: null };
-  const { pointer, receivedAt } = entry;
+  pointer: BodyPointer,
+  receivedAt: string,
+): Promise<ResolvedPointer> {
   const block = await readBlock(client, pointer.node, pointer.section);
   if (isBlockMiss(block)) {
-    return {
-      focus: { pointer, received_at: receivedAt, drift: "gone" },
-    };
+    return { pointer, received_at: receivedAt, drift: "gone" };
   }
-  // The offsets index the RENDERED plain text (theia 059's capture space);
-  // the stored block text is markdown source, so the slice only lines up on
-  // plain prose. The excerpt is the real witness: an exact slice match OR
-  // the excerpt appearing anywhere in the live block both mean the pointed-at
-  // prose still exists; only an ABSENT excerpt is drift.
   const current = block.block.text;
   const drift =
     current.slice(pointer.offsetFrom, pointer.offsetTo) === pointer.text ||
@@ -951,11 +957,59 @@ export async function look(
       ? "none"
       : "drifted";
   return {
-    focus: {
-      pointer,
-      received_at: receivedAt,
-      drift,
-      ...(drift === "drifted" ? { current_text: current } : {}),
-    },
+    pointer,
+    received_at: receivedAt,
+    drift,
+    ...(drift === "drifted" ? { current_text: current } : {}),
   };
+}
+
+/**
+ * look() — read the focus register, verify the witnesses. Reading never
+ * mutates the register; the drift checks are plain reads of the pointed-at
+ * blocks through the same client every other read verb uses.
+ */
+export async function look(
+  client: BodyClient,
+  register: FocusRegister,
+): Promise<LookResult> {
+  const entry = register.current();
+  const focus =
+    entry === null
+      ? null
+      : await resolvePointerAgainstBody(
+          client,
+          entry.pointer,
+          entry.receivedAt,
+        );
+  const pins: ResolvedPin[] = [];
+  for (const pin of register.pins()) {
+    const resolved = await resolvePointerAgainstBody(
+      client,
+      pin.pointer,
+      pin.receivedAt,
+    );
+    pins.push({ pin_id: pin.pinId, ...resolved });
+  }
+  return { focus, pins };
+}
+
+/** `unpin` structured miss — surfaced, never thrown. */
+export interface UnpinError {
+  error: "unknown_pin";
+  detail: string;
+}
+
+/** 029 (F6): remove one pin by id — the conversational "clear pin 2". */
+export function unpin(
+  register: FocusRegister,
+  pinId: string,
+): { removed: true; pin_id: string } | UnpinError {
+  if (!register.unpin(pinId)) {
+    return {
+      error: "unknown_pin",
+      detail: `${pinId} names no pin in the register`,
+    };
+  }
+  return { removed: true, pin_id: pinId };
 }
