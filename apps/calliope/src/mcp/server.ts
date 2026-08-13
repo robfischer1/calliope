@@ -57,6 +57,7 @@ import {
 } from "./tools.js";
 import type { ChaosFacet } from "../chaos-client.js";
 import type { TagStore } from "../tag-store.js";
+import type { SearchProvider, SearchResponse } from "../fs-search/index.js";
 
 /**
  * Adapt a typed tool result to the MCP SDK's `structuredContent` slot, which
@@ -101,6 +102,13 @@ export interface ServerOptions {
    * wires (`focus-register.ts`); the verb only ever reads.
    */
   focus?: FocusRegister;
+  /**
+   * The search provider (Findability F2). The `search` verb registers on
+   * EVERY backend — a backend with no provider answers honest darkness
+   * (no arms queried, both local arms dark) rather than hiding the verb;
+   * F4 lights the pg backend by routing its provider at Eros.
+   */
+  search?: SearchProvider;
 }
 
 /** Build a configured MCP server bound to `client`, ready to `connect()`. */
@@ -1110,6 +1118,61 @@ export function createServer(
           {
             type: "text",
             text: `${String(result.sections.length)} section(s) at ${result.revision}.`,
+          },
+        ],
+        structuredContent: structured(result),
+      };
+    },
+  );
+
+  server.registerTool(
+    "search",
+    {
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+      title: "Search bodies",
+      description:
+        "Findability F2: search(query, scope) — ranked hits with snippets " +
+        "over the backend's corpus, RRF-fused across the available arms " +
+        "(full-text, semantic, remote). Returns { hits: [{ id, snippet, " +
+        "score, arms }], armsQueried, armsDark } — a dark arm is NAMED, " +
+        "never hidden; no arms queried + arms dark means the backend has " +
+        "no search provider (or no index yet), distinct from zero matches.",
+      inputSchema: {
+        query: z.string().min(1).describe("The search phrase."),
+        scope: z
+          .string()
+          .optional()
+          .describe(
+            "Root-relative subtree prefix to restrict to; absent = everything.",
+          ),
+        k: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe("Max hits to return (default 20)."),
+      },
+    },
+    async ({ query, scope, k }) => {
+      const provider = options?.search;
+      const result: SearchResponse =
+        provider === undefined
+          ? { hits: [], armsQueried: [], armsDark: ["fts", "semantic"] }
+          : await provider.search(query, scope, k);
+      const darkNote =
+        result.armsDark.length > 0
+          ? ` (dark: ${result.armsDark.join(", ")})`
+          : "";
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${String(result.hits.length)} hit(s)${darkNote}.`,
           },
         ],
         structuredContent: structured(result),

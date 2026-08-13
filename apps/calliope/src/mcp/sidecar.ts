@@ -24,6 +24,8 @@ import { pathToFileURL } from "node:url";
 import { FsBodyClient } from "../fs-client.js";
 import { FocusRegister } from "../focus-register.js";
 import { fsListByTag, fsListTags } from "../fs-tags.js";
+import { LocalSearchIndex } from "../fs-search/index.js";
+import type { SearchResponse } from "../fs-search/index.js";
 import { createServer as createMcpServer } from "./server.js";
 import type { SectionInput } from "../types.js";
 import {
@@ -87,7 +89,18 @@ function corsHeaders(): Record<string, string> {
   };
 }
 
-async function dispatch(client: FsBodyClient, body: unknown): Promise<unknown> {
+/** Honest darkness when no index is wired (mirrors the MCP no-provider path). */
+const NO_PROVIDER: SearchResponse = {
+  hits: [],
+  armsQueried: [],
+  armsDark: ["fts", "semantic"],
+};
+
+async function dispatch(
+  client: FsBodyClient,
+  body: unknown,
+  search?: LocalSearchIndex,
+): Promise<unknown> {
   const envelope = body as { verb?: unknown; args?: unknown } | undefined;
   if (envelope === undefined || typeof envelope.verb !== "string") {
     throw new Error("bad_request: expected {verb, args}.");
@@ -141,6 +154,20 @@ async function dispatch(client: FsBodyClient, body: unknown): Promise<unknown> {
         client.root,
         typeof args.tag === "string" ? args.tag : "",
       );
+    // Findability F2 — search(query, scope): the fs backend's two local arms
+    // (FTS5 + semantic) RRF-fused; degraded arms are NAMED in the envelope.
+    case "search": {
+      const query = typeof args.query === "string" ? args.query : "";
+      if (query.trim() === "") {
+        throw new Error("bad_request: search needs a non-empty query.");
+      }
+      if (search === undefined) return NO_PROVIDER;
+      return search.search(
+        query,
+        typeof args.scope === "string" ? args.scope : undefined,
+        typeof args.k === "number" ? args.k : undefined,
+      );
+    }
     default:
       throw new Error(`unsupported_verb: ${envelope.verb}`);
   }
@@ -148,11 +175,13 @@ async function dispatch(client: FsBodyClient, body: unknown): Promise<unknown> {
 
 export function createSidecarServer(
   client: FsBodyClient,
+  extras?: { search?: LocalSearchIndex },
 ): ReturnType<typeof createServer> {
   // 031 ("Look At This" F12): one register for the sidecar's lifetime —
   // honestly empty until something local feeds it; `look` answers
   // { focus: null, pins: [] } rather than pretending.
   const focus = new FocusRegister();
+  const search = extras?.search;
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     const path = (req.url ?? "").split("?", 1)[0];
     const cors = corsHeaders();
@@ -174,7 +203,7 @@ export function createSidecarServer(
     // transport over the SHARED FsBodyClient.
     if (path === "/mcp" && req.method === "POST") {
       void (async () => {
-        const server = createMcpServer(client, { focus });
+        const server = createMcpServer(client, { focus, search });
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
         });
@@ -200,7 +229,7 @@ export function createSidecarServer(
       return;
     }
     readJson(req)
-      .then((body) => dispatch(client, body))
+      .then((body) => dispatch(client, body, search))
       .then((result) => {
         res.writeHead(200, { "Content-Type": "application/json", ...cors });
         res.end(JSON.stringify(result));
@@ -229,8 +258,16 @@ function main(): void {
     exit(1);
   }
 
-  const client = new FsBodyClient(root);
-  const server = createSidecarServer(client);
+  // Findability F2 — the local search index over the served root. Opens
+  // instantly; catch-up scan, watcher, and encoder init run in the
+  // background, so the boot handshake below never waits on them.
+  const index = LocalSearchIndex.open(root);
+  const client = new FsBodyClient(root, {
+    onWrite: (nodeId) => {
+      index.noteWritten(nodeId);
+    },
+  });
+  const server = createSidecarServer(client, { search: index });
   server.on("error", (err) => {
     process.stderr.write(`calliope-sidecar: ${err.message}\n`);
     exit(1);
@@ -249,6 +286,7 @@ function main(): void {
   });
 
   const shutdown = (): void => {
+    index.close();
     server.close(() => {
       exit(0);
     });

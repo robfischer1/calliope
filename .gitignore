@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.tsbuildinfo
+apps/calliope/models/
 .turbo/
 coverage/
 .DS_Store
