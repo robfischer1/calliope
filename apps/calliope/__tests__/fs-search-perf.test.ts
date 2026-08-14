@@ -95,7 +95,15 @@ beforeAll(async () => {
   }
   index = LocalSearchIndex.open(root, { embedder: null, watch: false });
   await index.started; // the full catch-up index of all 10k files
-}, 180_000);
+  // The ceiling covers the FIXTURE BUILD, not the assertion, and 180_000 was
+  // too thin to do it. Measured 2026-08-14: this hook takes ~100-124s locally,
+  // while the CI runner ran the same suite 1.58x slower (200.78s vs 127.12s
+  // wall for the whole file set) — so the projected CI cost is ~196s and the
+  // old ceiling cut it off at 180s. That red said nothing about search
+  // performance: the p95 assertion below passes with ~8x headroom (measured
+  // p95=12.0ms against a 100ms budget), so what CI was failing on was the cost
+  // of writing 10k files, never the thing this gate exists to measure.
+}, 480_000);
 
 afterAll(() => {
   index?.close();
