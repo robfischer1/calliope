@@ -191,6 +191,50 @@ export function decodeRpcBody(
   return JSON.parse(last);
 }
 
+/**
+ * Shape a `tools/call` result from its TEXT blocks, for a server that sends no
+ * `structuredContent` at all.
+ *
+ * The Python (FastMCP) chaos door always emitted `structuredContent`, so this
+ * client read only that field and treated its absence as "no payload". The Go
+ * door emits the payload in `content[].text` and NO structured field, so every
+ * verb came back `undefined` — and because the call sites coerce a non-array to
+ * `[]` (`findByValue`, `resolveNodes`), that surfaced as an EMPTY RESULT rather
+ * than an error. `read_plan` answered `document_not_found` for plans that exist,
+ * which is a far worse failure than a throw: it looks like absent data.
+ *
+ * Measured 2026-08-14 against the live Go door — the node is really there:
+ *
+ *     find_by_value(notes, source_path, "…/Dionysus…Master-plan.md")
+ *       wire: {"result":{"content":[{"type":"text","text":"[\"019ff961…\"]"}]}}
+ *       was:  undefined -> []        -> document_not_found
+ *       now:  ["019ff961…"]
+ *
+ * Block rules follow the Python client's `shape_tool_payload`: ONE text block is
+ * the payload; SEVERAL are one JSON document each, because the server SDK emits
+ * one block per item and concatenating them is not valid JSON.
+ */
+export function shapeFromTextBlocks(content: unknown): unknown {
+  if (!Array.isArray(content)) return undefined;
+  const texts = content
+    .filter(
+      (b): b is { type: string; text: string } =>
+        typeof b === "object" &&
+        b !== null &&
+        (b as { type?: unknown }).type === "text" &&
+        typeof (b as { text?: unknown }).text === "string",
+    )
+    .map((b) => b.text);
+  // Destructure rather than index: `first` narrows to `string | undefined` on
+  // its own, so the emptiness check is the type guard too — no assertion, which
+  // the lint config forbids in both spellings. `as unknown` because JSON.parse
+  // is typed `any` and returning it bare trips no-unsafe-return.
+  const [first, ...rest] = texts;
+  if (first === undefined) return undefined;
+  if (rest.length === 0) return JSON.parse(first) as unknown;
+  return texts.map((t) => JSON.parse(t) as unknown);
+}
+
 /** POST one `tools/call` and unwrap FastMCP's `{result}` envelope. */
 async function rpc(
   endpoint: string,
@@ -241,7 +285,10 @@ async function rpc(
   if (result?.isError === true) {
     throw new ChaosClientError(`${verb}: ${JSON.stringify(result.content)}`);
   }
-  const structured = result?.structuredContent;
+  if (result?.structuredContent === undefined) {
+    return shapeFromTextBlocks(result?.content);
+  }
+  const structured = result.structuredContent;
   if (
     structured !== null &&
     typeof structured === "object" &&

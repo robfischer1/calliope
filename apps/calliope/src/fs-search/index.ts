@@ -117,6 +117,15 @@ export class LocalSearchIndex implements SearchProvider {
     );
     index.#started = index.#start(opts);
     void index.#started.catch((err: unknown) => {
+      // A deliberate close() aborts the in-flight catch-up, and the store then
+      // throws `database is not open`. That is TEARDOWN, not a startup fault,
+      // and reporting it as one is actively misleading: measured 2026-08-14,
+      // a CI run whose beforeAll merely ran out of budget printed
+      // `fs-search: startup failed (database is not open)` because vitest tore
+      // the fixture down mid-index — which reads as a broken database and sent
+      // a reader looking for one. Reproduced by dropping the hook ceiling to 3s
+      // against a perfectly healthy store: identical message, no fault present.
+      if (index.#closed) return;
       console.error(
         `fs-search: startup failed (${err instanceof Error ? err.message : String(err)})`,
       );

@@ -3,6 +3,7 @@ import {
   ANCHORS_ROLE,
   FixtureChaosDial,
   decodeRpcBody,
+  shapeFromTextBlocks,
   NOTE_ROOT_KIND,
   NOTE_ROOT_LABEL,
   ensureNotesRoot,
@@ -138,5 +139,36 @@ describe("decodeRpcBody — both framings streamable-HTTP allows", () => {
     expect(() =>
       decodeRpcBody("event: message\n\n", "text/event-stream", VERB),
     ).toThrowError(/carried no data/);
+  });
+});
+
+describe("shapeFromTextBlocks — a door that sends no structuredContent", () => {
+  it("one text block is the payload", () => {
+    // The exact live wire shape of find_by_value on the Go door.
+    const content = [{ type: "text", text: '["019ff961"]' }];
+    expect(shapeFromTextBlocks(content)).toEqual(["019ff961"]);
+  });
+
+  it("several text blocks are one JSON document each", () => {
+    // The SDK emits one block per item; concatenating is not valid JSON.
+    const content = [
+      { type: "text", text: '{"a":1}' },
+      { type: "text", text: '{"b":2}' },
+    ];
+    expect(shapeFromTextBlocks(content)).toEqual([{ a: 1 }, { b: 2 }]);
+  });
+
+  it("non-text blocks are ignored", () => {
+    const content = [
+      { type: "image", data: "…" },
+      { type: "text", text: "[1,2]" },
+    ];
+    expect(shapeFromTextBlocks(content)).toEqual([1, 2]);
+  });
+
+  it("no content, or no text blocks, is undefined — not a silent []", () => {
+    expect(shapeFromTextBlocks(undefined)).toBeUndefined();
+    expect(shapeFromTextBlocks([])).toBeUndefined();
+    expect(shapeFromTextBlocks([{ type: "image", data: "…" }])).toBeUndefined();
   });
 });
