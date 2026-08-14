@@ -122,6 +122,75 @@ export function opRemove(
   };
 }
 
+/**
+ * Decode one JSON-RPC response body, in EITHER framing the spec allows.
+ *
+ * Streamable-HTTP lets a server answer a `tools/call` as plain
+ * `application/json` OR as a `text/event-stream` carrying the same JSON-RPC
+ * object in a `data:` field, and the client does not get to choose: the
+ * protocol REQUIRES the request to advertise both, so a conformant server may
+ * legitimately pick either. Bare `resp.json()` therefore only ever worked by
+ * luck — the luck being that the Python chaos door always chose JSON.
+ *
+ * MEASURED 2026-08-14: chaos flipped to the Go door, which answers
+ * `text/event-stream`. Bun's `Response.json()` on that body throws
+ * `Failed to parse JSON` (the `event: ` prefix at char 0), so every calliope
+ * read that traverses chaos died — `read_documents`, `read_plan`,
+ * `list_blocks`, `list_by_tag` — while the PG-only reads stayed up, which is
+ * what made it look like a store fault rather than a transport one. Narrowing
+ * the Accept header was tried first and is NOT available: the door answers
+ * `400 Accept must contain both 'application/json' and 'text/event-stream'`.
+ * Reading both framings is the only conformant fix, and it belongs here.
+ *
+ * The Python fleet fixed this in `chaos.client` (shipped as chaos 0.26.3) and
+ * athena/urania/mnemosyne were swept with it. Calliope consumes no shared
+ * client, so it was missed; this is that same fix, ported verbatim in rule.
+ *
+ * SSE field rules are followed rather than approximated: an event may carry
+ * several `data:` lines which join with newlines, and events are separated by
+ * blank lines. The LAST complete event is the response — a server is permitted
+ * to emit progress notifications ahead of the result, and taking the first
+ * would hand the caller a notification shaped like an answer.
+ */
+export function decodeRpcBody(
+  text: string,
+  contentType: string,
+  verb: string,
+): unknown {
+  if (!contentType.toLowerCase().includes("text/event-stream")) {
+    return JSON.parse(text);
+  }
+
+  const events: string[] = [];
+  let current: string[] = [];
+  for (const line of text.split("\n")) {
+    const stripped = line.replace(/\r+$/, "");
+    if (!stripped) {
+      if (current.length > 0) {
+        events.push(current.join("\n"));
+        current = [];
+      }
+      continue;
+    }
+    if (stripped.startsWith("data:")) {
+      current.push(stripped.slice(5).replace(/^[ \t]+/, ""));
+    }
+  }
+  if (current.length > 0) events.push(current.join("\n"));
+
+  // pop() rather than [length - 1]: it narrows to `string | undefined` on its
+  // own, so the emptiness check below is the type guard too — no assertion,
+  // which the lint config forbids in both spellings.
+  const last = events.pop();
+  if (last === undefined) {
+    throw new ChaosClientError(
+      `chaos wire call ${JSON.stringify(verb)}: event-stream body carried ` +
+        `no data: field: ${JSON.stringify(text.slice(0, 200))}`,
+    );
+  }
+  return JSON.parse(last);
+}
+
 /** POST one `tools/call` and unwrap FastMCP's `{result}` envelope. */
 async function rpc(
   endpoint: string,
@@ -157,7 +226,11 @@ async function rpc(
       body: payload,
       signal: controller.signal,
     });
-    body = (await resp.json()) as typeof body;
+    body = decodeRpcBody(
+      await resp.text(),
+      resp.headers.get("content-type") ?? "",
+      verb,
+    ) as typeof body;
   } finally {
     clearTimeout(timer);
   }
