@@ -13,7 +13,12 @@
  */
 
 import { createHash } from "node:crypto";
-import type { BodyClient, Section, SectionInput } from "../types.js";
+import type {
+  AuthoredBy,
+  BodyClient,
+  Section,
+  SectionInput,
+} from "../types.js";
 
 const TIMEOUT_MS = 30_000;
 
@@ -96,11 +101,7 @@ export class UraniaIndexClient implements IndexPusher {
  * contract that {@link BodyClient} and its MCP handler rely on.
  */
 export class IndexingBodyClient implements BodyClient {
-  readonly editSection?: (
-    nodeId: string,
-    sectionId: string,
-    text: string,
-  ) => Promise<Section>;
+  readonly editSection?: BodyClient["editSection"];
   /** A8: the optional revision reads pass straight through (no index push —
    * they are reads). Conditional assignment preserves the capability signal:
    * an inner client without them keeps them `undefined` here, so the tool
@@ -124,19 +125,35 @@ export class IndexingBodyClient implements BodyClient {
     readonly inner: BodyClient,
     private readonly index: IndexPusher,
   ) {
-    // Bind to `inner` so the extracted method keeps its receiver.
+    // Bind to `inner` so the extracted method keeps its receiver. Every
+    // write forwards its FULL parameter list — the decorator dropping the
+    // trailing provenance pair (authoredBy, kafkaOffset) is how every
+    // production write stored 'human' while the bare-client tests passed
+    // (found live 2026-08-14: the deployed pg client is ALWAYS wrapped).
     const edit = inner.editSection?.bind(inner);
     if (edit !== undefined) {
-      this.editSection = async (nodeId, sectionId, text) => {
-        const section = await edit(nodeId, sectionId, text);
+      this.editSection = async (
+        nodeId,
+        sectionId,
+        text,
+        authoredBy,
+        kafkaOffset,
+      ) => {
+        const section = await edit(
+          nodeId,
+          sectionId,
+          text,
+          authoredBy,
+          kafkaOffset,
+        );
         await this.push(nodeId);
         return section;
       };
     }
     const apply = inner.applySectionOps?.bind(inner);
     if (apply !== undefined) {
-      this.applySectionOps = async (nodeId, ops) => {
-        const result = await apply(nodeId, ops);
+      this.applySectionOps = async (nodeId, ops, authoredBy, kafkaOffset) => {
+        const result = await apply(nodeId, ops, authoredBy, kafkaOffset);
         await this.push(nodeId);
         return result;
       };
@@ -150,8 +167,13 @@ export class IndexingBodyClient implements BodyClient {
     return this.inner.readBody(nodeId);
   }
 
-  async saveBody(nodeId: string, sections: SectionInput[]): Promise<void> {
-    await this.inner.saveBody(nodeId, sections);
+  async saveBody(
+    nodeId: string,
+    sections: SectionInput[],
+    authoredBy?: AuthoredBy,
+    kafkaOffset?: number,
+  ): Promise<void> {
+    await this.inner.saveBody(nodeId, sections, authoredBy, kafkaOffset);
     await this.push(nodeId);
   }
 

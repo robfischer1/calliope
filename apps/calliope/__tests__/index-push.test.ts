@@ -41,6 +41,45 @@ describe("IndexingBodyClient — the write-side body push (B)", () => {
     expect(pusher.calls).toEqual([{ node: "n", body: "ONE\n\ntwo" }]);
   });
 
+  it("forwards write provenance (authoredBy, kafkaOffset) through every write", async () => {
+    // Found live 2026-08-14: the decorator forwarded only (nodeId, ops), so
+    // every production write stored 'human' — the pg client is ALWAYS wrapped
+    // in production, and the bare-client tests never saw the drop.
+    const principal =
+      "spiffe://notusmi.com/session/e5d3b0ee-4afb-441c-af3e-a61f7527c2c9";
+    const seen: {
+      verb: string;
+      authoredBy?: string;
+      kafkaOffset?: number;
+    }[] = [];
+    const inner: BodyClient = {
+      readBody: () => Promise.resolve([]),
+      saveBody: (_n, _s, authoredBy, kafkaOffset) => {
+        seen.push({ verb: "saveBody", authoredBy, kafkaOffset });
+        return Promise.resolve();
+      },
+      editSection: (_n, _id, text, authoredBy, kafkaOffset) => {
+        seen.push({ verb: "editSection", authoredBy, kafkaOffset });
+        return Promise.resolve({ id: "s", text, orderKey: "5" });
+      },
+      applySectionOps: (_n, _ops, authoredBy, kafkaOffset) => {
+        seen.push({ verb: "applySectionOps", authoredBy, kafkaOffset });
+        return Promise.resolve({ applied: [], sections: [] });
+      },
+    };
+    const client = new IndexingBodyClient(inner, new RecordingPusher());
+
+    await client.saveBody("n", [{ text: "x" }], principal, 42);
+    await client.editSection?.("n", "s", "y", principal, 43);
+    await client.applySectionOps?.("n", [], principal, 44);
+
+    expect(seen).toEqual([
+      { verb: "saveBody", authoredBy: principal, kafkaOffset: 42 },
+      { verb: "editSection", authoredBy: principal, kafkaOffset: 43 },
+      { verb: "applySectionOps", authoredBy: principal, kafkaOffset: 44 },
+    ]);
+  });
+
   it("does not expose editSection when the inner client lacks it", () => {
     const inner: BodyClient = {
       readBody: () => Promise.resolve([]),
