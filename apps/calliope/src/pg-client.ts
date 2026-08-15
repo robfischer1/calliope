@@ -1100,6 +1100,13 @@ export class PgBodyClient implements BodyClient {
    * before T (`supersedes IS NULL` rows), then let edit chains created at or
    * before T win over the rows they supersede. A revision predating the
    * body's first save yields `[]`.
+   *
+   * An OPS-ONLY body (grown entirely by block-grain adds, never coarse-saved)
+   * has no `supersedes IS NULL` generation anchor — its add rows carry
+   * `supersedes = ''`. The anchor coalesces to -infinity so the whole lineage
+   * is one generation and reconstruction works; before this, such a body
+   * reconstructed to `[]` at every timestamp (found live 2026-08-14 on the
+   * governance-blocks container, Law and the Receipts F1).
    */
   async readRevisionAt(nodeId: string, revision: string): Promise<Section[]> {
     const res = await this.#pool.query<SectionRow>(
@@ -1111,7 +1118,7 @@ export class PgBodyClient implements BodyClient {
          FROM sections s, gen
         WHERE s.node_id = $1
           AND s.created_at <= $2
-          AND s.created_at >= gen.t0
+          AND s.created_at >= COALESCE(gen.t0, '-infinity'::timestamptz)
           AND NOT s.tombstone
           -- F1: the supersession lookup consults the join table (the
           -- authoritative edge source), so N-predecessor merges reconstruct

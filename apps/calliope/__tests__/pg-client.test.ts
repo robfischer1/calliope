@@ -196,6 +196,44 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     ).toEqual([]);
   });
 
+  it("readRevisionAt reconstructs an OPS-ONLY body (no coarse-save anchor)", async () => {
+    // A container grown purely by block-grain adds has no `supersedes IS
+    // NULL` generation row — before the -infinity coalesce, every timestamp
+    // reconstructed to []. Found live 2026-08-14 on the governance-blocks
+    // container (Law and the Receipts F1).
+    await client.applySectionOps("node-ops-only", [
+      { op: "add", text: "rule-one", orderKey: "5" },
+    ]);
+    await client.applySectionOps("node-ops-only", [
+      { op: "add", text: "rule-two", orderKey: "6" },
+    ]);
+
+    const revs = await client.readRevisions("node-ops-only");
+    const [atSecond, atFirst] = revs;
+    if (!atSecond || !atFirst) throw new Error("missing revisions");
+    expect(revs.map((r) => r.kind)).toEqual(["ops", "ops"]);
+
+    expect(
+      (await client.readRevisionAt("node-ops-only", atFirst.revision)).map(
+        (s) => s.text,
+      ),
+    ).toEqual(["rule-one"]);
+    expect(
+      (await client.readRevisionAt("node-ops-only", atSecond.revision)).map(
+        (s) => s.text,
+      ),
+    ).toEqual(["rule-one", "rule-two"]);
+    expect(
+      await client.readRevisionAt("node-ops-only", atSecond.revision),
+    ).toEqual(await client.readBody("node-ops-only"));
+    expect(
+      await client.readRevisionAt(
+        "node-ops-only",
+        "2000-01-01T00:00:00.000000Z",
+      ),
+    ).toEqual([]);
+  });
+
   it("applySectionOps: a mixed batch applies transactionally at block grain (A11)", async () => {
     await client.saveBody("node-ops", [
       { text: "alpha" },
