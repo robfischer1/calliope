@@ -28,11 +28,16 @@ import { pathToFileURL } from "node:url";
 import { Pool } from "pg";
 import { BlobStore, type ProseStore } from "../blob-store.js";
 import {
+  type AdmitResult,
   type ChaosDial,
   type ChaosOp,
+  type HistoryEntry,
   LiveChaosDial,
+  type NodeEdge,
   opAdd,
   opCreate,
+  opRemove,
+  type QuadRow,
   type Tenant,
   tenantScope,
 } from "../chaos-client.js";
@@ -43,6 +48,8 @@ import {
   repositionOps,
   slotBirthOps,
   slotRemoveOps,
+  TREE_MEMBER,
+  TREE_POSITION,
 } from "../tree.js";
 import { COMMENT_CONTAINER_SUFFIX } from "../types.js";
 import type { Section } from "../types.js";
@@ -101,6 +108,131 @@ interface SlotState {
   position: string;
   blobId: string;
   text: string;
+}
+
+/** Transient-failure patterns that are SAFE to retry even for admit: each
+ *  means the connection was never established (DNS lookup, dial, refusal),
+ *  so no transaction can have landed. Anything mid-flight stays fatal for
+ *  writes — an admit whose RESPONSE was lost may have landed, and a blind
+ *  replay would double-apply the batch. (The full-run casualty, 2026-08-16:
+ *  docker's embedded DNS answered "server misbehaving" once, ~25 minutes
+ *  in, and the fail-fast runner died with 6,000 containers to go.) */
+const ADMIT_RETRYABLE =
+  /dial tcp|server misbehaving|no such host|connection refused|ECONNREFUSED|EAI_AGAIN/i;
+
+const RETRY_TRIES = 6;
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  safe: (err: unknown) => boolean,
+  label: string,
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= RETRY_TRIES || !safe(err)) throw err;
+      const delay = Math.min(2 ** attempt * 1000, 30_000);
+      console.error(
+        `migrate-tree: transient ${label} failure (attempt ` +
+          `${String(attempt)}), retrying in ${String(delay)}ms: ${String(err)}`,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
+/** A dial that survives infrastructure blips on an hour-long run. Reads
+ *  are idempotent — any failure retries. admit retries ONLY on errors
+ *  proving the request never reached the store (ADMIT_RETRYABLE). */
+export class RetryingDial implements ChaosDial {
+  readonly #inner: ChaosDial;
+  constructor(inner: ChaosDial) {
+    this.#inner = inner;
+  }
+  admit(ops: ChaosOp[], scope: string): Promise<AdmitResult> {
+    return withRetry(
+      () => this.#inner.admit(ops, scope),
+      (err) => ADMIT_RETRYABLE.test(String(err)),
+      "admit",
+    );
+  }
+  findByName(kind: string, label: string): Promise<string[]> {
+    return withRetry(
+      () => this.#inner.findByName(kind, label),
+      () => true,
+      "read",
+    );
+  }
+  resolveNodes(tokens: string[]): Promise<Record<string, string>> {
+    return withRetry(
+      () => this.#inner.resolveNodes(tokens),
+      () => true,
+      "read",
+    );
+  }
+  edges(token: string): Promise<NodeEdge[]> {
+    return withRetry(
+      () => this.#inner.edges(token),
+      () => true,
+      "read",
+    );
+  }
+  findByValue(
+    scope: string,
+    predicate: string,
+    value: string,
+  ): Promise<string[]> {
+    return withRetry(
+      () => this.#inner.findByValue(scope, predicate, value),
+      () => true,
+      "read",
+    );
+  }
+  registerGraph(name: string): Promise<void> {
+    return withRetry(
+      () => this.#inner.registerGraph(name),
+      () => true,
+      "read",
+    );
+  }
+  quadsFrom(
+    subjects: string[],
+    asOfTx: number | null,
+    predicateNames: string[] | null,
+    graph?: string,
+  ): Promise<QuadRow[]> {
+    return withRetry(
+      () => this.#inner.quadsFrom(subjects, asOfTx, predicateNames, graph),
+      () => true,
+      "read",
+    );
+  }
+  resolveScalars(hashes: string[]): Promise<Record<string, string>> {
+    return withRetry(
+      () => this.#inner.resolveScalars(hashes),
+      () => true,
+      "read",
+    );
+  }
+  history(
+    subjects: string[],
+    follow: string[],
+    graph?: string,
+  ): Promise<HistoryEntry[]> {
+    return withRetry(
+      () => this.#inner.history(subjects, follow, graph),
+      () => true,
+      "read",
+    );
+  }
+  heldBlobs(graph?: string): Promise<string[]> {
+    return withRetry(
+      () => this.#inner.heldBlobs(graph),
+      () => true,
+      "read",
+    );
+  }
 }
 
 /** The old store's per-container revision list, oldest first. */
@@ -411,6 +543,43 @@ export async function migrateTree(
     }
     if (probe) continue;
 
+    // Crash recovery — a prior run that died mid-replay left tree facts
+    // with no marker (the marker is stamped only after parity passes).
+    // Replaying onto that debris would re-birth every slot and fail HEAD
+    // parity with doubled prose, so the debris is removed first and the
+    // replay starts from a clean tree. tx stays null: cleanup is
+    // bookkeeping, not a revision — parity and provenance both skip it.
+    const dirty = await readContainer({ blobs, dial }, container);
+    if (dirty.blocks.length > 0) {
+      const cleanup: ChaosOp[] = [];
+      for (const b of dirty.blocks) {
+        if (b.blobId !== null) {
+          cleanup.push(
+            ...slotRemoveOps(b.slot, container, b.position, b.blobId),
+          );
+        } else {
+          cleanup.push(
+            opRemove(container, TREE_MEMBER, { toNode: b.slot }),
+            opRemove(b.slot, TREE_POSITION, { toLiteral: b.position }),
+          );
+        }
+      }
+      const res = await dial.admit(cleanup, scope);
+      if (!res.admitted) {
+        record.status = "parity_failed";
+        report.refused.push(
+          `${node}: partial-state cleanup refused: ${JSON.stringify(res.violations)}`,
+        );
+        continue;
+      }
+      record.revisions.push({
+        revision: "partial-cleanup",
+        authoredBy: "migrate-tree",
+        tx: null,
+        ops: cleanup.length,
+      });
+    }
+
     const supersedes = await supersessionEdges(pool, node);
     let slots = new Map<string, SlotState>();
     let lastTx: number | null = null;
@@ -608,7 +777,7 @@ async function main(): Promise<void> {
     pg: new PgBodyClient(pool),
     pool,
     blobs: new BlobStore(pool),
-    dial: new LiveChaosDial(),
+    dial: new RetryingDial(new LiveChaosDial()),
   };
   const opts: { probe?: boolean; limit?: number; node?: string } = {};
   if (probe) opts.probe = true;

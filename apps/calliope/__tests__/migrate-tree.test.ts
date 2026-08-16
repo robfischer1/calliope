@@ -11,7 +11,7 @@ import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 import { FixtureBlobStore } from "../src/blob-store.js";
-import { FixtureChaosDial } from "../src/chaos-client.js";
+import { type ChaosOp, FixtureChaosDial } from "../src/chaos-client.js";
 import { readContainer } from "../src/container-read.js";
 import {
   COMMENTS_ON,
@@ -275,5 +275,71 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
     expect(recB?.status).toBe("refused_drift");
     expect(report.refused.some((r) => r.includes(NODE_B))).toBe(true);
     expect(report.refused.some((r) => r.includes("frozen"))).toBe(true);
+  });
+
+  it("recovers a container whose first run died mid-replay", async () => {
+    // The 2026-08-16 full-run casualty, reproduced: an infrastructure
+    // failure kills the run between revision admits — tree facts landed,
+    // no marker. The re-run must clean the debris and converge, not
+    // double every slot.
+    const NODE_C = "c3".repeat(32);
+    await pg.saveBody(NODE_C, [{ text: "one" }, { text: "two" }]);
+    await sleep(5);
+    const body = await pg.readBody(NODE_C);
+    const two = body.find((s) => s.text === "two");
+    if (two === undefined) throw new Error("no two");
+    await pg.applySectionOps(NODE_C, [
+      { op: "update", sectionId: two.id, text: "two, revised" },
+    ]);
+    await sleep(5);
+    await pg.applySectionOps(NODE_C, [
+      { op: "add", text: "three", orderKey: "zz" },
+    ]);
+    await sleep(5);
+
+    let admits = 0;
+    const flaky = new Proxy(dial, {
+      get(target, prop, receiver) {
+        if (prop === "admit") {
+          return async (ops: ChaosOp[], scope: string) => {
+            admits += 1;
+            if (admits === 2) {
+              throw new Error(
+                'chaos wire call "resolve_node_refs": dialling: dial tcp:' +
+                  " lookup chaos on 127.0.0.11:53: server misbehaving",
+              );
+            }
+            return target.admit(ops, scope);
+          };
+        }
+        const v: unknown = Reflect.get(target, prop, receiver);
+        if (typeof v === "function") return v.bind(target) as unknown;
+        return v;
+      },
+    });
+    await expect(
+      migrateTree({ ...deps, dial: flaky }, { node: NODE_C }),
+    ).rejects.toThrow("misbehaving");
+
+    // rev 1 landed before the crash: real debris, honestly there.
+    const debris = await readContainer({ blobs, dial }, NODE_C);
+    expect(debris.blocks.length).toBeGreaterThan(0);
+
+    const report = await migrateTree(deps, { node: NODE_C });
+    const rec = report.per_container.find((c) => c.node === NODE_C);
+    expect(rec?.status).toBe("migrated");
+    expect(report.parity_mismatches).toEqual([]);
+    expect(report.refused).toEqual([]);
+    const cleanup = rec?.revisions.find(
+      (r) => r.revision === "partial-cleanup",
+    );
+    expect(cleanup?.ops ?? 0).toBeGreaterThan(0);
+    expect(cleanup?.tx).toBeNull();
+    const head = await readContainer({ blobs, dial }, NODE_C);
+    expect(head.blocks.map((b) => b.text)).toEqual([
+      "one",
+      "two, revised",
+      "three",
+    ]);
   });
 });
