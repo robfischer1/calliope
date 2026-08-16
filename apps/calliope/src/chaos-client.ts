@@ -46,18 +46,40 @@ export function opCreate(kind: string, label = ""): ChaosOp {
   return { op: "createNode", kind, label };
 }
 
-/** Assert one edge; exactly one of toLiteral/toNode. */
+/** An edge target — exactly one of the three object domains (F2/F3):
+ *  a literal (scalar), a node token or batch-local label, or a blob id
+ *  (decimal string — bigint-safe; themis translates to {"$blob": id}). */
+export interface EdgeTarget {
+  toLiteral?: string;
+  toNode?: string;
+  toBlob?: string;
+}
+
+function edgeFields(target: EdgeTarget): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    to_literal: target.toLiteral ?? null,
+    to_node: target.toNode ?? null,
+  };
+  // Only when present: pre-F3 consumers (and themis validators) treat an
+  // explicit null third target as a schema surprise; absence is the
+  // compatible spelling of "not a blob edge".
+  if (target.toBlob !== undefined) {
+    fields.to_blob = target.toBlob;
+  }
+  return fields;
+}
+
+/** Assert one edge; exactly one of toLiteral/toNode/toBlob. */
 export function opAdd(
   fromId: string,
   predicate: string,
-  target: { toLiteral?: string; toNode?: string },
+  target: EdgeTarget,
 ): ChaosOp {
   return {
     op: "addEdge",
     from_id: fromId,
     predicate,
-    to_literal: target.toLiteral ?? null,
-    to_node: target.toNode ?? null,
+    ...edgeFields(target),
   };
 }
 
@@ -85,6 +107,10 @@ export interface NodeEdge {
   predicate: string;
   value: string;
   isNode: boolean;
+  /** The object's recorded domain (F2). The wire carries `domain` ONLY on
+   *  blob edges (tape-pinned node/scalar shapes); absent + is_node decides
+   *  the other two. For a blob edge, `value` is the decimal blob id. */
+  domain: "node" | "scalar" | "blob";
 }
 
 /** The dial surface `create_note` needs — fixture-implementable. */
@@ -94,6 +120,9 @@ export interface ChaosDial {
   resolveNodes(tokens: string[]): Promise<Record<string, string>>;
   /** The node's outbound edges — the heal-on-reuse read. */
   edges(token: string): Promise<NodeEdge[]>;
+  /** Idempotent graph ensure (chaos `register_graph` — an identity op on
+   *  the chaos door, like the reads; themis's wire has no registerGraph). */
+  registerGraph(name: string): Promise<void>;
   /** The indexed literal point lookup — `find_by_value(graph, p, v)` (C9). */
   findByValue(
     scope: string,
@@ -111,14 +140,13 @@ export function scopeHash(name: string): string {
 export function opRemove(
   fromId: string,
   predicate: string,
-  target: { toLiteral?: string; toNode?: string },
+  target: EdgeTarget,
 ): ChaosOp {
   return {
     op: "removeEdge",
     from_id: fromId,
     predicate,
-    to_literal: target.toLiteral ?? null,
-    to_node: target.toNode ?? null,
+    ...edgeFields(target),
   };
 }
 
@@ -397,11 +425,29 @@ export class LiveChaosDial implements ChaosDial {
     if (raw === null || !Array.isArray(raw.edges)) {
       return [];
     }
-    return raw.edges.map((e) => ({
-      predicate: asStr(e.predicate),
-      value: asStr(e.value),
-      isNode: e.is_node === true,
-    }));
+    return raw.edges.map((e) => {
+      const isNode = e.is_node === true;
+      const domain =
+        (e as { domain?: unknown }).domain === "blob"
+          ? ("blob" as const)
+          : isNode
+            ? ("node" as const)
+            : ("scalar" as const);
+      return {
+        predicate: asStr(e.predicate),
+        value: asStr(e.value),
+        isNode,
+        domain,
+      };
+    });
+  }
+
+  async registerGraph(name: string): Promise<void> {
+    this.id += 1;
+    await rpc(this.chaos, this.id, "register_graph", {
+      graph: scopeHash(name),
+      name,
+    });
   }
 }
 
@@ -500,9 +546,31 @@ export interface ChaosFacet {
   scope: string;
 }
 
-/** The bare-scope convention (the chaos guard registers graphs bare). */
+/** The tenant set — five tenants, five graphs (Git for Ideas F3). Notes
+ *  predates F3; the others are registered idempotently at first use.
+ *  Mnemosyne stays graph-native on its own and joins only if it adopts
+ *  the shared store. */
+export type Tenant = "notes" | "documents" | "comments" | "governance";
+
+/** The bare-scope convention (the chaos guard registers graphs bare),
+ *  generalized per tenant. Env overrides keep the notes compat knob and
+ *  give each tenant its own. */
+export function tenantScope(
+  tenant: Tenant,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const overrides: Record<Tenant, string | undefined> = {
+    notes: env.CALLIOPE_NOTES_SCOPE,
+    documents: env.CALLIOPE_DOCUMENTS_SCOPE,
+    comments: env.CALLIOPE_COMMENTS_SCOPE,
+    governance: env.CALLIOPE_GOVERNANCE_SCOPE,
+  };
+  return overrides[tenant] ?? tenant;
+}
+
+/** The notes tenant's scope — the pre-F3 name, now a view over tenantScope. */
 export function notesScope(env: NodeJS.ProcessEnv = process.env): string {
-  return env.CALLIOPE_NOTES_SCOPE ?? "notes";
+  return tenantScope("notes", env);
 }
 
 // ── the fixture dial (tests + the standalone fixture server) ─────────────────
@@ -510,6 +578,7 @@ export function notesScope(env: NodeJS.ProcessEnv = process.env): string {
 /** In-memory ChaosDial: deterministic tokens, name-keyed reuse, no network. */
 export class FixtureChaosDial implements ChaosDial {
   readonly admits: { ops: ChaosOp[]; scope: string }[] = [];
+  readonly graphs = new Set<string>();
   private readonly byName = new Map<string, string>();
   private readonly labels = new Map<string, string>();
   private readonly nodeEdges = new Map<string, NodeEdge[]>();
@@ -530,29 +599,56 @@ export class FixtureChaosDial implements ChaosDial {
         violations: this.refuseWith,
       });
     }
+    // Batch-local label -> minted token, themis's exact rule: a NON-EMPTY
+    // createNode label names its mint for later ops in the SAME batch;
+    // first create wins a duplicate. Without this, a one-transaction slot
+    // birth (create + three edges) is untestable offline. Two passes,
+    // because themis pre-indexes creates before translating edges.
+    const batchLabels = new Map<string, string>();
     const minted: string[] = [];
     for (const op of ops) {
-      if (op.op === "createNode") {
-        this.seq += 1;
-        const token = this.seq.toString(16).padStart(64, "0");
-        const kind = asStr(op.kind);
-        const label = asStr(op.label);
-        this.byName.set(this.key(kind, label), token);
-        this.labels.set(token, label);
-        minted.push(token);
-      } else if (op.op === "addEdge") {
-        const from = asStr(op.from_id);
+      if (op.op !== "createNode") continue;
+      this.seq += 1;
+      const token = this.seq.toString(16).padStart(64, "0");
+      const kind = asStr(op.kind);
+      const label = asStr(op.label);
+      this.byName.set(this.key(kind, label), token);
+      this.labels.set(token, label);
+      if (label !== "" && !batchLabels.has(label)) {
+        batchLabels.set(label, token);
+      }
+      minted.push(token);
+    }
+    const resolveRef = (v: unknown): string => {
+      const raw = asStr(v);
+      return batchLabels.get(raw) ?? raw;
+    };
+    for (const op of ops) {
+      if (op.op === "addEdge") {
+        const from = resolveRef(op.from_id);
         const list = this.nodeEdges.get(from) ?? [];
         const toNode = op.to_node;
+        const toBlob = op.to_blob;
+        const hasBlob = toBlob !== null && toBlob !== undefined;
+        const isNode = !hasBlob && toNode !== null && toNode !== undefined;
         list.push({
           predicate: asStr(op.predicate),
-          value: asStr(toNode) || asStr(op.to_literal),
-          isNode: toNode !== null && toNode !== undefined,
+          value: hasBlob
+            ? asStr(toBlob)
+            : isNode
+              ? resolveRef(toNode)
+              : asStr(op.to_literal),
+          isNode,
+          domain: hasBlob ? "blob" : isNode ? "node" : "scalar",
         });
         this.nodeEdges.set(from, list);
       } else if (op.op === "removeEdge") {
-        const from = asStr(op.from_id);
-        const value = asStr(op.to_node) || asStr(op.to_literal);
+        const from = resolveRef(op.from_id);
+        const toBlob = op.to_blob;
+        const hasBlob = toBlob !== null && toBlob !== undefined;
+        const value = hasBlob
+          ? asStr(toBlob)
+          : resolveRef(op.to_node) || asStr(op.to_literal);
         const list = (this.nodeEdges.get(from) ?? []).filter(
           (e) => !(e.predicate === asStr(op.predicate) && e.value === value),
         );
@@ -580,6 +676,11 @@ export class FixtureChaosDial implements ChaosDial {
 
   edges(token: string): Promise<NodeEdge[]> {
     return Promise.resolve(this.nodeEdges.get(token) ?? []);
+  }
+
+  registerGraph(name: string): Promise<void> {
+    this.graphs.add(name);
+    return Promise.resolve();
   }
 
   findByValue(
