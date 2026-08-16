@@ -88,6 +88,9 @@ export interface AdmitResult {
   admitted: boolean;
   minted: string[];
   violations: unknown[];
+  /** The graph transaction the batch landed as (F6 — the parity gate's
+   *  revision→tx record). Absent when the gate answered none. */
+  tx?: number;
 }
 
 /** A structured chaos/themis failure — the wire's error, never swallowed. */
@@ -399,15 +402,18 @@ export class LiveChaosDial implements ChaosDial {
       ok?: boolean;
       minted?: unknown[];
       violations?: unknown[];
+      tx?: unknown;
     } | null;
     if (raw === null || typeof raw !== "object") {
       throw new ChaosClientError("admit: empty result", "bad_result");
     }
-    return {
+    const out: AdmitResult = {
       admitted: raw.admitted ?? raw.ok ?? false,
       minted: (raw.minted ?? []).map(String),
       violations: raw.violations ?? [],
     };
+    if (typeof raw.tx === "number") out.tx = raw.tx;
+    return out;
   }
 
   async findByName(kind: string, label: string): Promise<string[]> {
@@ -797,7 +803,7 @@ export class FixtureChaosDial implements ChaosDial {
         }
       }
     }
-    return Promise.resolve({ admitted: true, minted, violations: [] });
+    return Promise.resolve({ admitted: true, minted, violations: [], tx });
   }
 
   findByName(kind: string, label: string): Promise<string[]> {
