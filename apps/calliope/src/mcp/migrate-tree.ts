@@ -292,6 +292,22 @@ async function resolveContainer(
   probe: boolean,
 ): Promise<string | null> {
   if (HEX64.test(node)) return node;
+  return acquireCarrier(dial, node, tenant, probe);
+}
+
+/** The carrier path — a kind-"node" stand-in labelled by the old id, the
+ *  provenance fact as its index; idempotent via findByName. Serves (a)
+ *  non-hex container ids and (b) hex containers whose graph node has NO
+ *  nodes row (full-run finding, 2026-08-16: 415 old sections containers
+ *  outlive their nodes — most are TOMBSTONED and still satisfy the facts
+ *  FK, but hard-absent ones refuse at the subject guard, so their replay
+ *  lands on a carrier instead). */
+async function acquireCarrier(
+  dial: ChaosDial,
+  node: string,
+  tenant: Tenant,
+  probe: boolean,
+): Promise<string | null> {
   const existing = await dial.findByName("node", node);
   const first = existing[0];
   if (first !== undefined) return first;
@@ -304,6 +320,15 @@ async function resolveContainer(
     tenantScope(tenant),
   );
   return res.minted[0] ?? null;
+}
+
+/** True iff the thrown admit error is chaos's subject guard refusing OUR
+ *  container for having no nodes row — the one refusal the carrier path
+ *  answers. Guard-driven on purpose: the guard IS the existence oracle
+ *  (resolveNodes filters tombstones and would over-report absence). */
+function isMissingSubject(err: unknown, node: string): boolean {
+  const text = String(err);
+  return text.includes("no nodes row") && text.includes(`s=${node}`);
 }
 
 /** Diff one revision step into tree ops. Mutates `slots` to the new state
@@ -507,7 +532,7 @@ export async function migrateTree(
   // Section id → slot token, across containers (comments resolution).
   const slotBySection = new Map<string, { slot: string; tenant: Tenant }>();
 
-  for (const node of nodes) {
+  containers: for (const node of nodes) {
     const tenant = tenantOf(node);
     const scope = tenantScope(tenant);
     const revs = await revisionsAsc(pg, node);
@@ -521,191 +546,225 @@ export async function migrateTree(
     };
     report.per_container.push(record);
 
-    const container = await resolveContainer(dial, node, tenant, probe);
+    let container = await resolveContainer(dial, node, tenant, probe);
     if (container === null) {
       if (!probe) report.refused.push(`${node}: container unresolvable`);
       continue;
     }
     record.container = container;
 
-    const { marker } = await graphState(dial, container);
-    if (marker !== null) {
-      if (marker === markerValue) {
-        record.status = "skipped";
-        report.skipped += 1;
-        continue; // comments resolution falls back to findByValue
-      }
-      record.status = "refused_drift";
-      report.refused.push(
-        `${node}: old store changed after migration (marker ${marker} != ${markerValue}) — the old store must be frozen`,
-      );
-      continue;
-    }
-    if (probe) continue;
-
-    // Crash recovery — a prior run that died mid-replay left tree facts
-    // with no marker (the marker is stamped only after parity passes).
-    // Replaying onto that debris would re-birth every slot and fail HEAD
-    // parity with doubled prose, so the debris is removed first and the
-    // replay starts from a clean tree. tx stays null: cleanup is
-    // bookkeeping, not a revision — parity and provenance both skip it.
-    const dirty = await readContainer({ blobs, dial }, container);
-    if (dirty.blocks.length > 0) {
-      const cleanup: ChaosOp[] = [];
-      for (const b of dirty.blocks) {
-        if (b.blobId !== null) {
-          cleanup.push(
-            ...slotRemoveOps(b.slot, container, b.position, b.blobId),
+    // A hex container whose node has no nodes row cannot carry facts; the
+    // replay retries ONCE on a carrier when the subject guard says so —
+    // guard-driven, so there is no second existence oracle to drift.
+    let carrierTried = false;
+    replay: for (;;) {
+      try {
+        const { marker } = await graphState(dial, container);
+        if (marker !== null) {
+          if (marker === markerValue) {
+            record.status = "skipped";
+            report.skipped += 1;
+            continue containers; // comments resolution falls back to findByValue
+          }
+          record.status = "refused_drift";
+          report.refused.push(
+            `${node}: old store changed after migration (marker ${marker} != ${markerValue}) — the old store must be frozen`,
           );
-        } else {
-          cleanup.push(
-            opRemove(container, TREE_MEMBER, { toNode: b.slot }),
-            opRemove(b.slot, TREE_POSITION, { toLiteral: b.position }),
+          continue containers;
+        }
+        if (probe) continue containers;
+
+        // Crash recovery — a prior run that died mid-replay left tree facts
+        // with no marker (the marker is stamped only after parity passes).
+        // Replaying onto that debris would re-birth every slot and fail HEAD
+        // parity with doubled prose, so the debris is removed first and the
+        // replay starts from a clean tree. tx stays null: cleanup is
+        // bookkeeping, not a revision — parity and provenance both skip it.
+        const dirty = await readContainer({ blobs, dial }, container);
+        if (dirty.blocks.length > 0) {
+          const cleanup: ChaosOp[] = [];
+          for (const b of dirty.blocks) {
+            if (b.blobId !== null) {
+              cleanup.push(
+                ...slotRemoveOps(b.slot, container, b.position, b.blobId),
+              );
+            } else {
+              cleanup.push(
+                opRemove(container, TREE_MEMBER, { toNode: b.slot }),
+                opRemove(b.slot, TREE_POSITION, { toLiteral: b.position }),
+              );
+            }
+          }
+          const res = await dial.admit(cleanup, scope);
+          if (!res.admitted) {
+            record.status = "parity_failed";
+            report.refused.push(
+              `${node}: partial-state cleanup refused: ${JSON.stringify(res.violations)}`,
+            );
+            continue containers;
+          }
+          record.revisions.push({
+            revision: "partial-cleanup",
+            authoredBy: "migrate-tree",
+            tx: null,
+            ops: cleanup.length,
+          });
+        }
+
+        const supersedes = await supersessionEdges(pool, node);
+        let slots = new Map<string, SlotState>();
+        let lastTx: number | null = null;
+        for (const rev of revs) {
+          const target = canonicalizePositions(
+            await pg.readRevisionAt(node, rev.revision),
+          );
+          const { build } = diffRevision(
+            container,
+            slots,
+            target,
+            supersedes,
+            (text) => blobs.mint(text),
+          );
+          const { batch, next } = await build();
+          if (batch.length === 0) {
+            record.revisions.push({
+              revision: rev.revision,
+              authoredBy: rev.authoredBy,
+              tx: lastTx,
+              ops: 0,
+            });
+            slots = next([]);
+            continue;
+          }
+          const res = await dial.admit(batch, scope);
+          if (!res.admitted) {
+            record.status = "parity_failed";
+            report.refused.push(
+              `${node}@${rev.revision}: admit refused: ${JSON.stringify(res.violations)}`,
+            );
+            break;
+          }
+          lastTx = res.tx ?? null;
+          record.revisions.push({
+            revision: rev.revision,
+            authoredBy: rev.authoredBy,
+            tx: lastTx,
+            ops: batch.length,
+          });
+          slots = next(res.minted);
+        }
+        if (record.status !== "migrated") continue containers;
+
+        // HEAD reconcile — import-shaped debris, found live (container
+        // 00fad279…): a bulk import lands N ACTIVE anchor rows (supersedes
+        // NULL, distinct created_at), so the old model's HEAD reads all of
+        // them while its history reads each as a one-row generation. The
+        // replay honestly reproduces the history; this closing pass diffs the
+        // replayed end-state onto the old HEAD read so the tree's head equals
+        // readBody exactly — one more transaction, recorded as its own
+        // synthetic revision.
+        const headTarget = canonicalizePositions(await pg.readBody(node));
+        const headDiff = await diffRevision(
+          container,
+          slots,
+          headTarget,
+          supersedes,
+          (text) => blobs.mint(text),
+        ).build();
+        if (headDiff.batch.length > 0) {
+          const res = await dial.admit(headDiff.batch, scope);
+          if (!res.admitted) {
+            record.status = "parity_failed";
+            report.refused.push(
+              `${node}@head-reconcile: admit refused: ${JSON.stringify(res.violations)}`,
+            );
+            continue containers;
+          }
+          lastTx = res.tx ?? null;
+          record.revisions.push({
+            revision: "head-reconcile",
+            authoredBy: "migrate-tree",
+            tx: lastTx,
+            ops: headDiff.batch.length,
+          });
+          slots = headDiff.next(res.minted);
+        }
+
+        for (const [sectionId, state] of slots) {
+          slotBySection.set(sectionId, { slot: state.slot, tenant });
+        }
+
+        // Parity, two-sided. HEAD:
+        const facet = { blobs, dial };
+        const oldHead = await pg.readBody(node);
+        const newHead = await readContainer(facet, container);
+        if (!sameProse(newHead.blocks, oldHead)) {
+          record.status = "parity_failed";
+          report.parity_mismatches.push(`${node}: HEAD texts/order diverge`);
+          continue containers;
+        }
+        // Every revision as-of its tx:
+        let parityOk = true;
+        for (const rev of record.revisions) {
+          if (rev.tx === null) continue; // pre-first-content revisions
+          if (rev.revision === "head-reconcile") continue; // synthetic — HEAD covers it
+          const oldAt = await pg.readRevisionAt(node, rev.revision);
+          const newAt = await readContainer(facet, container, {
+            asOfTx: rev.tx,
+          });
+          if (!sameProse(newAt.blocks, oldAt)) {
+            record.status = "parity_failed";
+            report.parity_mismatches.push(
+              `${node}@${rev.revision} (tx ${String(rev.tx)}): as-of texts/order diverge`,
+            );
+            parityOk = false;
+          }
+        }
+        if (!parityOk) continue containers;
+
+        // Mark converged — ONE bookkeeping admit carrying the marker AND the
+        // per-revision original-authorship facts (never rides a revision
+        // batch, so as-of parity reads are untouched; history honestly shows
+        // one migration-bookkeeping transaction per container).
+        const bookkeeping: ChaosOp[] = [
+          opAdd(container, SECTIONS_MIGRATED, { toLiteral: markerValue }),
+        ];
+        for (const rev of record.revisions) {
+          if (rev.tx === null) continue;
+          bookkeeping.push(
+            opAdd(container, MIGRATION_PROVENANCE, {
+              toLiteral: `tx=${String(rev.tx)} at=${rev.revision} by=${rev.authoredBy}`,
+            }),
           );
         }
-      }
-      const res = await dial.admit(cleanup, scope);
-      if (!res.admitted) {
-        record.status = "parity_failed";
-        report.refused.push(
-          `${node}: partial-state cleanup refused: ${JSON.stringify(res.violations)}`,
-        );
-        continue;
-      }
-      record.revisions.push({
-        revision: "partial-cleanup",
-        authoredBy: "migrate-tree",
-        tx: null,
-        ops: cleanup.length,
-      });
-    }
-
-    const supersedes = await supersessionEdges(pool, node);
-    let slots = new Map<string, SlotState>();
-    let lastTx: number | null = null;
-    for (const rev of revs) {
-      const target = canonicalizePositions(
-        await pg.readRevisionAt(node, rev.revision),
-      );
-      const { build } = diffRevision(
-        container,
-        slots,
-        target,
-        supersedes,
-        (text) => blobs.mint(text),
-      );
-      const { batch, next } = await build();
-      if (batch.length === 0) {
-        record.revisions.push({
-          revision: rev.revision,
-          authoredBy: rev.authoredBy,
-          tx: lastTx,
-          ops: 0,
-        });
-        slots = next([]);
-        continue;
-      }
-      const res = await dial.admit(batch, scope);
-      if (!res.admitted) {
-        record.status = "parity_failed";
-        report.refused.push(
-          `${node}@${rev.revision}: admit refused: ${JSON.stringify(res.violations)}`,
-        );
-        break;
-      }
-      lastTx = res.tx ?? null;
-      record.revisions.push({
-        revision: rev.revision,
-        authoredBy: rev.authoredBy,
-        tx: lastTx,
-        ops: batch.length,
-      });
-      slots = next(res.minted);
-    }
-    if (record.status !== "migrated") continue;
-
-    // HEAD reconcile — import-shaped debris, found live (container
-    // 00fad279…): a bulk import lands N ACTIVE anchor rows (supersedes
-    // NULL, distinct created_at), so the old model's HEAD reads all of
-    // them while its history reads each as a one-row generation. The
-    // replay honestly reproduces the history; this closing pass diffs the
-    // replayed end-state onto the old HEAD read so the tree's head equals
-    // readBody exactly — one more transaction, recorded as its own
-    // synthetic revision.
-    const headTarget = canonicalizePositions(await pg.readBody(node));
-    const headDiff = await diffRevision(
-      container,
-      slots,
-      headTarget,
-      supersedes,
-      (text) => blobs.mint(text),
-    ).build();
-    if (headDiff.batch.length > 0) {
-      const res = await dial.admit(headDiff.batch, scope);
-      if (!res.admitted) {
-        record.status = "parity_failed";
-        report.refused.push(
-          `${node}@head-reconcile: admit refused: ${JSON.stringify(res.violations)}`,
-        );
-        continue;
-      }
-      lastTx = res.tx ?? null;
-      record.revisions.push({
-        revision: "head-reconcile",
-        authoredBy: "migrate-tree",
-        tx: lastTx,
-        ops: headDiff.batch.length,
-      });
-      slots = headDiff.next(res.minted);
-    }
-
-    for (const [sectionId, state] of slots) {
-      slotBySection.set(sectionId, { slot: state.slot, tenant });
-    }
-
-    // Parity, two-sided. HEAD:
-    const facet = { blobs, dial };
-    const oldHead = await pg.readBody(node);
-    const newHead = await readContainer(facet, container);
-    if (!sameProse(newHead.blocks, oldHead)) {
-      record.status = "parity_failed";
-      report.parity_mismatches.push(`${node}: HEAD texts/order diverge`);
-      continue;
-    }
-    // Every revision as-of its tx:
-    let parityOk = true;
-    for (const rev of record.revisions) {
-      if (rev.tx === null) continue; // pre-first-content revisions
-      if (rev.revision === "head-reconcile") continue; // synthetic — HEAD covers it
-      const oldAt = await pg.readRevisionAt(node, rev.revision);
-      const newAt = await readContainer(facet, container, { asOfTx: rev.tx });
-      if (!sameProse(newAt.blocks, oldAt)) {
-        record.status = "parity_failed";
-        report.parity_mismatches.push(
-          `${node}@${rev.revision} (tx ${String(rev.tx)}): as-of texts/order diverge`,
-        );
-        parityOk = false;
+        await dial.admit(bookkeeping, scope);
+        report.migrated += 1;
+        break replay;
+      } catch (err) {
+        // The subject guard's "no nodes row" for OUR hex container: land
+        // the whole replay on a carrier instead and start over. Any other
+        // error stays fatal (fail-fast is this tool's contract).
+        if (
+          !carrierTried &&
+          container === node &&
+          isMissingSubject(err, node)
+        ) {
+          carrierTried = true;
+          const carrier = await acquireCarrier(dial, node, tenant, false);
+          if (carrier === null) {
+            record.status = "parity_failed";
+            report.refused.push(`${node}: carrier mint failed`);
+            continue containers;
+          }
+          container = carrier;
+          record.container = container;
+          record.revisions = [];
+          record.status = "migrated";
+          continue replay;
+        }
+        throw err;
       }
     }
-    if (!parityOk) continue;
-
-    // Mark converged — ONE bookkeeping admit carrying the marker AND the
-    // per-revision original-authorship facts (never rides a revision
-    // batch, so as-of parity reads are untouched; history honestly shows
-    // one migration-bookkeeping transaction per container).
-    const bookkeeping: ChaosOp[] = [
-      opAdd(container, SECTIONS_MIGRATED, { toLiteral: markerValue }),
-    ];
-    for (const rev of record.revisions) {
-      if (rev.tx === null) continue;
-      bookkeeping.push(
-        opAdd(container, MIGRATION_PROVENANCE, {
-          toLiteral: `tx=${String(rev.tx)} at=${rev.revision} by=${rev.authoredBy}`,
-        }),
-      );
-    }
-    await dial.admit(bookkeeping, scope);
-    report.migrated += 1;
   }
 
   // comments_on → slot-to-slot facts in the comments graph.
