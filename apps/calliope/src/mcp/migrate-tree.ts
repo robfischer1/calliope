@@ -296,6 +296,34 @@ function diffRevision(
   };
 }
 
+/**
+ * Old-model debris: two sections can share an order_key (the old read
+ * tiebreaks on id; the tree's address cannot). Canonicalize a revision's
+ * positions to be UNIQUE while preserving the old read's exact order —
+ * readRevisionAt already answers (order_key COLLATE "C", id) sorted, so a
+ * duplicate run keeps its order and the i-th member takes orderKey +
+ * "0"×i ("a" < "a0" < "a00" bytewise). Deterministic across re-runs.
+ */
+function canonicalizePositions(target: Section[]): Section[] {
+  const out: Section[] = [];
+  let run = "";
+  let runLength = 0;
+  for (const section of target) {
+    if (section.orderKey === run) {
+      runLength += 1;
+      out.push({
+        ...section,
+        orderKey: section.orderKey + "0".repeat(runLength),
+      });
+    } else {
+      run = section.orderKey;
+      runLength = 0;
+      out.push(section);
+    }
+  }
+  return out;
+}
+
 /** Compare two block lists on (text, order) — the parity canon. */
 function sameProse(
   a: { text: string | null }[],
@@ -387,7 +415,9 @@ export async function migrateTree(
     let slots = new Map<string, SlotState>();
     let lastTx: number | null = null;
     for (const rev of revs) {
-      const target = await pg.readRevisionAt(node, rev.revision);
+      const target = canonicalizePositions(
+        await pg.readRevisionAt(node, rev.revision),
+      );
       const { build } = diffRevision(
         container,
         slots,
@@ -425,6 +455,41 @@ export async function migrateTree(
     }
     if (record.status !== "migrated") continue;
 
+    // HEAD reconcile — import-shaped debris, found live (container
+    // 00fad279…): a bulk import lands N ACTIVE anchor rows (supersedes
+    // NULL, distinct created_at), so the old model's HEAD reads all of
+    // them while its history reads each as a one-row generation. The
+    // replay honestly reproduces the history; this closing pass diffs the
+    // replayed end-state onto the old HEAD read so the tree's head equals
+    // readBody exactly — one more transaction, recorded as its own
+    // synthetic revision.
+    const headTarget = canonicalizePositions(await pg.readBody(node));
+    const headDiff = await diffRevision(
+      container,
+      slots,
+      headTarget,
+      supersedes,
+      (text) => blobs.mint(text),
+    ).build();
+    if (headDiff.batch.length > 0) {
+      const res = await dial.admit(headDiff.batch, scope);
+      if (!res.admitted) {
+        record.status = "parity_failed";
+        report.refused.push(
+          `${node}@head-reconcile: admit refused: ${JSON.stringify(res.violations)}`,
+        );
+        continue;
+      }
+      lastTx = res.tx ?? null;
+      record.revisions.push({
+        revision: "head-reconcile",
+        authoredBy: "migrate-tree",
+        tx: lastTx,
+        ops: headDiff.batch.length,
+      });
+      slots = headDiff.next(res.minted);
+    }
+
     for (const [sectionId, state] of slots) {
       slotBySection.set(sectionId, { slot: state.slot, tenant });
     }
@@ -442,6 +507,7 @@ export async function migrateTree(
     let parityOk = true;
     for (const rev of record.revisions) {
       if (rev.tx === null) continue; // pre-first-content revisions
+      if (rev.revision === "head-reconcile") continue; // synthetic — HEAD covers it
       const oldAt = await pg.readRevisionAt(node, rev.revision);
       const newAt = await readContainer(facet, container, { asOfTx: rev.tx });
       if (!sameProse(newAt.blocks, oldAt)) {
