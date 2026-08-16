@@ -10,7 +10,7 @@
  * a save that nets to nothing opens no transaction at all.
  */
 
-import type { ProseStore } from "./blob-store.js";
+import type { GcStore, ProseStore } from "./blob-store.js";
 import {
   ChaosClientError,
   type ChaosDial,
@@ -38,6 +38,8 @@ export interface ContainerFacet {
   dial: ChaosDial;
   /** Tenant → graph scope (env-aware); defaults to {@link tenantScope}. */
   scope?: (tenant: Tenant) => string;
+  /** The census's store surface (F7) — present on backends that can reap. */
+  gc?: GcStore;
 }
 
 /** Per-save outcome. Indexes key into the ORIGINAL ops array. */

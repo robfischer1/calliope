@@ -166,6 +166,12 @@ export interface ChaosDial {
     follow: string[],
     graph?: string,
   ): Promise<HistoryEntry[]>;
+  /**
+   * The blob census's reporting half (F7): every blob id this graph's
+   * facts LOG names. An empty list is a REPORT, never silence — the
+   * caller treats a thrown error as an incomplete census.
+   */
+  heldBlobs(graph?: string): Promise<string[]>;
   /** The indexed literal point lookup — `find_by_value(graph, p, v)` (C9). */
   findByValue(
     scope: string,
@@ -559,6 +565,17 @@ export class LiveChaosDial implements ChaosDial {
       };
     });
   }
+
+  async heldBlobs(graph?: string): Promise<string[]> {
+    this.id += 1;
+    const raw = (await rpc(this.chaos, this.id, "held_blobs", {
+      graph: graph !== undefined ? scopeHash(graph) : null,
+    })) as { held?: unknown[] } | null;
+    if (raw === null || !Array.isArray(raw.held)) {
+      throw new ChaosClientError("held_blobs: malformed report", "bad_result");
+    }
+    return raw.held.map(asStr);
+  }
 }
 
 // ── the Notes root (C8's orphan-safety anchor) ────────────────────────────────
@@ -874,6 +891,23 @@ export class FixtureChaosDial implements ChaosDial {
       if (want.has(h)) out[h] = entry.value;
     }
     return Promise.resolve(out);
+  }
+
+  /** Test knob: throw on heldBlobs (an incomplete census). */
+  failHeldBlobs = false;
+
+  heldBlobs(graph?: string): Promise<string[]> {
+    void graph; // single-graph fixture: every scope answers the one log
+    if (this.failHeldBlobs) {
+      return Promise.reject(
+        new ChaosClientError("held_blobs: fixture refuses", "wire_error"),
+      );
+    }
+    const held = new Set<string>();
+    for (const entry of this.factLog) {
+      if (entry.domain === "blob") held.add(entry.value);
+    }
+    return Promise.resolve([...held].sort((a, b) => Number(a) - Number(b)));
   }
 
   history(

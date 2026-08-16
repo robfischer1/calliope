@@ -168,4 +168,115 @@ export class FixtureBlobStore implements ProseStore {
   get size(): number {
     return this.#byId.size;
   }
+
+  /** Every id, ascending (the census's candidate universe). */
+  allIds(): string[] {
+    return [...this.#byId.keys()].sort((a, b) => Number(a) - Number(b));
+  }
+
+  /** The census's reap (F7) — the one sanctioned deletion. */
+  reapIds(ids: string[]): number {
+    let n = 0;
+    for (const id of ids) {
+      const text = this.#byId.get(id);
+      if (text === undefined) continue;
+      this.#byId.delete(id);
+      this.#byText.delete(text);
+      n += 1;
+    }
+    return n;
+  }
+}
+
+/** The census's store-side surface (F7) — deliberately NOT on ProseStore:
+ *  reaping is the census's one sanctioned mutation, and the general prose
+ *  surface stays read-and-mint only (the F1 pin holds). */
+export interface GcStore {
+  /** Highest minted id at snapshot time; null on an empty store. */
+  maxId(): Promise<string | null>;
+  /** Every id ≤ upTo (the census's candidate universe). */
+  listIdsUpTo(upTo: string): Promise<string[]>;
+  /** Ids marked unheld by a previous complete census. */
+  readMarks(): Promise<string[]>;
+  /** Replace the mark set (only ever called after a COMPLETE census). */
+  writeMarks(ids: string[]): Promise<void>;
+  /** Delete reaped blobs + their marks. Returns the count removed. */
+  reap(ids: string[]): Promise<number>;
+}
+
+/** GcStore over the sovereign store — same pool, separate class. */
+export class PgBlobGc implements GcStore {
+  readonly #pool: Pool;
+  constructor(pool: Pool) {
+    this.#pool = pool;
+  }
+  async maxId(): Promise<string | null> {
+    const res = await this.#pool.query<{ max: string | null }>(
+      `SELECT max(id)::text AS max FROM blobs`,
+    );
+    return res.rows[0]?.max ?? null;
+  }
+  async listIdsUpTo(upTo: string): Promise<string[]> {
+    const res = await this.#pool.query<{ id: string }>(
+      `SELECT id FROM blobs WHERE id <= $1 ORDER BY id`,
+      [upTo],
+    );
+    return res.rows.map((r) => r.id);
+  }
+  async readMarks(): Promise<string[]> {
+    const res = await this.#pool.query<{ id: string }>(
+      `SELECT id FROM blob_gc_marks ORDER BY id`,
+    );
+    return res.rows.map((r) => r.id);
+  }
+  async writeMarks(ids: string[]): Promise<void> {
+    await this.#pool.query(`DELETE FROM blob_gc_marks`);
+    if (ids.length === 0) return;
+    await this.#pool.query(
+      `INSERT INTO blob_gc_marks (id)
+       SELECT unnest($1::bigint[]) ON CONFLICT (id) DO NOTHING`,
+      [ids],
+    );
+  }
+  async reap(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const res = await this.#pool.query(
+      `DELETE FROM blobs WHERE id = ANY($1::bigint[])`,
+      [ids],
+    );
+    await this.#pool.query(
+      `DELETE FROM blob_gc_marks WHERE id = ANY($1::bigint[])`,
+      [ids],
+    );
+    return res.rowCount ?? 0;
+  }
+}
+
+/** GcStore over the in-memory fixture — one model, two engines. */
+export class FixtureBlobGc implements GcStore {
+  #marks: string[] = [];
+  constructor(private readonly store: FixtureBlobStore) {}
+  maxId(): Promise<string | null> {
+    const ids = this.store.allIds();
+    return Promise.resolve(
+      ids.length === 0 ? null : (ids[ids.length - 1] ?? null),
+    );
+  }
+  listIdsUpTo(upTo: string): Promise<string[]> {
+    return Promise.resolve(
+      this.store.allIds().filter((id) => Number(id) <= Number(upTo)),
+    );
+  }
+  readMarks(): Promise<string[]> {
+    return Promise.resolve([...this.#marks]);
+  }
+  writeMarks(ids: string[]): Promise<void> {
+    this.#marks = [...ids];
+    return Promise.resolve();
+  }
+  reap(ids: string[]): Promise<number> {
+    const n = this.store.reapIds(ids);
+    this.#marks = this.#marks.filter((id) => !ids.includes(id));
+    return Promise.resolve(n);
+  }
 }
