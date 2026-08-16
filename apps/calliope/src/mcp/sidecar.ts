@@ -19,13 +19,21 @@ import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { statSync, writeSync } from "node:fs";
-import { argv, exit } from "node:process";
+import { dirname } from "node:path";
+import { argv, execPath, exit } from "node:process";
 import { pathToFileURL } from "node:url";
+import { Pool } from "pg";
+import { BlobStore } from "../blob-store.js";
+import { tenantScope } from "../chaos-client.js";
+import type { ContainerFacet } from "../container-write.js";
 import { FsBodyClient } from "../fs-client.js";
 import { FocusRegister } from "../focus-register.js";
 import { fsListByTag, fsListTags } from "../fs-tags.js";
 import { LocalSearchIndex } from "../fs-search/index.js";
 import type { SearchResponse } from "../fs-search/index.js";
+import { LocalChaosDial } from "../local-admit.js";
+import { PgBodyClient } from "../pg-client.js";
+import { type Engine, resolvePayload, startEngine } from "./babychaos.js";
 import { createServer as createMcpServer } from "./server.js";
 import type { SectionInput } from "../types.js";
 import {
@@ -183,15 +191,36 @@ async function dispatch(
   }
 }
 
+/** The engine's boot lifecycle, as /health reports it. `absent` = no
+ *  payload beside the exe (fs-only deployment, the transition posture). */
+export type EngineState = "absent" | "booting" | "ready" | "failed";
+
+/** The sidecar's live view of the baby-chaos engine — read PER REQUEST,
+ *  so /mcp grows the container verbs the moment the engine turns ready
+ *  without a listener restart. */
+export interface EngineView {
+  state: () => EngineState;
+  containers: () => ContainerFacet | undefined;
+  /** Loopback service ports once ready — /health diagnostics. */
+  ports: () => { pg: number; chaos: number } | null;
+}
+
+const NO_ENGINE: EngineView = {
+  state: () => "absent",
+  containers: () => undefined,
+  ports: () => null,
+};
+
 export function createSidecarServer(
   client: FsBodyClient,
-  extras?: { search?: LocalSearchIndex },
+  extras?: { search?: LocalSearchIndex; engine?: EngineView },
 ): ReturnType<typeof createServer> {
   // 031 ("Look At This" F12): one register for the sidecar's lifetime —
   // honestly empty until something local feeds it; `look` answers
   // { focus: null, pins: [] } rather than pretending.
   const focus = new FocusRegister();
   const search = extras?.search;
+  const engine = extras?.engine ?? NO_ENGINE;
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     const path = (req.url ?? "").split("?", 1)[0];
     const cors = corsHeaders();
@@ -202,7 +231,15 @@ export function createSidecarServer(
     }
     if (path === "/health" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "application/json", ...cors });
-      res.end(JSON.stringify({ ok: true, root: client.root, backend: "fs" }));
+      res.end(
+        JSON.stringify({
+          ok: true,
+          root: client.root,
+          backend: "fs",
+          engine: engine.state(),
+          engine_ports: engine.ports(),
+        }),
+      );
       return;
     }
     // 031 ("Look At This" F12, Fable Wave 6.3 pulled forward): the sidecar's
@@ -213,7 +250,11 @@ export function createSidecarServer(
     // transport over the SHARED FsBodyClient.
     if (path === "/mcp" && req.method === "POST") {
       void (async () => {
-        const server = createMcpServer(client, { focus, search });
+        const server = createMcpServer(client, {
+          focus,
+          search,
+          containers: engine.containers(),
+        });
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
         });
@@ -277,7 +318,72 @@ function main(): void {
       index.noteWritten(nodeId);
     },
   });
-  const server = createSidecarServer(client, { search: index });
+
+  // Baby chaos (045 F13) — the REAL engine beside the fs surface. The
+  // payload rides beside the exe (or CALLIOPE_BABYCHAOS_DIR in dev); a
+  // deployment without one keeps the fs-only posture. Boot runs in the
+  // BACKGROUND: the handshake below never waits on initdb, and /mcp grows
+  // the container verbs the moment the facet lands (per-request read).
+  // Supervision is crash-only: a child dying AFTER boot exits the whole
+  // sidecar and Grace's respawn ladder brings the stack back. A boot
+  // FAILURE does not exit — respawn would loop into the same failure, and
+  // the fs surface is still worth serving; /health says `failed`.
+  const engineRef: {
+    state: EngineState;
+    facet?: ContainerFacet;
+    engine?: Engine;
+  } = { state: "absent" };
+  const engineView: EngineView = {
+    state: () => engineRef.state,
+    containers: () => engineRef.facet,
+    ports: () => {
+      const engine = engineRef.engine;
+      return engine === undefined
+        ? null
+        : { pg: engine.pgPort, chaos: engine.chaosPort };
+    },
+  };
+  const payload = resolvePayload(process.env, dirname(execPath));
+  if (payload !== null) {
+    engineRef.state = "booting";
+    void (async () => {
+      const engine = await startEngine(payload, root, (what) => {
+        process.stderr.write(
+          `calliope-sidecar: engine child died (${what}) — crash-only exit\n`,
+        );
+        exit(1);
+      });
+      engineRef.engine = engine;
+      const pool = new Pool({ connectionString: engine.databaseUrl });
+      await new PgBodyClient(pool).ensureSchema();
+      const dial = new LocalChaosDial(engine.chaosUrl);
+      for (const tenant of [
+        "notes",
+        "documents",
+        "comments",
+        "governance",
+      ] as const) {
+        await dial.registerGraph(tenantScope(tenant));
+      }
+      engineRef.facet = { blobs: new BlobStore(pool), dial };
+      engineRef.state = "ready";
+      process.stderr.write(
+        `calliope-sidecar: engine ready (pg 127.0.0.1:${String(engine.pgPort)}, ` +
+          `chaos 127.0.0.1:${String(engine.chaosPort)})\n`,
+      );
+    })().catch((err: unknown) => {
+      engineRef.state = "failed";
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `calliope-sidecar: engine boot failed — serving fs-only: ${message}\n`,
+      );
+    });
+  }
+
+  const server = createSidecarServer(client, {
+    search: index,
+    engine: engineView,
+  });
   server.on("error", (err) => {
     process.stderr.write(`calliope-sidecar: ${err.message}\n`);
     exit(1);
@@ -297,9 +403,17 @@ function main(): void {
 
   const shutdown = (): void => {
     index.close();
-    server.close(() => {
-      exit(0);
-    });
+    const finish = (): void => {
+      server.close(() => {
+        exit(0);
+      });
+    };
+    // Engine children stop in reverse order (startEngine's own stop); its
+    // stopping flag suppresses the crash-only onExit during a clean stop.
+    const engine = engineRef.engine;
+    engineRef.engine = undefined;
+    if (engine !== undefined) void engine.stop().then(finish, finish);
+    else finish();
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);

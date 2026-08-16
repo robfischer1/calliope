@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import type { Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { FixtureBlobStore } from "../src/blob-store.js";
+import { FixtureChaosDial } from "../src/chaos-client.js";
 import { FsBodyClient } from "../src/fs-client.js";
+import { resolvePayload } from "../src/mcp/babychaos.js";
 import { createSidecarServer, parseArgs } from "../src/mcp/sidecar.js";
 import { LocalSearchIndex } from "../src/fs-search/index.js";
 
@@ -361,6 +364,123 @@ describe("Findability F11 — the mentions verb on the ferry wire", () => {
       expect((await call({ id: " " })).status).toBe(400);
     } finally {
       index.close();
+      await new Promise((resolve) => wired.close(resolve));
+    }
+  });
+});
+
+describe("baby chaos on the sidecar (045 F13)", () => {
+  async function healthAt(port: number): Promise<Record<string, unknown>> {
+    const res = await fetch(`http://127.0.0.1:${String(port)}/health`);
+    return (await res.json()) as Record<string, unknown>;
+  }
+  async function mcpAt(at: string, payload: unknown): Promise<unknown> {
+    const res = await fetch(`${at}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify(payload),
+    });
+    const text = await res.text();
+    const line = text.split("\n").find((l) => l.startsWith("data:"));
+    return JSON.parse(line !== undefined ? line.slice(5) : text) as unknown;
+  }
+  async function toolNames(at: string): Promise<string[]> {
+    const listed = (await mcpAt(at, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    })) as { result?: { tools?: { name: string }[] } };
+    return (listed.result?.tools ?? []).map((t) => t.name);
+  }
+
+  it("/health reports engine absent when no payload is wired", async () => {
+    const res = await fetch(`${base}/health`);
+    const body = (await res.json()) as { engine: string };
+    expect(body.engine).toBe("absent");
+    expect(await toolNames(base)).not.toContain("write_container");
+  });
+
+  it("resolvePayload: null without the layout, paths with it", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "payload-"));
+    try {
+      expect(resolvePayload({ CALLIOPE_BABYCHAOS_DIR: dir })).toBeNull();
+      await mkdir(path.join(dir, "pg", "bin"), { recursive: true });
+      await writeFile(path.join(dir, "pg", "bin", "initdb"), "", "utf8");
+      await writeFile(path.join(dir, "chaosstore"), "", "utf8");
+      const payload = resolvePayload({ CALLIOPE_BABYCHAOS_DIR: dir });
+      expect(payload?.pgBin).toBe(path.join(dir, "pg", "bin"));
+      expect(payload?.chaosstore).toBe(path.join(dir, "chaosstore"));
+      // no env, no exe dir → absent, never a guess
+      expect(resolvePayload({})).toBeNull();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("the container verbs appear the moment the engine turns ready — no restart", async () => {
+    const dial = new FixtureChaosDial();
+    const blobs = new FixtureBlobStore();
+    let ready = false;
+    const wired = createSidecarServer(new FsBodyClient(root), {
+      engine: {
+        state: () => (ready ? "ready" : "booting"),
+        containers: () => (ready ? { blobs, dial } : undefined),
+        ports: () => (ready ? { pg: 1, chaos: 2 } : null),
+      },
+    });
+    await new Promise<void>((resolve) => {
+      wired.listen(0, "127.0.0.1", resolve);
+    });
+    const address = wired.address();
+    if (address === null || typeof address !== "object")
+      throw new Error("no address");
+    const at = `http://127.0.0.1:${String(address.port)}`;
+    try {
+      // Booting: fs surface only, health says so.
+      const booting = await healthAt(address.port);
+      expect(booting.engine).toBe("booting");
+      expect(await toolNames(at)).not.toContain("write_container");
+
+      // Ready: the SAME listener now serves the container surface.
+      ready = true;
+      const healthy = await healthAt(address.port);
+      expect(healthy.engine).toBe("ready");
+      const names = await toolNames(at);
+      expect(names).toContain("write_container");
+      expect(names).toContain("read_container");
+      expect(names).toContain("container_history");
+
+      // And it is the REAL surface: a write/read round trip lands.
+      const doc = "dd".repeat(32);
+      const wrote = (await mcpAt(at, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "write_container",
+          arguments: {
+            container: doc,
+            ops: [{ op: "add", text: "engine prose", position: "a0" }],
+          },
+        },
+      })) as { result?: { isError?: boolean } };
+      expect(wrote.result?.isError ?? false).toBe(false);
+      const read = (await mcpAt(at, {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "read_container", arguments: { container: doc } },
+      })) as {
+        result?: { structuredContent?: { blocks?: { text: string }[] } };
+      };
+      expect(
+        (read.result?.structuredContent?.blocks ?? []).map((b) => b.text),
+      ).toEqual(["engine prose"]);
+    } finally {
       await new Promise((resolve) => wired.close(resolve));
     }
   });
