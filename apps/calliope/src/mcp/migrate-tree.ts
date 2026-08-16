@@ -52,6 +52,12 @@ import type { Section } from "../types.js";
 export const MIGRATED_FROM_SECTION = "migrated_from_section";
 export const MIGRATED_CONTAINER_ID = "migrated_container_id";
 export const SECTIONS_MIGRATED = "sections_migrated";
+/** Per-revision original authorship, kept IN THE GRAPH (Rob, 2026-08-16):
+ *  the admit wire deliberately carries no author override (N5), so each
+ *  replayed revision's original author + timestamp land as one scalar
+ *  fact on the container — queryable after F12 drops the old tables,
+ *  without opening an identity-assertion door on the gate. */
+export const MIGRATION_PROVENANCE = "migration_provenance";
 export const COMMENTS_ON = "comments_on";
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -438,11 +444,22 @@ export async function migrateTree(
     }
     if (!parityOk) continue;
 
-    // Mark converged (its own admit — never rides a revision batch).
-    await dial.admit(
-      [opAdd(container, SECTIONS_MIGRATED, { toLiteral: markerValue })],
-      scope,
-    );
+    // Mark converged — ONE bookkeeping admit carrying the marker AND the
+    // per-revision original-authorship facts (never rides a revision
+    // batch, so as-of parity reads are untouched; history honestly shows
+    // one migration-bookkeeping transaction per container).
+    const bookkeeping: ChaosOp[] = [
+      opAdd(container, SECTIONS_MIGRATED, { toLiteral: markerValue }),
+    ];
+    for (const rev of record.revisions) {
+      if (rev.tx === null) continue;
+      bookkeeping.push(
+        opAdd(container, MIGRATION_PROVENANCE, {
+          toLiteral: `tx=${String(rev.tx)} at=${rev.revision} by=${rev.authoredBy}`,
+        }),
+      );
+    }
+    await dial.admit(bookkeeping, scope);
     report.migrated += 1;
   }
 

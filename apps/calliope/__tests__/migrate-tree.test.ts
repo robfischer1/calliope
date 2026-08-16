@@ -180,6 +180,26 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
     ]);
   });
 
+  it("keeps original authorship in the graph (D2a, Rob 2026-08-16)", async () => {
+    // NODE_A replayed four revisions in the earlier migration run; each
+    // landed one migration_provenance fact in the bookkeeping batch. A
+    // skipped re-run adds none (asserted by the count staying 4).
+    const recA = (await migrateTree(deps)).per_container.find(
+      (c) => c.node === NODE_A,
+    );
+    if (recA === undefined) throw new Error("no A record");
+    expect(recA.status).toBe("skipped");
+    const edges = await dial.edges(recA.container);
+    const provenance = edges.filter(
+      (e) => e.predicate === "migration_provenance",
+    );
+    expect(provenance).toHaveLength(4);
+    for (const fact of provenance) {
+      expect(fact.value).toMatch(/^tx=\d+ at=\d{4}-.+Z by=.+$/);
+      expect(fact.domain).toBe("scalar");
+    }
+  });
+
   it("migrates the comment as a slot-to-slot fact (SC-004)", async () => {
     // Runs against the state the previous test built.
     const commentContainerRec = (await migrateTree(deps)).per_container.find(
