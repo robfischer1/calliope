@@ -153,6 +153,9 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
     expect(report.parity_mismatches).toEqual([]);
     expect(report.refused).toEqual([]);
     expect(report.migrated).toBe(3);
+    // The tenant graphs were ensured before any admit (live chaos would
+    // refuse facts to an unregistered graph).
+    expect([...dial.graphs].sort()).toEqual(["comments", "notes"]);
 
     const recA = report.per_container.find((c) => c.node === NODE_A);
     if (recA === undefined) throw new Error("no A record");

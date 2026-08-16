@@ -326,6 +326,16 @@ export async function migrateTree(
     per_container: [],
   };
 
+  // The tenant graphs must exist before any admit lands facts in them —
+  // live chaos refuses writes to an unregistered graph (the graph guard),
+  // and "comments" predates nothing: this run is its first writer. The
+  // fixture's registerGraph is a no-op set, which is exactly why this
+  // line exists here and not in a test's beforeAll.
+  if (!probe) {
+    await dial.registerGraph(tenantScope("notes"));
+    await dial.registerGraph(tenantScope("comments"));
+  }
+
   const nodesRes = await pool.query<{ node_id: string }>(
     `SELECT DISTINCT node_id FROM sections ORDER BY node_id`,
   );
