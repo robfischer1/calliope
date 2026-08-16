@@ -228,11 +228,38 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
     expect(link?.value).toBe(targetSlots[0]);
   });
 
+  it("canonicalizes duplicate order keys, preserving the old read's order", async () => {
+    // Old-model debris: two sections sharing an order_key; the old read
+    // tiebreaks on id, the tree's address cannot. Found live: 1 of the
+    // first 25 production containers HEAD-diverged on exactly this.
+    const NODE_D = "d4".repeat(32);
+    await pg.importSection(NODE_D, { id: "aaa", text: "first", orderKey: "m" });
+    await pg.importSection(NODE_D, {
+      id: "bbb",
+      text: "second",
+      orderKey: "m",
+    });
+    await pg.importSection(NODE_D, { id: "ccc", text: "third", orderKey: "z" });
+
+    const report = await migrateTree(deps, { node: NODE_D });
+    const rec = report.per_container.find((c) => c.node === NODE_D);
+    expect(rec?.status).toBe("migrated");
+    expect(report.parity_mismatches).toEqual([]);
+    const head = await readContainer({ blobs, dial }, rec?.container ?? NODE_D);
+    expect(head.blocks.map((b) => b.text)).toEqual([
+      "first",
+      "second",
+      "third",
+    ]);
+    // Unique addresses now: "m" < "m0" < "z".
+    expect(head.blocks.map((b) => b.position)).toEqual(["m", "m0", "z"]);
+  });
+
   it("re-runs as a no-op (SC-002)", async () => {
     const admitsBefore = dial.admits.length;
     const blobsBefore = blobs.size;
     const report = await migrateTree(deps);
-    expect(report.skipped).toBe(3);
+    expect(report.skipped).toBe(4); // A, A#comments, B + the duplicate-key container
     expect(report.migrated).toBe(0);
     expect(blobs.size).toBe(blobsBefore);
     // comments idempotency: the edge pre-check found it; zero NEW admits.
