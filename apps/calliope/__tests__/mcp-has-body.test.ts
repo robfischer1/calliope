@@ -38,20 +38,4 @@ describe("has_body", () => {
       { node_id: "n2", blocks: 1 },
     ]);
   });
-
-  it("refuses honestly on a backend without the capability", async () => {
-    const fixture = new FixtureBodyClient();
-    const bare: BodyClient = {
-      readBody: (id) => fixture.readBody(id),
-      saveBody: (id, s) => fixture.saveBody(id, s),
-    };
-    const mcp = await connect(bare);
-    const res = await mcp.callTool({
-      name: "has_body",
-      arguments: { node_ids: ["n1"] },
-    });
-    expect(res.isError).toBe(true);
-    const text = (res.content as { text: string }[])[0]?.text ?? "";
-    expect(text).toContain("does not support bulk prose-presence");
-  });
 });

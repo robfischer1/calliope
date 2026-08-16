@@ -41,7 +41,7 @@ import type { ChaosFacet } from "../chaos-client.js";
 import type { TagStore } from "../tag-store.js";
 import { startHeartbeat } from "./heartbeat.js";
 import { FocusRegister, startFocusConsumer } from "../focus-register.js";
-import { makeErosProvider } from "../fs-search/eros-provider.js";
+import { makeErosProvider } from "../eros-provider.js";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
 const MCP_PATH = "/mcp";

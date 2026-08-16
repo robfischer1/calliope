@@ -15,7 +15,7 @@
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { backendKind, initBackend, makeBackend } from "./backend.js";
-import { makeErosProvider } from "../fs-search/eros-provider.js";
+import { makeErosProvider } from "../eros-provider.js";
 import { createServer } from "./server.js";
 
 async function main(): Promise<void> {

@@ -61,7 +61,7 @@ import { type ContainerFacet, writeContainer } from "../container-write.js";
 import { containerHistory, readContainer } from "../container-read.js";
 import { runBlobCensus } from "../blob-census.js";
 import type { TagStore } from "../tag-store.js";
-import type { SearchProvider, SearchResponse } from "../fs-search/index.js";
+import type { SearchProvider, SearchResponse } from "../search-types.js";
 
 /**
  * Adapt a typed tool result to the MCP SDK's `structuredContent` slot, which
@@ -1213,12 +1213,6 @@ export function createServer(
       },
     },
     async ({ node_ids }) => {
-      if (client.hasBody === undefined) {
-        throw new Error(
-          "has_body: the configured body backend does not support bulk " +
-            "prose-presence (no hasBody method).",
-        );
-      }
       const counts = await client.hasBody(node_ids);
       const present = [...counts.entries()].map(([node_id, blocks]) => ({
         node_id,
