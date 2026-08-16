@@ -342,4 +342,83 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
       "three",
     ]);
   });
+
+  it("lands a container whose graph node has NO nodes row on a carrier", async () => {
+    // The full-run finding (2026-08-16): old sections rows outliving
+    // hard-deleted nodes. The fixture admits anything, chaos would not —
+    // mimic the subject guard: an edge naming NODE_E as its subject id
+    // refuses unless the same batch createNodes that label (exactly what
+    // the carrier-mint batch does).
+    const NODE_E = "e5".repeat(32);
+    await pg.saveBody(NODE_E, [
+      { text: "orphan alpha" },
+      { text: "orphan beta" },
+    ]);
+    await sleep(5);
+    await pg.applySectionOps(NODE_E, [
+      { op: "add", text: "orphan gamma", orderKey: "zz" },
+    ]);
+    await sleep(5);
+
+    const guarded = new Proxy(dial, {
+      get(target, prop, receiver) {
+        if (prop === "admit") {
+          return (ops: ChaosOp[], scope: string) => {
+            const mintsIt = ops.some(
+              (o) => o.op === "createNode" && o.label === NODE_E,
+            );
+            const namesIt = ops.some(
+              (o) =>
+                (o.op === "addEdge" || o.op === "removeEdge") &&
+                o.from_id === NODE_E,
+            );
+            if (namesIt && !mintsIt) {
+              return Promise.reject(
+                new Error(
+                  "store_error: gostore: subject guard: fact asserted " +
+                    `about a subject with no nodes row — s=${NODE_E} ` +
+                    "(unrepresentable: facts.s is a real FK under C3)",
+                ),
+              );
+            }
+            return target.admit(ops, scope);
+          };
+        }
+        const v: unknown = Reflect.get(target, prop, receiver);
+        if (typeof v === "function") return v.bind(target) as unknown;
+        return v;
+      },
+    });
+
+    const report = await migrateTree(
+      { ...deps, dial: guarded },
+      { node: NODE_E },
+    );
+    const rec = report.per_container.find((c) => c.node === NODE_E);
+    expect(rec?.status).toBe("migrated");
+    expect(report.parity_mismatches).toEqual([]);
+    expect(report.refused).toEqual([]);
+    expect(rec?.container).not.toBe(NODE_E); // landed on the carrier
+    // The provenance fact is the index: old id → carrier.
+    const carriers = await dial.findByValue(
+      "notes",
+      "migrated_container_id",
+      NODE_E,
+    );
+    expect(carriers).toContain(rec?.container);
+    const head = await readContainer({ blobs, dial }, rec?.container ?? "");
+    expect(head.blocks.map((b) => b.text)).toEqual([
+      "orphan alpha",
+      "orphan beta",
+      "orphan gamma",
+    ]);
+
+    // A re-run finds the carrier's marker through the guard and skips.
+    const again = await migrateTree(
+      { ...deps, dial: guarded },
+      { node: NODE_E },
+    );
+    expect(again.skipped).toBe(1);
+    expect(again.migrated).toBe(0);
+  });
 });
