@@ -101,6 +101,26 @@ CREATE TABLE IF NOT EXISTS comments_on (
 );
 CREATE INDEX IF NOT EXISTS comments_on_target
   ON comments_on (node_id, target_id);
+-- 039 blobs: content-deduped immutable prose — the blob store the tree
+-- (chaos facts) will name. Identity and text ONLY: membership, ordering,
+-- currency, lineage and authorship are graph concerns, never columns here.
+-- Content addressing is a unique EXPRESSION index (no hash column): a raw
+-- btree UNIQUE on text caps out at ~2.7 KB per index row, and sha256(bytea)
+-- is builtin from PG 11. convert_to() is only STABLE (server-encoding
+-- dependent), so the hash is wrapped in a declared-IMMUTABLE function: honest
+-- on any UTF-8 database, and this deployment is UTF-8 — a non-UTF-8 server
+-- would fail loudly at conversion, never silently mis-dedupe.
+CREATE OR REPLACE FUNCTION blob_content_hash(t text) RETURNS bytea
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE RETURNS NULL ON NULL INPUT
+  RETURN sha256(convert_to(t, 'UTF8'));
+CREATE TABLE IF NOT EXISTS blobs (
+  id   bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  text text   NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS blobs_content_key
+  ON blobs (blob_content_hash(text));
+CREATE INDEX IF NOT EXISTS blobs_text_fts
+  ON blobs USING gin (to_tsvector('english', text));
 `;
 
 /** Mint a section placement id: 64-hex, collision-safe via a random nonce. */
