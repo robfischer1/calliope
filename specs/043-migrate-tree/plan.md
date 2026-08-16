@@ -100,7 +100,7 @@ F5 as-of read (parity) · themis admit (tx answered) · old store surfaces
 | Parity canonical field list [MP gap] | `(text, order)` per block, per container, per revision — ids are NOT compared (the old id was the churning thing this plan removes) | ids differ by design; prose + order is what "nothing lost" means | Claude | include ids (fails by design) |
 | Slot continuity across re-minted ids | supersessions edges drive it; first predecessor's slot survives a merge | the edges are the old model's own lineage record | Claude | fresh slot per generation (destroys identity-over-time) |
 | Provenance facts | `migrated_from_section` on every slot; `migrated_container_id` on minted containers | comments resolution + audit after F12 drops the tables | Claude | in-memory only (breaks resumable comments) |
-| Original authors/timestamps | run report only; NOT stamped on transactions | admit carries no override (N5 anti-spoofing); surfaced [OPEN] | Default (spec assumption) | themis migration override (a spoofing door — Rob's call) |
+| Original authors/timestamps | **RESOLVED (Rob, 2026-08-16): provenance facts in the graph** — one `migration_provenance` scalar fact per replayed revision (`tx=N at=<iso> by=<author>`), riding the per-container bookkeeping admit | queryable after F12 drops the old tables, no identity-assertion door on the gate | **Rob** | report-only (leaves the graph); themis override (a spoofing door) |
 | Live run | NOT executed this session — ships verified; ops act for Rob after the Poseidon check [MP: "checked before F6"] | irreversible-ish production data act; the plan itself gates it | Default (spec assumption) | run now (violates the Poseidon gate) |
 
 ## Impact
