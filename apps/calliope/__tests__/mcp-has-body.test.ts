@@ -10,7 +10,7 @@ import { createServer } from "../src/mcp/server.js";
 import type { BodyClient } from "../src/types.js";
 
 async function connect(client: BodyClient): Promise<Client> {
-  const server = createServer(client);
+  const server = createServer(client, { pathBodies: true });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const mcp = new Client({ name: "test", version: "0" });
   await Promise.all([server.connect(st), mcp.connect(ct)]);

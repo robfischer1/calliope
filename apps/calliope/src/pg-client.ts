@@ -35,7 +35,12 @@ import {
 import type { CommentRecord, CommentThread, TargetState } from "./types.js";
 import { between, sequence } from "./order-key.js";
 
-const SCHEMA_SQL = `
+/** The RETIRED old model's DDL (F12): sections/supersessions/comments_on.
+ *  Never applied by default — a fresh install gets the blob store only.
+ *  The migration suite creates it explicitly to SIMULATE an old store
+ *  (`ensureSchema({ legacy: true })`); production's copies live until the
+ *  gated drop (`drop-old-tables.ts`) removes them. */
+const LEGACY_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS sections (
   id          text NOT NULL,
   node_id     text NOT NULL,
@@ -101,6 +106,9 @@ CREATE TABLE IF NOT EXISTS comments_on (
 );
 CREATE INDEX IF NOT EXISTS comments_on_target
   ON comments_on (node_id, target_id);
+`;
+
+const SCHEMA_SQL = `
 -- 039 blobs: content-deduped immutable prose — the blob store the tree
 -- (chaos facts) will name. Identity and text ONLY: membership, ordering,
 -- currency, lineage and authorship are graph concerns, never columns here.
@@ -155,8 +163,14 @@ export class PgBodyClient implements BodyClient {
     this.#authoredBy = authoredBy;
   }
 
-  /** Bootstrap the `sections` schema (idempotent — CREATE IF NOT EXISTS). */
-  async ensureSchema(): Promise<void> {
+  /** Bootstrap the store schema (idempotent). Default: the blob store
+   *  only — F12 cut the old model, so fresh installs never grow the
+   *  sections tables. `legacy: true` also creates the OLD model's DDL:
+   *  the migration suite's way of simulating a pre-cut store. */
+  async ensureSchema(opts?: { legacy?: boolean }): Promise<void> {
+    if (opts?.legacy === true) {
+      await this.#pool.query(LEGACY_SCHEMA_SQL);
+    }
     await this.#pool.query(SCHEMA_SQL);
   }
 

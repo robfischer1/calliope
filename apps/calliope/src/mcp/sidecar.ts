@@ -229,6 +229,9 @@ export function createSidecarServer(
           focus,
           search: store,
           containers: backend.containers(),
+          // The desktop's loopback keeps the path-addressed body verbs —
+          // engine-backed since F14; the FLEET surface retired them (F12).
+          pathBodies: true,
         });
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: undefined,

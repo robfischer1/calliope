@@ -33,6 +33,7 @@ import { argv } from "node:process";
 import { pathToFileURL } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { BodyClient } from "../types.js";
+import type { ContainerFacet } from "../container-write.js";
 import type { DocumentStore } from "../document-store.js";
 import type { RevisionStore } from "../revision-store.js";
 import { backendKind, initBackend, makeBackend } from "./backend.js";
@@ -87,17 +88,22 @@ async function handleMcp(
   chaos?: ChaosFacet,
   tags?: TagStore,
   focus?: FocusRegister,
+  containers?: ContainerFacet,
 ): Promise<void> {
   // Findability F4: the pg arm — eros-routed when CALLIOPE_EROS_URL is set;
   // absent, the search verb answers honest darkness (F2's contract).
   const search = makeErosProvider();
   const server = createServer(client, {
-    ...(documents !== undefined ? { documents } : {}),
     ...(revisions !== undefined ? { revisions } : {}),
     ...(chaos !== undefined ? { chaos } : {}),
     ...(tags !== undefined ? { tags } : {}),
     ...(focus !== undefined ? { focus } : {}),
     ...(search !== undefined ? { search } : {}),
+    // F12 audit finding: the container surface (F4/F5) was wired in
+    // the BACKEND but never passed to the server — the fleet entry
+    // points served body verbs only. With the families retired, the
+    // container verbs ARE the write path; they ship from here.
+    ...(containers !== undefined ? { containers } : {}),
   });
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session id, no server-initiated streams to keep alive.
@@ -123,6 +129,7 @@ export function createCalliopeHttpServer(
   // Every server carries a register (an empty one answers { focus: null });
   // the boot passes the consumer-fed one so live focus flows in production.
   focus: FocusRegister = new FocusRegister(),
+  containers?: ContainerFacet,
 ): ReturnType<typeof createHttpServer> {
   // One backend for the server's lifetime: the store (or fixture memory)
   // is shared across every stateless request. A caller that needs async
@@ -133,6 +140,7 @@ export function createCalliopeHttpServer(
   let revStore = revisions;
   let chaosFacet = chaos;
   let tagStore = tags;
+  let containerFacet = containers;
   let client = prebuilt;
   if (client === undefined) {
     const backend = makeBackend(kind);
@@ -141,6 +149,7 @@ export function createCalliopeHttpServer(
     revStore ??= backend.revisions;
     chaosFacet ??= backend.chaos;
     tagStore ??= backend.tags;
+    containerFacet ??= backend.containers;
   }
   return createHttpServer((req, res) => {
     const url = req.url ?? "";
@@ -170,6 +179,7 @@ export function createCalliopeHttpServer(
       chaosFacet,
       tagStore,
       focus,
+      containerFacet,
     ).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`calliope-mcp-http: request error: ${message}\n`);

@@ -55,7 +55,7 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       }
     }
     client = new PgBodyClient(pool);
-    await client.ensureSchema();
+    await client.ensureSchema({ legacy: true });
   }, 120_000);
 
   afterAll(async () => {
@@ -446,7 +446,7 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     ).toBe(true);
 
     // Backfill (ensureSchema is the migration seam) and compare byte-identically.
-    await client.ensureSchema();
+    await client.ensureSchema({ legacy: true });
     expect(await client.readRevisions("node-bf")).toEqual(revs);
     for (const r of revs) {
       expect(await client.readRevisionAt("node-bf", r.revision)).toEqual(
@@ -891,8 +891,8 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     }
 
     it("ensureSchema is idempotent over a populated table (the ALTER re-runs)", async () => {
-      await client.ensureSchema();
-      await client.ensureSchema();
+      await client.ensureSchema({ legacy: true });
+      await client.ensureSchema({ legacy: true });
       // Pre-025-style rows (written before any offset was supplied) read NULL.
       const anyRow = await pool.query<{ kafka_offset: string | null }>(
         "SELECT kafka_offset FROM sections LIMIT 1",
