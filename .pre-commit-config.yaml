@@ -25,12 +25,17 @@
 #
 # furnace owns .claude/ .specify/ .furnace/; exclude that managed surface.
 default_install_hook_types: [pre-commit, pre-push, post-commit]
-exclude: '^\.(claude|specify|furnace)/'
+exclude: '^(\.(claude|specify|furnace)/|vendor/)|\.melt$'
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
-      - id: trailing-whitespace
+      # trailing-whitespace REMOVED 2026-08-16, on the same evidence that retired
+      # end-of-file-fixer above. MEASURED across 6 repos / 998 tracked source files
+      # (py, go, rs, ts, tsx, md, yml, toml; vendor excluded): 7 files carry trailing
+      # whitespace — 0.7%, the same near-zero yield, and a fixer that rewrites a file
+      # under a running commit for it. A hook that earns nothing does not get kept
+      # because it is cheap; it gets deleted.
       # end-of-file-fixer REMOVED 2026-08-08 — it earned nothing and cost an outage.
       #
       # MEASURED across 40 repos / 8276 in-scope text files, applying each repo's `exclude`
@@ -112,3 +117,25 @@ repos:
         stages: [post-commit]
         always_run: true
         pass_filenames: false
+# The worktree backstop. A commit belongs in a LINKED worktree, never the
+      # shared checkout — the primary tree is the one every session can reach at
+      # once, so a commit there stages whatever a sibling has in flight.
+      # `forge-git lock` chmods the primary read-only for the same reason; this
+      # is that rule at the commit boundary, where the damage gets recorded.
+      #
+      # One definition in foundry-stocks so every template enforces the SAME
+      # check — the discriminator (--git-dir vs --git-common-dir) is easy to get
+      # subtly wrong, and it must scrub git's repo-location env or an inherited
+      # GIT_DIR makes every directory answer "worktree", the shared checkout
+      # included. Exempt under CI; bypass with FORGE_ALLOW_SHARED_CHECKOUT=1.
+      - id: worktree-guard
+        name: commit from a linked worktree, not the shared checkout
+        entry: >-
+          bash -c 'S=${FOUNDRY_STOCKS:-../foundry-stocks};
+          [ -f "$S/ci/lib/verified_worktree.py" ] ||
+          { echo "foundry-stocks not at $S — worktree guard not installed"; exit 0; };
+          python3 "$S/ci/lib/verified_worktree.py" .'
+        language: system
+        stages: [pre-commit]
+        pass_filenames: false
+        always_run: true
