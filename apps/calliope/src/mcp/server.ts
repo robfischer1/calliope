@@ -1628,6 +1628,17 @@ export function createServer(
             .string()
             .optional()
             .describe("Capture-kind provenance (default vault-note)."),
+          schema_type: z
+            .string()
+            .optional()
+            .describe(
+              "The note_type provenance (Plan, Note, …) — the attribute " +
+                "typed queries key on (F10).",
+            ),
+          file_path: z
+            .string()
+            .optional()
+            .describe("The source's absolute path provenance."),
           mtime: z.string().optional().describe("Local modified time."),
           ctime: z.string().optional().describe("Local created time."),
           raw_hash: z
@@ -1641,6 +1652,8 @@ export function createServer(
         blocks,
         title,
         source_kind,
+        schema_type,
+        file_path,
         mtime,
         ctime,
         raw_hash,
@@ -1655,6 +1668,8 @@ export function createServer(
             blocks: blocks.map((b) => b.text),
             ...(title !== undefined ? { title } : {}),
             ...(source_kind !== undefined ? { source_kind } : {}),
+            ...(schema_type !== undefined ? { schema_type } : {}),
+            ...(file_path !== undefined ? { file_path } : {}),
             ...(mtime !== undefined ? { mtime } : {}),
             ...(ctime !== undefined ? { ctime } : {}),
             ...(raw_hash !== undefined ? { raw_hash } : {}),
