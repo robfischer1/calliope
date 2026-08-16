@@ -218,6 +218,7 @@ async function main(): Promise<void> {
     backend.chaos,
     backend.tags,
     focusRegister,
+    backend.containers,
   );
 
   await new Promise<void>((resolve) => {
