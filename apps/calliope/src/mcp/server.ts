@@ -56,6 +56,8 @@ import {
   maybeReconcileInlineTags,
 } from "./tools.js";
 import type { ChaosFacet } from "../chaos-client.js";
+import { ChaosClientError } from "../chaos-client.js";
+import { type ContainerFacet, writeContainer } from "../container-write.js";
 import type { TagStore } from "../tag-store.js";
 import type { SearchProvider, SearchResponse } from "../fs-search/index.js";
 
@@ -109,6 +111,12 @@ export interface ServerOptions {
    * F4 lights the pg backend by routing its provider at Eros.
    */
   search?: SearchProvider;
+  /**
+   * The container surface (041 F4 — Git for Ideas). When present, the
+   * server registers `write_container` — the tree-native save: blob-first,
+   * one graph transaction, identical content nets to nothing.
+   */
+  containers?: ContainerFacet;
 }
 
 /** Build a configured MCP server bound to `client`, ready to `connect()`. */
@@ -1984,6 +1992,103 @@ export function createServer(
           ],
           structuredContent: structured(result),
         };
+      },
+    );
+  }
+
+  if (options?.containers !== undefined) {
+    const facet = options.containers;
+    const containerOpField = z.discriminatedUnion("op", [
+      z.object({
+        op: z.literal("add"),
+        text: z.string().describe("The new block's prose."),
+        position: z
+          .string()
+          .min(1)
+          .describe("Fractional order key (bytewise order; client-minted)."),
+      }),
+      z.object({
+        op: z.literal("update"),
+        slot: z.string().regex(/^[0-9a-f]{64}$/),
+        oldBlobId: z.string().min(1),
+        text: z.string(),
+      }),
+      z.object({
+        op: z.literal("reorder"),
+        slot: z.string().regex(/^[0-9a-f]{64}$/),
+        oldPosition: z.string().min(1),
+        position: z.string().min(1),
+      }),
+      z.object({
+        op: z.literal("remove"),
+        slot: z.string().regex(/^[0-9a-f]{64}$/),
+        position: z.string().min(1),
+        blobId: z.string().min(1),
+      }),
+    ]);
+    server.registerTool(
+      "write_container",
+      {
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+        },
+        title: "Write a container (the tree-native save)",
+        description:
+          "041 F4 (Git for Ideas): save a container as ONE graph " +
+          "transaction. Blob-first: prose mints into the content-deduped " +
+          "blob store, then the surviving ops ride one admit batch of tree " +
+          "facts (add births a slot; update repoints one; reorder rewrites " +
+          "a position; remove retracts a slot's facts). Byte-identical " +
+          "content nets out before the batch — a save that nets to nothing " +
+          "writes nothing. Returns {noop, applied, minted, blobIds}; a " +
+          "refused batch surfaces the gate's violations and leaves NO tree " +
+          "change (minted blobs remain as orphans for the census).",
+        inputSchema: {
+          container: z
+            .string()
+            .regex(/^[0-9a-f]{64}$/)
+            .describe("The container node's 64-hex token."),
+          ops: z.array(containerOpField).min(1).describe("The save's ops."),
+          tenant: z
+            .enum(["notes", "documents", "comments", "governance"])
+            .optional()
+            .describe("The tenant graph (default: notes)."),
+        },
+      },
+      async ({ container, ops, tenant }) => {
+        try {
+          const result = await writeContainer(
+            facet,
+            container,
+            ops,
+            tenant ?? "notes",
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: result.noop
+                  ? "noop: every op netted out"
+                  : `applied ${String(result.applied.length)} op(s)`,
+              },
+            ],
+            structuredContent: structured(result),
+          };
+        } catch (err) {
+          if (err instanceof ChaosClientError) {
+            return {
+              content: [{ type: "text", text: `${err.code}: ${err.message}` }],
+              structuredContent: structured({
+                error: err.code,
+                violations: err.violations,
+              }),
+              isError: true,
+            };
+          }
+          throw err;
+        }
       },
     );
   }

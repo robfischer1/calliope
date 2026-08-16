@@ -22,7 +22,18 @@ export interface BlobSearchHit {
 // (blob_content_hash is the schema's declared-IMMUTABLE sha256-of-UTF8.)
 const CONTENT_KEY = `blob_content_hash(text)`;
 
-export class BlobStore {
+/** The prose-store surface the write path consumes — implemented by the
+ *  real {@link BlobStore} and, for the fixture backend, by
+ *  {@link FixtureBlobStore} (one model, two engines — the fixture cannot
+ *  drift from the store the fleet runs). */
+export interface ProseStore {
+  mint(text: string): Promise<string>;
+  getText(id: string): Promise<string | null>;
+  findByContent(text: string): Promise<string | null>;
+  search(query: string, limit?: number): Promise<BlobSearchHit[]>;
+}
+
+export class BlobStore implements ProseStore {
   readonly #pool: Pool;
 
   constructor(pool: Pool) {
@@ -91,5 +102,46 @@ export class BlobStore {
       [query, limit],
     );
     return res.rows.map((r) => ({ id: r.id, rank: r.rank }));
+  }
+}
+
+/** In-memory ProseStore for the fixture backend and the tool tests:
+ *  byte-identical dedup, decimal ids, no ranking (search answers matches
+ *  unranked — the write path never searches; the real ranking contract is
+ *  the pg suite's). */
+export class FixtureBlobStore implements ProseStore {
+  readonly #byText = new Map<string, string>();
+  readonly #byId = new Map<string, string>();
+  #seq = 0;
+
+  mint(text: string): Promise<string> {
+    const hit = this.#byText.get(text);
+    if (hit !== undefined) return Promise.resolve(hit);
+    this.#seq += 1;
+    const id = String(this.#seq);
+    this.#byText.set(text, id);
+    this.#byId.set(id, text);
+    return Promise.resolve(id);
+  }
+
+  getText(id: string): Promise<string | null> {
+    return Promise.resolve(this.#byId.get(id) ?? null);
+  }
+
+  findByContent(text: string): Promise<string | null> {
+    return Promise.resolve(this.#byText.get(text) ?? null);
+  }
+
+  search(query: string): Promise<BlobSearchHit[]> {
+    const out: BlobSearchHit[] = [];
+    for (const [id, text] of this.#byId) {
+      if (query !== "" && text.includes(query)) out.push({ id, rank: 0 });
+    }
+    return Promise.resolve(out);
+  }
+
+  /** Test helper: how many blobs exist (dedup assertions). */
+  get size(): number {
+    return this.#byId.size;
   }
 }
