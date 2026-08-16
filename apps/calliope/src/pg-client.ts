@@ -121,6 +121,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS blobs_content_key
   ON blobs (blob_content_hash(text));
 CREATE INDEX IF NOT EXISTS blobs_text_fts
   ON blobs USING gin (to_tsvector('english', text));
+-- 044 blob GC (F7): the census's mark-and-sweep state. A blob id lands
+-- here when a COMPLETE census found it unheld; it is reaped only when a
+-- LATER complete census still finds it unheld — the grace window that
+-- protects blobs minted for a save still in flight. GC state, not blob
+-- structure: the blobs table itself stays two columns.
+CREATE TABLE IF NOT EXISTS blob_gc_marks (
+  id        bigint PRIMARY KEY,
+  marked_at timestamptz NOT NULL DEFAULT now()
+);
 `;
 
 /** Mint a section placement id: 64-hex, collision-safe via a random nonce. */

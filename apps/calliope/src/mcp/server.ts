@@ -59,6 +59,7 @@ import type { ChaosFacet } from "../chaos-client.js";
 import { ChaosClientError } from "../chaos-client.js";
 import { type ContainerFacet, writeContainer } from "../container-write.js";
 import { containerHistory, readContainer } from "../container-read.js";
+import { runBlobCensus } from "../blob-census.js";
 import type { TagStore } from "../tag-store.js";
 import type { SearchProvider, SearchResponse } from "../fs-search/index.js";
 
@@ -2180,6 +2181,55 @@ export function createServer(
             transactions,
             count: transactions.length,
           }),
+        };
+      },
+    );
+  }
+
+  if (options?.containers?.gc !== undefined) {
+    const gc = options.containers.gc;
+    const dial = options.containers.dial;
+    server.registerTool(
+      "blob_census",
+      {
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+        },
+        title: "The blob census (mark-and-sweep GC)",
+        description:
+          "F7 (Git for Ideas): the reachability census with the roles " +
+          "swapped — the blob store asks, each tenant graph reports the " +
+          "blob ids its LOG holds. A census with ANY reporter missing is " +
+          "incomplete and reaps nothing. Mark-and-sweep: a complete census " +
+          "marks the unheld; execute=true reaps only ids a PREVIOUS " +
+          "complete census already marked and that are still unheld (the " +
+          "grace window for saves in flight). Facts naming absent blobs " +
+          "are reported dangling, never fixed. Held is the log, so only " +
+          "never-referenced orphans ever reap.",
+        inputSchema: {
+          execute: z
+            .boolean()
+            .optional()
+            .describe("Reap previously-marked, still-unheld blobs."),
+        },
+      },
+      async ({ execute }) => {
+        const report = await runBlobCensus(
+          { gc, dial },
+          execute === true ? { execute: true } : {},
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: report.complete
+                ? `complete: ${String(report.held)} held, ${String(report.marked.length)} marked, ${String(report.reaped.length)} reaped, ${String(report.dangling.length)} dangling`
+                : "INCOMPLETE census — nothing marked, nothing reaped",
+            },
+          ],
+          structuredContent: structured(report),
         };
       },
     );
