@@ -29,6 +29,10 @@ const CONTENT_KEY = `blob_content_hash(text)`;
 export interface ProseStore {
   mint(text: string): Promise<string>;
   getText(id: string): Promise<string | null>;
+  /** Batched fetch — ONE round trip whatever the count; ids that resolve
+   *  to nothing are simply missing from the map (the caller marks them
+   *  dangling). Empty input answers an empty map with no query. */
+  getTexts(ids: string[]): Promise<Map<string, string>>;
   findByContent(text: string): Promise<string | null>;
   search(query: string, limit?: number): Promise<BlobSearchHit[]>;
 }
@@ -72,6 +76,17 @@ export class BlobStore implements ProseStore {
       [id],
     );
     return res.rows[0]?.text ?? null;
+  }
+
+  async getTexts(ids: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    if (ids.length === 0) return out;
+    const res = await this.#pool.query<{ id: string; text: string }>(
+      `SELECT id, text FROM blobs WHERE id = ANY($1::bigint[])`,
+      [ids],
+    );
+    for (const row of res.rows) out.set(row.id, row.text);
+    return out;
   }
 
   /** The id for byte-identical stored text; null when never stored. */
@@ -126,6 +141,15 @@ export class FixtureBlobStore implements ProseStore {
 
   getText(id: string): Promise<string | null> {
     return Promise.resolve(this.#byId.get(id) ?? null);
+  }
+
+  getTexts(ids: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    for (const id of ids) {
+      const text = this.#byId.get(id);
+      if (text !== undefined) out.set(id, text);
+    }
+    return Promise.resolve(out);
   }
 
   findByContent(text: string): Promise<string | null> {

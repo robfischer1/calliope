@@ -58,6 +58,7 @@ import {
 import type { ChaosFacet } from "../chaos-client.js";
 import { ChaosClientError } from "../chaos-client.js";
 import { type ContainerFacet, writeContainer } from "../container-write.js";
+import { containerHistory, readContainer } from "../container-read.js";
 import type { TagStore } from "../tag-store.js";
 import type { SearchProvider, SearchResponse } from "../fs-search/index.js";
 
@@ -2089,6 +2090,97 @@ export function createServer(
           }
           throw err;
         }
+      },
+    );
+  }
+
+  if (options?.containers !== undefined) {
+    const facet = options.containers;
+    server.registerTool(
+      "read_container",
+      {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
+        title: "Read a container (ordered blocks, optionally as-of)",
+        description:
+          "042 F5 (Git for Ideas): resolve a container's tree and fetch its " +
+          "prose in ONE batched blob lookup — blocks in position order. " +
+          "as_of_tx reads the container as it stood at that transaction " +
+          "(members since removed included). A tree fact naming an absent " +
+          "blob surfaces as dangling (text null) — reported, never " +
+          "fabricated.",
+        inputSchema: {
+          container: z
+            .string()
+            .regex(/^[0-9a-f]{64}$/)
+            .describe("The container node's 64-hex token."),
+          as_of_tx: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("Read the container as it stood at this transaction."),
+        },
+      },
+      async ({ container, as_of_tx }) => {
+        const result = await readContainer(
+          facet,
+          container,
+          as_of_tx !== undefined ? { asOfTx: as_of_tx } : undefined,
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${String(result.blocks.length)} block(s)${
+                as_of_tx !== undefined ? ` as of tx ${String(as_of_tx)}` : ""
+              }`,
+            },
+          ],
+          structuredContent: structured(result),
+        };
+      },
+    );
+
+    server.registerTool(
+      "container_history",
+      {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
+        title: "A container's history (the graph's transactions)",
+        description:
+          "042 F5 (Git for Ideas): every transaction that touched the " +
+          "container or any slot it EVER held (the door's log closure over " +
+          "tree_member — removed members' edits stay reachable), ascending, " +
+          "with authors and timestamps. No revision table: history IS the " +
+          "graph. Reconstruct any moment with read_container(as_of_tx).",
+        inputSchema: {
+          container: z
+            .string()
+            .regex(/^[0-9a-f]{64}$/)
+            .describe("The container node's 64-hex token."),
+        },
+      },
+      async ({ container }) => {
+        const transactions = await containerHistory(facet, container);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${String(transactions.length)} transaction(s)`,
+            },
+          ],
+          structuredContent: structured({
+            transactions,
+            count: transactions.length,
+          }),
+        };
       },
     );
   }
