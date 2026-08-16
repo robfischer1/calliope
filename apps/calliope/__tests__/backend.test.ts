@@ -95,11 +95,13 @@ describe("initBodyClient", () => {
     await initBodyClient(wrapped);
     // The schema bootstrap ran THROUGH the wrapper (the live 2026-07-12
     // finding: an instanceof check on the wrapper never fired).
+    // F12: a fresh install bootstraps the blob store only — the old
+    // model's DDL never runs outside the migration suite's legacy flag.
+    expect(
+      queries.some((q) => q.includes("CREATE TABLE IF NOT EXISTS blobs")),
+    ).toBe(true);
     expect(
       queries.some((q) => q.includes("CREATE TABLE IF NOT EXISTS sections")),
-    ).toBe(true);
-    expect(
-      queries.some((q) => q.includes("ADD COLUMN IF NOT EXISTS tombstone")),
-    ).toBe(true);
+    ).toBe(false);
   });
 });

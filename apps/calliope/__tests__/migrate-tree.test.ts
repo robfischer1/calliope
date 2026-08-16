@@ -71,7 +71,7 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
       }
     }
     pg = new PgBodyClient(pool);
-    await pg.ensureSchema();
+    await pg.ensureSchema({ legacy: true });
 
     // ── true old-model lineage ──────────────────────────────────────────
     // rev 1: coarse save, three blocks.

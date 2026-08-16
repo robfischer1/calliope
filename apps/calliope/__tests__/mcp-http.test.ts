@@ -89,39 +89,22 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
     })) as { result?: { tools?: { name: string }[] } };
     const names = (listed.result?.tools ?? []).map((t) => t.name).sort();
     expect(names).toEqual([
-      "append_section",
-      "apply_section_ops",
-      "coalesce_block_writes",
+      "blob_census", // F7 — the inverted-census GC (mark-and-sweep)
+      "container_history", // F5 — history IS the graph (as-of reads)
       "copy_reference",
-      "create_block",
-      "create_comment",
       "create_note",
-      "delete_block",
       "dissolve_note",
-      "edit_section",
       "export_note",
-      "file_revisions",
-      "has_body", // Findability F10 — licensed by its Exposes row (bulk has-body)
-      "list_blocks",
+      "file_revisions", // stays [Rob, F12] — frozen archive, read-only
       "list_by_tag",
-      "list_comments",
       "list_tags",
       "look",
       "materialize_note",
-      "merge_block",
-      "read_block",
-      "read_body",
-      "read_body_at",
-      "read_body_revisions",
-      "read_documents",
-      "read_plan",
-      "revision_deltas",
+      "read_container", // F5 — the ordered tree read
+      "revision_deltas", // stays [Rob, F12] — frozen archive, read-only
       "search", // Findability F2 — licensed by its Exposes row `search(query, scope)`
-      "split_block",
       "unpin",
-      "update_block",
-      "write_body",
-      "write_document",
+      "write_container", // F4 — the ONE write path since the F12 cut
     ]);
   });
 
@@ -130,13 +113,10 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
     // verb. A new verb without annotations fails here by construction.
     const MAP: Record<string, [boolean, boolean, boolean]> = {
       // reads
-      read_body: [true, false, true],
-      read_block: [true, false, true],
-      list_blocks: [true, false, true],
-      read_body_revisions: [true, false, true],
-      read_body_at: [true, false, true],
-      read_documents: [true, false, true],
-      read_plan: [true, false, true],
+      read_container: [true, false, true],
+      blob_census: [false, true, false], // F7 — the sweep reaps marked blobs
+
+      container_history: [true, false, true],
       file_revisions: [true, false, true],
       revision_deltas: [true, false, true],
       list_by_tag: [true, false, true],
@@ -145,28 +125,15 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       materialize_note: [true, false, true],
       copy_reference: [true, false, true],
       look: [true, false, true],
-      list_comments: [true, false, true],
       search: [true, false, true], // Findability F2 — read-only, idempotent
-      has_body: [true, false, true], // Findability F10 — read-only, idempotent
 
       unpin: [false, true, true],
-      // additive writes (each call mints new ids)
-      create_block: [false, false, false],
-      create_comment: [false, false, false],
-      append_section: [false, false, false],
-      split_block: [false, false, false],
-      merge_block: [false, false, false],
       // idempotent writes (no-op convergence tested in their own suites)
-      update_block: [false, false, true],
-      edit_section: [false, false, true],
       create_note: [false, false, true],
-      write_document: [false, false, true],
       dissolve_note: [false, false, true],
-      // destructive
-      apply_section_ops: [false, true, false],
-      delete_block: [false, true, false],
-      write_body: [false, true, false],
-      coalesce_block_writes: [false, true, true],
+      // the ONE write path (F4/F12): a save whose ops all net out writes
+      // nothing, but the verb itself is not idempotent (adds mint slots)
+      write_container: [false, false, false],
     };
     await rpc(initEnvelope(1));
     const listed = (await rpc({
@@ -204,64 +171,6 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
         `${tool.name} hints`,
       ).toEqual(expected);
     }
-  });
-
-  it("coalesce_block_writes refuses while the F8 flag is off (default)", async () => {
-    await rpc(initEnvelope(1));
-    const res = (await rpc({
-      jsonrpc: "2.0",
-      id: 2,
-      method: "tools/call",
-      params: {
-        name: "coalesce_block_writes",
-        arguments: {
-          container_id: "n-x",
-          block_id: "b-x",
-          since_revision: "2026-01-01T00:00:00.000000Z",
-        },
-      },
-    })) as {
-      result?: {
-        isError?: boolean;
-        structuredContent?: { error?: string };
-      };
-    };
-    expect(res.result?.isError).toBe(true);
-    expect(res.result?.structuredContent?.error).toBe("coalesce_disabled");
-  });
-
-  it("round-trips write_body then read_body over HTTP", async () => {
-    await rpc(initEnvelope(1));
-    const wrote = (await rpc({
-      jsonrpc: "2.0",
-      id: 2,
-      method: "tools/call",
-      params: {
-        name: "write_body",
-        arguments: {
-          node_id: "n-http",
-          sections: [{ text: "intro" }, { text: "body" }],
-        },
-      },
-    })) as {
-      result?: { structuredContent?: { count?: number; ok?: boolean } };
-    };
-    expect(wrote.result?.structuredContent).toMatchObject({
-      ok: true,
-      count: 2,
-    });
-
-    const read = (await rpc({
-      jsonrpc: "2.0",
-      id: 3,
-      method: "tools/call",
-      params: { name: "read_body", arguments: { node_id: "n-http" } },
-    })) as {
-      result?: { structuredContent?: { sections?: { text: string }[] } };
-    };
-    expect(
-      (read.result?.structuredContent?.sections ?? []).map((s) => s.text),
-    ).toEqual(["intro", "body"]);
   });
 
   it("404s a non-/mcp path and 405s a GET on /mcp", async () => {

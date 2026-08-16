@@ -1,0 +1,16 @@
+{
+  "completed": "2026-08-16T22:55Z (run 4; runs 1-3 died on findings that were fixed and landed: mcpclient null-result regression, DNS-blip fail-fast, mid-replay crash debris, absent-node containers)",
+  "containers": 7416,
+  "migrated": 3830,
+  "skipped_already_migrated": 3586,
+  "refused": [],
+  "parity_mismatches": [],
+  "comments_migrated": 0,
+  "comments_note": "comments_on had 0 rows in production \u2014 nothing to carry",
+  "blobs_total": 13271,
+  "parity": "two-sided per container: HEAD + every revision as-of its recorded tx; per-revision tx/author/original-revision live IN THE GRAPH as migration_provenance facts on each container; the sections_migrated marker on each container is the machine-checkable receipt",
+  "carriers": [
+    "019f9f9e5f0304da397fad494ce47db4bcc2438dbe45cbd42e3705ca7ee795f0"
+  ],
+  "full_roster": "parity-report-full.json.gz (this directory) \u2014 per-container status, revisions, txs"
+}
