@@ -14,7 +14,6 @@ import {
   updateBlock,
   writeBody,
 } from "../src/mcp/tools.js";
-import type { BodyClient } from "../src/types.js";
 
 describe("calliope-mcp tools — over FixtureBodyClient", () => {
   it("read_body returns [] for an unknown node", async () => {
@@ -122,17 +121,6 @@ describe("calliope-mcp tools — over FixtureBodyClient", () => {
     await writeBody(client, "n1", [{ text: "x" }]);
     await expect(editSection(client, "n1", "nope", "y")).rejects.toThrow(
       /not part of/i,
-    );
-  });
-
-  it("edit_section errors clearly when the backend lacks editSection", async () => {
-    // A minimal BodyClient that predates the optional editSection method.
-    const legacy: BodyClient = {
-      readBody: () => Promise.resolve([]),
-      saveBody: () => Promise.resolve(),
-    };
-    await expect(editSection(legacy, "n1", "s1", "y")).rejects.toThrow(
-      /does not support/i,
     );
   });
 });
@@ -278,10 +266,10 @@ describe("block verbs — CRUD + split/merge over FixtureBodyClient (F3)", () =>
   });
 
   it("split_block and merge_block error clearly when the backend lacks the ops", async () => {
-    const legacy: BodyClient = {
+    const legacy = bareClient({
       readBody: () => Promise.resolve([]),
       saveBody: () => Promise.resolve(),
-    };
+    });
     await expect(splitBlock(legacy, "n", "s", 0)).rejects.toThrow(
       /does not support/i,
     );
@@ -424,6 +412,7 @@ describe("create_note — the note-native mint (C8)", () => {
 // ── C9: the tag path over the fixtures ───────────────────────────────────────
 
 import { FixtureTagStore } from "../src/tag-store.js";
+import { bareClient } from "./helpers/bare-client.js";
 import {
   HAS_TAG,
   listByTag,

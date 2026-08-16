@@ -1,22 +1,45 @@
-import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+/**
+ * The sidecar over the ONE backend (046 F14) — the ferry wire and /mcp
+ * ride a LocalEngineStore; the fs backend is gone. Fixture engine (dial +
+ * blob store), real working-tree directory: reads/writes hit the graph
+ * fixtures AND project markdown to disk.
+ */
+
+import { readFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import type { Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FixtureBlobStore } from "../src/blob-store.js";
 import { FixtureChaosDial } from "../src/chaos-client.js";
-import { FsBodyClient } from "../src/fs-client.js";
+import { LocalEngineStore } from "../src/local-store.js";
 import { resolvePayload } from "../src/mcp/babychaos.js";
-import { createSidecarServer, parseArgs } from "../src/mcp/sidecar.js";
-import { LocalSearchIndex } from "../src/fs-search/index.js";
+import {
+  createSidecarServer,
+  parseArgs,
+  type SidecarBackend,
+} from "../src/mcp/sidecar.js";
 
 let root: string;
+let store: LocalEngineStore;
 let server: Server;
 let base: string;
 
 beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), "sidecar-"));
-  server = createSidecarServer(new FsBodyClient(root));
+  const facet = {
+    blobs: new FixtureBlobStore(),
+    dial: new FixtureChaosDial(),
+  };
+  store = new LocalEngineStore(root, facet, { pool: null, watch: false });
+  const backend: SidecarBackend = {
+    state: () => "ready",
+    ports: () => ({ pg: 1, chaos: 2 }),
+    ready: () => Promise.resolve(store),
+    containers: () => facet,
+    root: store.root,
+  };
+  server = createSidecarServer(backend);
   await new Promise<void>((resolve) => {
     server.listen(0, "127.0.0.1", resolve);
   });
@@ -27,9 +50,23 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  store.close();
   await new Promise((resolve) => server.close(resolve));
   await rm(root, { recursive: true, force: true });
 });
+
+async function healthAt(port: number): Promise<{ engine: string }> {
+  const res = await fetch(`http://127.0.0.1:${String(port)}/health`);
+  return (await res.json()) as { engine: string };
+}
+
+async function bodyAt(port: number): Promise<Response> {
+  return fetch(`http://127.0.0.1:${String(port)}/body`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ verb: "read_body", args: { node_id: "x.md" } }),
+  });
+}
 
 async function ferry(verb: string, args: unknown): Promise<Response> {
   return fetch(`${base}/body`, {
@@ -60,36 +97,60 @@ describe("parseArgs", () => {
 });
 
 describe("the ferry wire", () => {
-  it("GET /health reports the served root", async () => {
+  it("GET /health reports the engine backend", async () => {
     const res = await fetch(`${base}/health`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; backend: string };
+    const body = (await res.json()) as {
+      ok: boolean;
+      backend: string;
+      engine: string;
+      engine_ports: unknown;
+    };
     expect(body.ok).toBe(true);
-    expect(body.backend).toBe("fs");
+    expect(body.backend).toBe("engine");
+    expect(body.engine).toBe("ready");
+    expect(body.engine_ports).toEqual({ pg: 1, chaos: 2 });
   });
 
-  it("read_body / write_body round-trip over HTTP", async () => {
-    await writeFile(path.join(root, "note.md"), "alpha\n\nbeta", "utf8");
+  it("write_body lands in the engine AND projects the working tree", async () => {
+    const write = await ferry("write_body", {
+      node_id: "note.md",
+      sections: [{ text: "alpha\n\nbeta" }],
+    });
+    expect(write.status).toBe(200);
+    // The projection: markdown on disk, readable without the app.
+    expect(await readFile(path.join(root, "note.md"), "utf8")).toBe(
+      "alpha\n\nbeta",
+    );
     const read = await ferry("read_body", { node_id: "note.md" });
     expect(read.status).toBe(200);
     const { sections } = (await read.json()) as {
       sections: { id: string; text: string; orderKey: string }[];
     };
-    // The user grain: a file is ONE section, blank lines never chunk.
     expect(sections.map((s) => s.text)).toEqual(["alpha\n\nbeta"]);
-
-    const write = await ferry("write_body", {
-      node_id: "note.md",
-      sections: sections.map((s) => ({ text: s.text })),
-    });
-    expect(write.status).toBe(200);
-    expect(await readFile(path.join(root, "note.md"), "utf8")).toBe(
-      "alpha\n\nbeta",
-    );
+    // Engine identity: the section id is a durable slot token, not a
+    // generational file hash.
+    expect(sections[0]?.id).toBeTruthy();
   });
 
-  it("apply_section_ops is not served by the fs backend (0.14 de-inference)", async () => {
-    await writeFile(path.join(root, "note.md"), "alpha", "utf8");
+  it("an external edit ingests on read — the working tree is authoritative", async () => {
+    await ferry("write_body", {
+      node_id: "note.md",
+      sections: [{ text: "from the app" }],
+    });
+    await writeFile(path.join(root, "note.md"), "from obsidian", "utf8");
+    const read = await ferry("read_body", { node_id: "note.md" });
+    const { sections } = (await read.json()) as {
+      sections: { text: string }[];
+    };
+    expect(sections.map((s) => s.text)).toEqual(["from obsidian"]);
+  });
+
+  it("apply_section_ops went LIVE — engine slots carry durable identity", async () => {
+    await ferry("write_body", {
+      node_id: "note.md",
+      sections: [{ text: "alpha" }],
+    });
     const read = await ferry("read_body", { node_id: "note.md" });
     const { sections } = (await read.json()) as {
       sections: { id: string }[];
@@ -98,26 +159,18 @@ describe("the ferry wire", () => {
       node_id: "note.md",
       ops: [{ op: "update", section_id: sections[0]?.id, text: "ALPHA" }],
     });
-    expect(res.status).toBe(500);
-    const err = (await res.json()) as { error: string };
-    expect(err.error).toMatch(/does not support/);
-    // Nothing written — the editor degrades to whole-body writes instead.
-    expect(await readFile(path.join(root, "note.md"), "utf8")).toBe("alpha");
+    expect(res.status).toBe(200);
+    expect(await readFile(path.join(root, "note.md"), "utf8")).toBe("ALPHA");
   });
 
-  it("unsupported and unknown verbs answer 4xx/5xx without crashing", async () => {
-    const unknown = await ferry("no_such_verb", {});
-    expect(unknown.status).toBe(400);
-  });
-
-  it("F13: the revision verbs went LIVE — history serves from the .grace/ revlog", async () => {
-    // This assertion used to be its inverse ("does not support") — the
-    // drawer was dark on the fs backend by design until Rob's 2026-08-10
-    // revlog decision. The sidecar dispatch never changed; the optional
-    // client methods lit it up.
+  it("history is the graph: revisions list and reconstruct", async () => {
     await ferry("write_body", {
       node_id: "note.md",
-      sections: [{ text: "history seed" }],
+      sections: [{ text: "v1" }],
+    });
+    await ferry("write_body", {
+      node_id: "note.md",
+      sections: [{ text: "v2" }],
     });
     const revisions = await ferry("read_body_revisions", {
       node_id: "note.md",
@@ -126,16 +179,22 @@ describe("the ferry wire", () => {
     const body = (await revisions.json()) as {
       revisions: { revision: string; kind: string }[];
     };
-    expect(body.revisions.length).toBeGreaterThan(0);
+    expect(body.revisions.length).toBeGreaterThanOrEqual(2);
+    const oldest = body.revisions[body.revisions.length - 1];
     const at = await ferry("read_body_at", {
       node_id: "note.md",
-      revision: body.revisions[0]?.revision ?? "",
+      revision: oldest?.revision ?? "",
     });
     expect(at.status).toBe(200);
     const reconstructed = (await at.json()) as {
       sections: { text: string }[];
     };
-    expect(reconstructed.sections.length).toBe(1);
+    expect(reconstructed.sections.map((s) => s.text)).toEqual(["v1"]);
+  });
+
+  it("unsupported and unknown verbs answer 4xx without crashing", async () => {
+    const unknown = await ferry("no_such_verb", {});
+    expect(unknown.status).toBe(400);
   });
 
   it("answers the CORS preflight the webview sends", async () => {
@@ -154,8 +213,10 @@ describe("the ferry wire", () => {
 
   // ── 024/F1: copy_reference — the path form ───────────────────────────────
   it("copy_reference answers the compound with the path as the id half", async () => {
-    await mkdir(path.join(root, "Brain Soup"), { recursive: true });
-    await writeFile(path.join(root, "Brain Soup", "idea.md"), "x", "utf8");
+    await ferry("write_body", {
+      node_id: "Brain Soup/idea.md",
+      sections: [{ text: "x" }],
+    });
     const res = await ferry("copy_reference", {
       node_id: "Brain Soup/idea.md",
     });
@@ -173,7 +234,6 @@ describe("the ferry wire", () => {
   });
 
   it("copy_reference strips .markdown too and addresses a not-yet-written path", async () => {
-    // the path is the identity — a reference may precede the first write
     const res = await ferry("copy_reference", { node_id: "fresh.markdown" });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { compound: string };
@@ -188,31 +248,81 @@ describe("the ferry wire", () => {
       (await ferry("copy_reference", { node_id: "binary.png" })).status,
     ).toBe(400);
   });
+
+  // ── tags: the computed walk of the working tree ──────────────────────────
+  it("list_tags / list_by_tag read the projected tree", async () => {
+    await ferry("write_body", {
+      node_id: "a.md",
+      sections: [{ text: "hello #focus world" }],
+    });
+    await ferry("write_body", {
+      node_id: "b.md",
+      sections: [{ text: "#focus and #calm" }],
+    });
+    const tags = (await (await ferry("list_tags", {})).json()) as {
+      tags: { tag: string; count: number }[];
+    };
+    expect(tags.tags).toContainEqual({ tag: "#focus", count: 2 });
+    const byTag = (await (
+      await ferry("list_by_tag", { tag: "#calm" })
+    ).json()) as { tag: string; node_ids: string[] };
+    expect(byTag).toEqual({ tag: "#calm", node_ids: ["b.md"] });
+  });
+
+  // ── search without the engine's postgres: honest darkness ────────────────
+  it("search names its dark arms when no index pool is wired", async () => {
+    const res = await ferry("search", { query: "anything" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      hits: unknown[];
+      armsQueried: string[];
+      armsDark: string[];
+    };
+    expect(body.hits).toEqual([]);
+    expect(body.armsQueried).toEqual([]);
+    expect(body.armsDark).toEqual(["fts", "semantic"]);
+  });
+
+  it("refuses an empty search query with bad_request", async () => {
+    expect((await ferry("search", { query: " " })).status).toBe(400);
+  });
 });
 
-// ── 031 ("Look At This" F12): the local MCP endpoint ─────────────────────────
-
-describe("the sidecar MCP endpoint (031 / Look At This F12)", () => {
-  async function mcp(payload: unknown, sessionInit = true): Promise<unknown> {
-    if (sessionInit) {
-      await fetch(`${base}/mcp`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 0,
-          method: "initialize",
-          params: {
-            protocolVersion: "2025-03-26",
-            capabilities: {},
-            clientInfo: { name: "test", version: "0" },
-          },
-        }),
-      });
+describe("the boot gate", () => {
+  it("requests wait for the engine instead of failing during boot", async () => {
+    let releaseStore!: (s: LocalEngineStore) => void;
+    const gate = new Promise<LocalEngineStore>((res) => {
+      releaseStore = res;
+    });
+    const backend: SidecarBackend = {
+      state: () => "booting",
+      ports: () => null,
+      ready: () => gate,
+      containers: () => undefined,
+      root,
+    };
+    const gated = createSidecarServer(backend);
+    await new Promise<void>((resolve) => {
+      gated.listen(0, "127.0.0.1", resolve);
+    });
+    const address = gated.address();
+    if (address === null || typeof address !== "object")
+      throw new Error("no address");
+    try {
+      const health = await healthAt(address.port);
+      expect(health.engine).toBe("booting"); // health never blocks
+      const pending = bodyAt(address.port);
+      releaseStore(store);
+      const res = await pending;
+      expect(res.status).toBe(200); // waited, then served
+    } finally {
+      await new Promise((resolve) => gated.close(resolve));
     }
+  });
+});
+
+describe("the sidecar MCP endpoint", () => {
+  async function mcp(payload: unknown): Promise<unknown> {
     const res = await fetch(`${base}/mcp`, {
       method: "POST",
       headers: {
@@ -222,12 +332,11 @@ describe("the sidecar MCP endpoint (031 / Look At This F12)", () => {
       body: JSON.stringify(payload),
     });
     const text = await res.text();
-    // streamable-http answers SSE-framed or plain JSON; take the data line
     const line = text.split("\n").find((l) => l.startsWith("data:"));
     return JSON.parse(line !== undefined ? line.slice(5) : text) as unknown;
   }
 
-  it("serves the fs-supported body surface plus look over MCP", async () => {
+  it("serves the body surface, look, search AND the container verbs", async () => {
     const listed = (await mcp({
       jsonrpc: "2.0",
       id: 1,
@@ -238,13 +347,20 @@ describe("the sidecar MCP endpoint (031 / Look At This F12)", () => {
     expect(names).toContain("read_body");
     expect(names).toContain("write_body");
     expect(names).toContain("look");
-    expect(names).toContain("search"); // Findability F2 — the surface pin
-    // chaos-gated verbs stay absent — no graph on the sidecar
+    expect(names).toContain("search");
+    // F13/F14: one engine — the container surface serves locally too.
+    expect(names).toContain("write_container");
+    expect(names).toContain("read_container");
+    expect(names).toContain("container_history");
+    // chaos-gated fleet verbs stay absent — no gate on the desktop
     expect(names).not.toContain("create_note");
   });
 
-  it("round-trips a body read over MCP against the served directory", async () => {
-    await writeFile(path.join(root, "agent.md"), "hello agent", "utf8");
+  it("round-trips a body read over MCP against the engine", async () => {
+    await ferry("write_body", {
+      node_id: "agent.md",
+      sections: [{ text: "hello agent" }],
+    });
     const called = (await mcp({
       jsonrpc: "2.0",
       id: 2,
@@ -271,217 +387,21 @@ describe("the sidecar MCP endpoint (031 / Look At This F12)", () => {
   });
 });
 
-describe("Findability F2 — the search verb on the ferry wire", () => {
-  it("without an index answers honest darkness (both arms named)", async () => {
-    const res = await ferry("search", { query: "anything" });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      hits: unknown[];
-      armsQueried: string[];
-      armsDark: string[];
-    };
-    expect(body.hits).toEqual([]);
-    expect(body.armsQueried).toEqual([]);
-    expect(body.armsDark.sort()).toEqual(["fts", "semantic"]);
-  });
-
-  it("refuses an empty query with bad_request", async () => {
-    const res = await ferry("search", { query: "  " });
-    expect(res.status).toBe(400);
-  });
-
-  it("with an index wired, the ferry serves ranked hits with snippets", async () => {
-    await writeFile(
-      path.join(root, "wired.md"),
-      "the wired heron answers",
-      "utf8",
-    );
-    const index = LocalSearchIndex.open(root, { embedder: null, watch: false });
-    const wired = createSidecarServer(new FsBodyClient(root), {
-      search: index,
-    });
-    await new Promise<void>((resolve) => {
-      wired.listen(0, "127.0.0.1", resolve);
-    });
-    const address = wired.address();
-    if (address === null || typeof address !== "object")
-      throw new Error("no address");
-    try {
-      await index.started;
-      const res = await fetch(`http://127.0.0.1:${String(address.port)}/body`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          verb: "search",
-          args: { query: "wired heron" },
-        }),
-      });
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        hits: { id: string; snippet: string }[];
-        armsQueried: string[];
-        armsDark: string[];
-      };
-      expect(body.hits[0]?.id).toBe("wired.md");
-      expect(body.armsQueried).toEqual(["fts"]);
-      expect(body.armsDark).toEqual(["semantic"]);
-    } finally {
-      index.close();
-      await new Promise((resolve) => wired.close(resolve));
-    }
-  });
-});
-
-describe("Findability F11 — the mentions verb on the ferry wire", () => {
-  it("answers linked + unlinked over a wired index; empty id refuses", async () => {
-    await writeFile(path.join(root, "target.md"), "the target prose", "utf8");
-    await writeFile(path.join(root, "linker.md"), "see [[target]]", "utf8");
-    const index = LocalSearchIndex.open(root, { embedder: null, watch: false });
-    const wired = createSidecarServer(new FsBodyClient(root), {
-      search: index,
-    });
-    await new Promise<void>((resolve) => {
-      wired.listen(0, "127.0.0.1", resolve);
-    });
-    const address = wired.address();
-    if (address === null || typeof address !== "object")
-      throw new Error("no address");
-    try {
-      await index.started;
-      const call = (args: unknown): Promise<Response> =>
-        fetch(`http://127.0.0.1:${String(address.port)}/body`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ verb: "mentions", args }),
-        });
-      const res = await call({ id: "target.md" });
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        linked: { id: string }[];
-        unlinked: { id: string }[];
-      };
-      expect(body.linked.map((m) => m.id)).toEqual(["linker.md"]);
-      expect((await call({ id: " " })).status).toBe(400);
-    } finally {
-      index.close();
-      await new Promise((resolve) => wired.close(resolve));
-    }
-  });
-});
-
-describe("baby chaos on the sidecar (045 F13)", () => {
-  async function healthAt(port: number): Promise<Record<string, unknown>> {
-    const res = await fetch(`http://127.0.0.1:${String(port)}/health`);
-    return (await res.json()) as Record<string, unknown>;
-  }
-  async function mcpAt(at: string, payload: unknown): Promise<unknown> {
-    const res = await fetch(`${at}/mcp`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-      },
-      body: JSON.stringify(payload),
-    });
-    const text = await res.text();
-    const line = text.split("\n").find((l) => l.startsWith("data:"));
-    return JSON.parse(line !== undefined ? line.slice(5) : text) as unknown;
-  }
-  async function toolNames(at: string): Promise<string[]> {
-    const listed = (await mcpAt(at, {
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/list",
-      params: {},
-    })) as { result?: { tools?: { name: string }[] } };
-    return (listed.result?.tools ?? []).map((t) => t.name);
-  }
-
-  it("/health reports engine absent when no payload is wired", async () => {
-    const res = await fetch(`${base}/health`);
-    const body = (await res.json()) as { engine: string };
-    expect(body.engine).toBe("absent");
-    expect(await toolNames(base)).not.toContain("write_container");
-  });
-
-  it("resolvePayload: null without the layout, paths with it", async () => {
+describe("resolvePayload (unchanged from F13)", () => {
+  it("null without the layout, paths with it", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "payload-"));
     try {
       expect(resolvePayload({ CALLIOPE_BABYCHAOS_DIR: dir })).toBeNull();
+      const { mkdir } = await import("node:fs/promises");
       await mkdir(path.join(dir, "pg", "bin"), { recursive: true });
       await writeFile(path.join(dir, "pg", "bin", "initdb"), "", "utf8");
       await writeFile(path.join(dir, "chaosstore"), "", "utf8");
       const payload = resolvePayload({ CALLIOPE_BABYCHAOS_DIR: dir });
       expect(payload?.pgBin).toBe(path.join(dir, "pg", "bin"));
       expect(payload?.chaosstore).toBe(path.join(dir, "chaosstore"));
-      // no env, no exe dir → absent, never a guess
       expect(resolvePayload({})).toBeNull();
     } finally {
       await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("the container verbs appear the moment the engine turns ready — no restart", async () => {
-    const dial = new FixtureChaosDial();
-    const blobs = new FixtureBlobStore();
-    let ready = false;
-    const wired = createSidecarServer(new FsBodyClient(root), {
-      engine: {
-        state: () => (ready ? "ready" : "booting"),
-        containers: () => (ready ? { blobs, dial } : undefined),
-        ports: () => (ready ? { pg: 1, chaos: 2 } : null),
-      },
-    });
-    await new Promise<void>((resolve) => {
-      wired.listen(0, "127.0.0.1", resolve);
-    });
-    const address = wired.address();
-    if (address === null || typeof address !== "object")
-      throw new Error("no address");
-    const at = `http://127.0.0.1:${String(address.port)}`;
-    try {
-      // Booting: fs surface only, health says so.
-      const booting = await healthAt(address.port);
-      expect(booting.engine).toBe("booting");
-      expect(await toolNames(at)).not.toContain("write_container");
-
-      // Ready: the SAME listener now serves the container surface.
-      ready = true;
-      const healthy = await healthAt(address.port);
-      expect(healthy.engine).toBe("ready");
-      const names = await toolNames(at);
-      expect(names).toContain("write_container");
-      expect(names).toContain("read_container");
-      expect(names).toContain("container_history");
-
-      // And it is the REAL surface: a write/read round trip lands.
-      const doc = "dd".repeat(32);
-      const wrote = (await mcpAt(at, {
-        jsonrpc: "2.0",
-        id: 2,
-        method: "tools/call",
-        params: {
-          name: "write_container",
-          arguments: {
-            container: doc,
-            ops: [{ op: "add", text: "engine prose", position: "a0" }],
-          },
-        },
-      })) as { result?: { isError?: boolean } };
-      expect(wrote.result?.isError ?? false).toBe(false);
-      const read = (await mcpAt(at, {
-        jsonrpc: "2.0",
-        id: 3,
-        method: "tools/call",
-        params: { name: "read_container", arguments: { container: doc } },
-      })) as {
-        result?: { structuredContent?: { blocks?: { text: string }[] } };
-      };
-      expect(
-        (read.result?.structuredContent?.blocks ?? []).map((b) => b.text),
-      ).toEqual(["engine prose"]);
-    } finally {
-      await new Promise((resolve) => wired.close(resolve));
     }
   });
 });

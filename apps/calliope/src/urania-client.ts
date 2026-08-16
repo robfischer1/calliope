@@ -5,6 +5,7 @@ import type {
   BlockOp,
   BlockOpEmitter,
   BodyClient,
+  RevisionMeta,
   Section,
   SectionInput,
   SectionOp,
@@ -522,5 +523,37 @@ export class UraniaBodyClient implements BodyClient {
 
     post.sort((a, b) => compareKeys(a.orderKey, b.orderKey));
     return { sections: post, applied };
+  }
+
+  // ── F14 interface collapse: the substrate-direct client predates the
+  //    revision/presence reads and its transport is a swap-seam anyway —
+  //    these refuse with the exact text the old capability guards used,
+  //    so a caller reaching them learns the same thing at the same seam.
+
+  readRevisions(): Promise<RevisionMeta[]> {
+    return Promise.reject(
+      new Error(
+        "read_body_revisions: the configured body backend does not support " +
+          "revision reads (no readRevisions method).",
+      ),
+    );
+  }
+
+  readRevisionAt(): Promise<Section[]> {
+    return Promise.reject(
+      new Error(
+        "read_body_at: the configured body backend does not support " +
+          "revision reads (no readRevisionAt method).",
+      ),
+    );
+  }
+
+  hasBody(): Promise<Map<string, number>> {
+    return Promise.reject(
+      new Error(
+        "has_body: the configured body backend does not support " +
+          "prose-presence (no hasBody method).",
+      ),
+    );
   }
 }

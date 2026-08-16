@@ -8,7 +8,6 @@
 import { describe, expect, it } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { readBodyAt, readBodyRevisions } from "../src/mcp/tools.js";
-import type { BodyClient } from "../src/types.js";
 
 async function lineage(client: FixtureBodyClient): Promise<void> {
   await client.saveBody("n1", [{ text: "a" }, { text: "b" }]);
@@ -73,19 +72,6 @@ describe("read_body_revisions / read_body_at handlers", () => {
       expect(typeof s.orderKey).toBe("string");
     }
   });
-
-  it("rejects clearly when the backend lacks the capability", async () => {
-    const bare: BodyClient = {
-      readBody: () => Promise.resolve([]),
-      saveBody: () => Promise.resolve(),
-    };
-    await expect(readBodyRevisions(bare, "n1")).rejects.toThrow(
-      /does not support revision reads/,
-    );
-    await expect(
-      readBodyAt(bare, "n1", "2026-01-01T00:00:00Z"),
-    ).rejects.toThrow(/does not support revision reads/);
-  });
 });
 
 describe("IndexingBodyClient passes the revision capability through (A8)", () => {
@@ -103,20 +89,5 @@ describe("IndexingBodyClient passes the revision capability through (A8)", () =>
     if (oldest === undefined) throw new Error("missing revision");
     const at = await readBodyAt(wrapped, "n1", oldest.revision);
     expect(at.sections.map((s) => s.text)).toEqual(["a", "b"]);
-  });
-
-  it("keeps the capability absent when the inner client lacks it", async () => {
-    const { IndexingBodyClient } = await import("../src/mcp/index-push.js");
-    const bare: BodyClient = {
-      readBody: () => Promise.resolve([]),
-      saveBody: () => Promise.resolve(),
-    };
-    const wrapped = new IndexingBodyClient(bare, {
-      indexDocument: () => Promise.resolve(),
-    });
-    expect(wrapped.readRevisions).toBeUndefined();
-    await expect(readBodyRevisions(wrapped, "n1")).rejects.toThrow(
-      /does not support revision reads/,
-    );
   });
 });

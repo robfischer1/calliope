@@ -3,7 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { createServer } from "../src/mcp/server.js";
-import type { SearchProvider, SearchResponse } from "../src/fs-search/index.js";
+import type { SearchProvider, SearchResponse } from "../src/search-types.js";
 
 async function connect(provider?: SearchProvider): Promise<Client> {
   const server = createServer(new FixtureBodyClient(), { search: provider });

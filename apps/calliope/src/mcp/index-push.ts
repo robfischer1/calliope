@@ -101,21 +101,18 @@ export class UraniaIndexClient implements IndexPusher {
  * contract that {@link BodyClient} and its MCP handler rely on.
  */
 export class IndexingBodyClient implements BodyClient {
-  readonly editSection?: BodyClient["editSection"];
-  /** A8: the optional revision reads pass straight through (no index push —
-   * they are reads). Conditional assignment preserves the capability signal:
-   * an inner client without them keeps them `undefined` here, so the tool
-   * layer's support guard stays honest. Found live 2026-07-11: the deployed
-   * pg backend is ALWAYS wrapped by this decorator, which silently hid the
-   * new verbs ("no readRevisions method") while the bare-client tests passed. */
-  readonly readRevisions?: BodyClient["readRevisions"];
-  readonly readRevisionAt?: BodyClient["readRevisionAt"];
-  /** F10: bulk prose-presence passes straight through (a read, no push);
-   *  conditional assignment preserves the capability signal (the A8 lesson). */
-  readonly hasBody?: BodyClient["hasBody"];
-  /** A11: the block-grain apply is a write — push after, same as save/edit.
-   *  Conditional assignment preserves the capability signal (the A8 lesson). */
-  readonly applySectionOps?: BodyClient["applySectionOps"];
+  readonly editSection: BodyClient["editSection"];
+  /** A8: the revision reads pass straight through (no index push — they
+   *  are reads). F14 collapsed the capability signal: every surviving
+   *  BodyClient implements the full surface, so the passthrough is
+   *  unconditional (the A8 "decorator hid the verbs" hazard is now a
+   *  compile error instead of a runtime absence). */
+  readonly readRevisions: BodyClient["readRevisions"];
+  readonly readRevisionAt: BodyClient["readRevisionAt"];
+  /** F10: bulk prose-presence passes straight through (a read, no push). */
+  readonly hasBody: BodyClient["hasBody"];
+  /** A11: the block-grain apply is a write — push after, same as save/edit. */
+  readonly applySectionOps: BodyClient["applySectionOps"];
 
   constructor(
     /** The wrapped client — PUBLIC so boot-time init (ensureSchema) can
@@ -130,37 +127,33 @@ export class IndexingBodyClient implements BodyClient {
     // trailing provenance pair (authoredBy, kafkaOffset) is how every
     // production write stored 'human' while the bare-client tests passed
     // (found live 2026-08-14: the deployed pg client is ALWAYS wrapped).
-    const edit = inner.editSection?.bind(inner);
-    if (edit !== undefined) {
-      this.editSection = async (
+    const edit = inner.editSection.bind(inner);
+    this.editSection = async (
+      nodeId,
+      sectionId,
+      text,
+      authoredBy,
+      kafkaOffset,
+    ) => {
+      const section = await edit(
         nodeId,
         sectionId,
         text,
         authoredBy,
         kafkaOffset,
-      ) => {
-        const section = await edit(
-          nodeId,
-          sectionId,
-          text,
-          authoredBy,
-          kafkaOffset,
-        );
-        await this.push(nodeId);
-        return section;
-      };
-    }
-    const apply = inner.applySectionOps?.bind(inner);
-    if (apply !== undefined) {
-      this.applySectionOps = async (nodeId, ops, authoredBy, kafkaOffset) => {
-        const result = await apply(nodeId, ops, authoredBy, kafkaOffset);
-        await this.push(nodeId);
-        return result;
-      };
-    }
-    this.readRevisions = inner.readRevisions?.bind(inner);
-    this.readRevisionAt = inner.readRevisionAt?.bind(inner);
-    this.hasBody = inner.hasBody?.bind(inner);
+      );
+      await this.push(nodeId);
+      return section;
+    };
+    const apply = inner.applySectionOps.bind(inner);
+    this.applySectionOps = async (nodeId, ops, authoredBy, kafkaOffset) => {
+      const result = await apply(nodeId, ops, authoredBy, kafkaOffset);
+      await this.push(nodeId);
+      return result;
+    };
+    this.readRevisions = inner.readRevisions.bind(inner);
+    this.readRevisionAt = inner.readRevisionAt.bind(inner);
+    this.hasBody = inner.hasBody.bind(inner);
   }
 
   readBody(nodeId: string): Promise<Section[]> {
@@ -177,11 +170,6 @@ export class IndexingBodyClient implements BodyClient {
     await this.push(nodeId);
   }
 
-  /**
-   * Best-effort push of the whole assembled body: read it back through the
-   * inner client (the post-write truth) and hand the concatenated prose to
-   * urania. A failure is swallowed — the index self-heals on the next write.
-   */
   private async push(nodeId: string): Promise<void> {
     try {
       const sections = await this.inner.readBody(nodeId);

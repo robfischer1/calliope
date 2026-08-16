@@ -178,12 +178,6 @@ export async function editSection(
   authoredBy?: AuthoredBy,
   kafkaOffset?: number,
 ): Promise<EditSectionResult> {
-  if (client.editSection === undefined) {
-    throw new Error(
-      "edit_section: the configured body backend does not support " +
-        "single-section edits (no editSection method).",
-    );
-  }
   const section = await client.editSection(
     nodeId,
     sectionId,
@@ -243,12 +237,6 @@ export async function applySectionOps(
   authoredBy?: AuthoredBy,
   kafkaOffset?: number,
 ): Promise<ApplySectionOpsToolResult> {
-  if (client.applySectionOps === undefined) {
-    throw new Error(
-      "apply_section_ops: the configured body backend does not support " +
-        "block-grain applies (no applySectionOps method).",
-    );
-  }
   const decoded = ops.map((w, i) => decodeOp(w, i));
   const result = await client.applySectionOps(
     nodeId,
@@ -273,12 +261,6 @@ export async function readBodyRevisions(
   nodeId: string,
   limit?: number,
 ): Promise<ReadBodyRevisionsResult> {
-  if (client.readRevisions === undefined) {
-    throw new Error(
-      "read_body_revisions: the configured body backend does not support " +
-        "revision reads (no readRevisions method).",
-    );
-  }
   const revisions = await client.readRevisions(nodeId, limit);
   return { revisions };
 }
@@ -293,12 +275,6 @@ export async function readBodyAt(
   nodeId: string,
   revision: string,
 ): Promise<ReadBodyAtResult> {
-  if (client.readRevisionAt === undefined) {
-    throw new Error(
-      "read_body_at: the configured body backend does not support " +
-        "revision reads (no readRevisionAt method).",
-    );
-  }
   const sections = await client.readRevisionAt(nodeId, revision);
   return { revision, sections: sections.map(toToolSection) };
 }
@@ -349,12 +325,6 @@ export async function createBlock(
   authoredBy?: AuthoredBy,
   kafkaOffset?: number,
 ): Promise<BlockResult> {
-  if (client.applySectionOps === undefined) {
-    throw new Error(
-      "create_block: the configured body backend does not support " +
-        "block-grain writes (no applySectionOps method).",
-    );
-  }
   const body = await client.readBody(nodeId);
   let prevKey: string | null;
   let nextKey: string | null;
@@ -491,12 +461,6 @@ export async function deleteBlock(
   authoredBy?: AuthoredBy,
   kafkaOffset?: number,
 ): Promise<DeleteBlockResult> {
-  if (client.applySectionOps === undefined) {
-    throw new Error(
-      "delete_block: the configured body backend does not support " +
-        "block-grain writes (no applySectionOps method).",
-    );
-  }
   const result = await client.applySectionOps(
     nodeId,
     [{ op: "delete", sectionId: blockId }],

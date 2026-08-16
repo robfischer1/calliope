@@ -12,7 +12,7 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { SearchProvider, SearchResponse } from "./index.js";
+import type { SearchProvider, SearchResponse } from "./search-types.js";
 
 /** The dissolved-notes source eros reports (verified live: 36,432 chunks). */
 export const EROS_NOTES_SOURCE = "calliope_documents";

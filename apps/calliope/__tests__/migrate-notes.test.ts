@@ -11,7 +11,7 @@ import { FixtureTagStore } from "../src/tag-store.js";
 import { FixtureDocumentStore } from "../src/document-store.js";
 import { migrateNotes } from "../src/mcp/migrate-notes.js";
 import { sinkNoteVersion } from "../src/notes-sink.js";
-import type { BodyClient } from "../src/types.js";
+import { bareClient } from "./helpers/bare-client.js";
 
 const SCOPE = "notes";
 
@@ -254,10 +254,10 @@ describe("migrateNotes (F6)", () => {
     await store.write({ source_path: "Notes/x.md", body_text: "real" });
     const dial = new FixtureChaosDial();
     // A body client that swallows saves — the failure the gate exists for.
-    const broken: BodyClient = {
+    const broken = bareClient({
       readBody: () => Promise.resolve([]),
       saveBody: () => Promise.resolve(),
-    };
+    });
     const report = await migrateNotes(store, broken, dial, SCOPE);
     expect(report.parity_mismatches).toEqual(["Notes/x.md"]);
   });
