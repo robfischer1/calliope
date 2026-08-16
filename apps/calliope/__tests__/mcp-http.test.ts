@@ -190,3 +190,57 @@ describe("resolvePort", () => {
     expect(resolvePort({ PORT: "not-a-port" })).toBe(8204);
   });
 });
+
+describe("the PRODUCTION boot shape (prebuilt client, F12 regression pin)", () => {
+  it("serves the container surface when booted exactly as main() boots", async () => {
+    // The live outage this pins (found on the deployed star, 2026-08-16):
+    // main() passes a PREBUILT client with each facet as a positional arg,
+    // which SKIPS the make-the-backend-internally branch — so a facet
+    // main() forgets to pass silently vanishes from the served surface
+    // while the fixture-path test above stays green. Boot the server the
+    // way main() does and pin the write path's presence.
+    const { makeBackend } = await import("../src/mcp/backend.js");
+    const { FocusRegister } = await import("../src/focus-register.js");
+    const backend = makeBackend("fixture");
+    const server = createCalliopeHttpServer(
+      "fixture",
+      backend.client,
+      backend.documents,
+      backend.revisions,
+      backend.chaos,
+      backend.tags,
+      new FocusRegister(),
+      backend.containers,
+    );
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const addr = server.address() as AddressInfo;
+    try {
+      const res = await fetch(`http://127.0.0.1:${String(addr.port)}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: {},
+        }),
+      });
+      const text = await res.text();
+      const line = text.split("\n").find((l) => l.startsWith("data:"));
+      const listed = JSON.parse(line !== undefined ? line.slice(5) : text) as {
+        result?: { tools?: { name: string }[] };
+      };
+      const names = (listed.result?.tools ?? []).map((t) => t.name);
+      expect(names).toContain("write_container");
+      expect(names).toContain("read_container");
+      expect(names).toContain("container_history");
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
