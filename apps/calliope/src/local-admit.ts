@@ -29,7 +29,6 @@ import {
   LiveChaosDial,
   type NodeEdge,
   type QuadRow,
-  scopeHash,
 } from "./chaos-client.js";
 
 /** sha256 over the 0x1f-joined canonical scalar form — themis ContentHash. */
@@ -67,7 +66,7 @@ export function toCaptureOps(ops: ChaosOp[], scope: string): CaptureOp[] {
       "bad_result",
     );
   }
-  const scopeHex = scopeHash(scope);
+  const scopeGraph = scope;
   const labels = new Map<string, number>();
   let createIndex = 0;
   for (const op of ops) {
@@ -130,7 +129,7 @@ export function toCaptureOps(ops: ChaosOp[], scope: string): CaptureOp[] {
           typeof op.graph === "string" &&
           HEX64.test(op.graph)
             ? op.graph
-            : scopeHex;
+            : scopeGraph;
         out.push({
           op: op.op,
           s: wireRef(op.from_id),

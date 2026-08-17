@@ -144,10 +144,11 @@ export interface ChaosDial {
   registerGraph(name: string): Promise<void>;
   /**
    * Raw quads from subjects, optionally as-of a past transaction (F5 —
-   * history is a graph read). predicateNames are NAMES here; the live dial
-   * hashes them for the wire. Rows are wire-form: s/p/g 64-hex, o 64-hex
-   * (node token or scalar content-hash by the row's predicate) or
-   * `blob:<id>`.
+   * history is a graph read). predicateNames are NAMES here, and the live
+   * dial sends them as names — chaos derives sha256(name) internally
+   * (request side moved to names 2026-08-17). Rows are wire-form: s/p/g
+   * 64-hex, o 64-hex (node token or scalar content-hash by the row's
+   * predicate) or `blob:<id>`.
    */
   quadsFrom(
     subjects: string[],
@@ -457,7 +458,7 @@ export class LiveChaosDial implements ChaosDial {
   ): Promise<string[]> {
     this.id += 1;
     const raw = await rpc(this.chaos, this.id, "find_by_value", {
-      graph: scopeHash(scope),
+      graph: scope,
       predicate,
       value,
     });
@@ -497,7 +498,7 @@ export class LiveChaosDial implements ChaosDial {
   async registerGraph(name: string): Promise<void> {
     this.id += 1;
     await rpc(this.chaos, this.id, "register_graph", {
-      graph: scopeHash(name),
+      graph: name,
       name,
     });
   }
@@ -512,8 +513,8 @@ export class LiveChaosDial implements ChaosDial {
     const raw = await rpc(this.chaos, this.id, "quads_from", {
       subjects,
       as_of_tx: asOfTx,
-      predicates: predicateNames?.map((n) => scopeHash(n)) ?? null,
-      graph: graph !== undefined ? scopeHash(graph) : null,
+      predicates: predicateNames ?? null,
+      graph: graph ?? null,
     });
     if (!Array.isArray(raw)) return [];
     const out: QuadRow[] = [];
@@ -552,7 +553,7 @@ export class LiveChaosDial implements ChaosDial {
     const raw = (await rpc(this.chaos, this.id, "history", {
       subjects,
       follow,
-      graph: graph !== undefined ? scopeHash(graph) : null,
+      graph: graph ?? null,
     })) as { transactions?: unknown[] } | null;
     if (raw === null || !Array.isArray(raw.transactions)) return [];
     return raw.transactions.map((t) => {
@@ -569,7 +570,7 @@ export class LiveChaosDial implements ChaosDial {
   async heldBlobs(graph?: string): Promise<string[]> {
     this.id += 1;
     const raw = (await rpc(this.chaos, this.id, "held_blobs", {
-      graph: graph !== undefined ? scopeHash(graph) : null,
+      graph: graph ?? null,
     })) as { held?: unknown[] } | null;
     if (raw === null || !Array.isArray(raw.held)) {
       throw new ChaosClientError("held_blobs: malformed report", "bad_result");
