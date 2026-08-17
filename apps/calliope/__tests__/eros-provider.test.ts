@@ -14,7 +14,7 @@ import {
   ErosSearchProvider,
   erosUrl,
   makeErosProvider,
-} from "../src/fs-search/eros-provider.js";
+} from "../src/eros-provider.js";
 
 let stub: Server | null = null;
 

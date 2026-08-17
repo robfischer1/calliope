@@ -46,18 +46,40 @@ export function opCreate(kind: string, label = ""): ChaosOp {
   return { op: "createNode", kind, label };
 }
 
-/** Assert one edge; exactly one of toLiteral/toNode. */
+/** An edge target — exactly one of the three object domains (F2/F3):
+ *  a literal (scalar), a node token or batch-local label, or a blob id
+ *  (decimal string — bigint-safe; themis translates to {"$blob": id}). */
+export interface EdgeTarget {
+  toLiteral?: string;
+  toNode?: string;
+  toBlob?: string;
+}
+
+function edgeFields(target: EdgeTarget): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    to_literal: target.toLiteral ?? null,
+    to_node: target.toNode ?? null,
+  };
+  // Only when present: pre-F3 consumers (and themis validators) treat an
+  // explicit null third target as a schema surprise; absence is the
+  // compatible spelling of "not a blob edge".
+  if (target.toBlob !== undefined) {
+    fields.to_blob = target.toBlob;
+  }
+  return fields;
+}
+
+/** Assert one edge; exactly one of toLiteral/toNode/toBlob. */
 export function opAdd(
   fromId: string,
   predicate: string,
-  target: { toLiteral?: string; toNode?: string },
+  target: EdgeTarget,
 ): ChaosOp {
   return {
     op: "addEdge",
     from_id: fromId,
     predicate,
-    to_literal: target.toLiteral ?? null,
-    to_node: target.toNode ?? null,
+    ...edgeFields(target),
   };
 }
 
@@ -66,6 +88,9 @@ export interface AdmitResult {
   admitted: boolean;
   minted: string[];
   violations: unknown[];
+  /** The graph transaction the batch landed as (F6 — the parity gate's
+   *  revision→tx record). Absent when the gate answered none. */
+  tx?: number;
 }
 
 /** A structured chaos/themis failure — the wire's error, never swallowed. */
@@ -80,11 +105,31 @@ export class ChaosClientError extends Error {
   }
 }
 
+/** One raw quad off the graph (wire form — see {@link ChaosDial.quadsFrom}). */
+export interface QuadRow {
+  s: string;
+  p: string;
+  o: string;
+  g: string;
+}
+
+/** One transaction in a history listing (F5). */
+export interface HistoryEntry {
+  tx: number;
+  at: string | null;
+  author: string;
+  note: string;
+}
+
 /** One outbound edge as chaos `materialize_edges` answers it (resolved form). */
 export interface NodeEdge {
   predicate: string;
   value: string;
   isNode: boolean;
+  /** The object's recorded domain (F2). The wire carries `domain` ONLY on
+   *  blob edges (tape-pinned node/scalar shapes); absent + is_node decides
+   *  the other two. For a blob edge, `value` is the decimal blob id. */
+  domain: "node" | "scalar" | "blob";
 }
 
 /** The dial surface `create_note` needs — fixture-implementable. */
@@ -94,6 +139,39 @@ export interface ChaosDial {
   resolveNodes(tokens: string[]): Promise<Record<string, string>>;
   /** The node's outbound edges — the heal-on-reuse read. */
   edges(token: string): Promise<NodeEdge[]>;
+  /** Idempotent graph ensure (chaos `register_graph` — an identity op on
+   *  the chaos door, like the reads; themis's wire has no registerGraph). */
+  registerGraph(name: string): Promise<void>;
+  /**
+   * Raw quads from subjects, optionally as-of a past transaction (F5 —
+   * history is a graph read). predicateNames are NAMES here; the live dial
+   * hashes them for the wire. Rows are wire-form: s/p/g 64-hex, o 64-hex
+   * (node token or scalar content-hash by the row's predicate) or
+   * `blob:<id>`.
+   */
+  quadsFrom(
+    subjects: string[],
+    asOfTx: number | null,
+    predicateNames: string[] | null,
+    graph?: string,
+  ): Promise<QuadRow[]>;
+  /** Scalar content-hashes back to their interned values. */
+  resolveScalars(hashes: string[]): Promise<Record<string, string>>;
+  /**
+   * The distinct transactions touching subjects ∪ (node objects ever
+   * asserted under a follow predicate) — {tx, at, author, note}, ascending.
+   */
+  history(
+    subjects: string[],
+    follow: string[],
+    graph?: string,
+  ): Promise<HistoryEntry[]>;
+  /**
+   * The blob census's reporting half (F7): every blob id this graph's
+   * facts LOG names. An empty list is a REPORT, never silence — the
+   * caller treats a thrown error as an incomplete census.
+   */
+  heldBlobs(graph?: string): Promise<string[]>;
   /** The indexed literal point lookup — `find_by_value(graph, p, v)` (C9). */
   findByValue(
     scope: string,
@@ -111,14 +189,13 @@ export function scopeHash(name: string): string {
 export function opRemove(
   fromId: string,
   predicate: string,
-  target: { toLiteral?: string; toNode?: string },
+  target: EdgeTarget,
 ): ChaosOp {
   return {
     op: "removeEdge",
     from_id: fromId,
     predicate,
-    to_literal: target.toLiteral ?? null,
-    to_node: target.toNode ?? null,
+    ...edgeFields(target),
   };
 }
 
@@ -331,15 +408,18 @@ export class LiveChaosDial implements ChaosDial {
       ok?: boolean;
       minted?: unknown[];
       violations?: unknown[];
+      tx?: unknown;
     } | null;
     if (raw === null || typeof raw !== "object") {
       throw new ChaosClientError("admit: empty result", "bad_result");
     }
-    return {
+    const out: AdmitResult = {
       admitted: raw.admitted ?? raw.ok ?? false,
       minted: (raw.minted ?? []).map(String),
       violations: raw.violations ?? [],
     };
+    if (typeof raw.tx === "number") out.tx = raw.tx;
+    return out;
   }
 
   async findByName(kind: string, label: string): Promise<string[]> {
@@ -397,11 +477,104 @@ export class LiveChaosDial implements ChaosDial {
     if (raw === null || !Array.isArray(raw.edges)) {
       return [];
     }
-    return raw.edges.map((e) => ({
-      predicate: asStr(e.predicate),
-      value: asStr(e.value),
-      isNode: e.is_node === true,
-    }));
+    return raw.edges.map((e) => {
+      const isNode = e.is_node === true;
+      const domain =
+        (e as { domain?: unknown }).domain === "blob"
+          ? ("blob" as const)
+          : isNode
+            ? ("node" as const)
+            : ("scalar" as const);
+      return {
+        predicate: asStr(e.predicate),
+        value: asStr(e.value),
+        isNode,
+        domain,
+      };
+    });
+  }
+
+  async registerGraph(name: string): Promise<void> {
+    this.id += 1;
+    await rpc(this.chaos, this.id, "register_graph", {
+      graph: scopeHash(name),
+      name,
+    });
+  }
+
+  async quadsFrom(
+    subjects: string[],
+    asOfTx: number | null,
+    predicateNames: string[] | null,
+    graph?: string,
+  ): Promise<QuadRow[]> {
+    this.id += 1;
+    const raw = await rpc(this.chaos, this.id, "quads_from", {
+      subjects,
+      as_of_tx: asOfTx,
+      predicates: predicateNames?.map((n) => scopeHash(n)) ?? null,
+      graph: graph !== undefined ? scopeHash(graph) : null,
+    });
+    if (!Array.isArray(raw)) return [];
+    const out: QuadRow[] = [];
+    for (const row of raw) {
+      if (Array.isArray(row) && row.length >= 4) {
+        out.push({
+          s: asStr(row[0]),
+          p: asStr(row[1]),
+          o: asStr(row[2]),
+          g: asStr(row[3]),
+        });
+      }
+    }
+    return out;
+  }
+
+  async resolveScalars(hashes: string[]): Promise<Record<string, string>> {
+    if (hashes.length === 0) return {};
+    this.id += 1;
+    const raw = (await rpc(this.chaos, this.id, "resolve_scalars", {
+      hashes,
+    })) as Record<string, unknown> | null;
+    const out: Record<string, string> = {};
+    if (raw !== null && typeof raw === "object") {
+      for (const [k, v] of Object.entries(raw)) out[k] = asStr(v);
+    }
+    return out;
+  }
+
+  async history(
+    subjects: string[],
+    follow: string[],
+    graph?: string,
+  ): Promise<HistoryEntry[]> {
+    this.id += 1;
+    const raw = (await rpc(this.chaos, this.id, "history", {
+      subjects,
+      follow,
+      graph: graph !== undefined ? scopeHash(graph) : null,
+    })) as { transactions?: unknown[] } | null;
+    if (raw === null || !Array.isArray(raw.transactions)) return [];
+    return raw.transactions.map((t) => {
+      const row = (t ?? {}) as Record<string, unknown>;
+      return {
+        tx: typeof row.tx === "number" ? row.tx : Number(asStr(row.tx)),
+        at: row.at === null || row.at === undefined ? null : asStr(row.at),
+        author: asStr(row.author),
+        note: asStr(row.note),
+      };
+    });
+  }
+
+  async heldBlobs(graph?: string): Promise<string[]> {
+    this.id += 1;
+    const raw = (await rpc(this.chaos, this.id, "held_blobs", {
+      graph: graph !== undefined ? scopeHash(graph) : null,
+    })) as { held?: unknown[] } | null;
+    if (raw === null || !Array.isArray(raw.held)) {
+      throw new ChaosClientError("held_blobs: malformed report", "bad_result");
+    }
+    return raw.held.map(asStr);
   }
 }
 
@@ -500,9 +673,31 @@ export interface ChaosFacet {
   scope: string;
 }
 
-/** The bare-scope convention (the chaos guard registers graphs bare). */
+/** The tenant set — five tenants, five graphs (Git for Ideas F3). Notes
+ *  predates F3; the others are registered idempotently at first use.
+ *  Mnemosyne stays graph-native on its own and joins only if it adopts
+ *  the shared store. */
+export type Tenant = "notes" | "documents" | "comments" | "governance";
+
+/** The bare-scope convention (the chaos guard registers graphs bare),
+ *  generalized per tenant. Env overrides keep the notes compat knob and
+ *  give each tenant its own. */
+export function tenantScope(
+  tenant: Tenant,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const overrides: Record<Tenant, string | undefined> = {
+    notes: env.CALLIOPE_NOTES_SCOPE,
+    documents: env.CALLIOPE_DOCUMENTS_SCOPE,
+    comments: env.CALLIOPE_COMMENTS_SCOPE,
+    governance: env.CALLIOPE_GOVERNANCE_SCOPE,
+  };
+  return overrides[tenant] ?? tenant;
+}
+
+/** The notes tenant's scope — the pre-F3 name, now a view over tenantScope. */
 export function notesScope(env: NodeJS.ProcessEnv = process.env): string {
-  return env.CALLIOPE_NOTES_SCOPE ?? "notes";
+  return tenantScope("notes", env);
 }
 
 // ── the fixture dial (tests + the standalone fixture server) ─────────────────
@@ -510,6 +705,21 @@ export function notesScope(env: NodeJS.ProcessEnv = process.env): string {
 /** In-memory ChaosDial: deterministic tokens, name-keyed reuse, no network. */
 export class FixtureChaosDial implements ChaosDial {
   readonly admits: { ops: ChaosOp[]; scope: string }[] = [];
+  readonly graphs = new Set<string>();
+  /** The append-only edge log (F5) — the fixture's `facts`. Every applied
+   *  edge op lands here stamped with its admit's tx, so as-of reads and
+   *  history answer the same questions the door does. */
+  readonly factLog: {
+    tx: number;
+    s: string;
+    predicate: string;
+    value: string;
+    domain: NodeEdge["domain"];
+    added: boolean;
+  }[] = [];
+  #txSeq = 0;
+  /** The fixture's transaction author (the door's are themis-resolved). */
+  static readonly AUTHOR = "fixture";
   private readonly byName = new Map<string, string>();
   private readonly labels = new Map<string, string>();
   private readonly nodeEdges = new Map<string, NodeEdge[]>();
@@ -530,36 +740,87 @@ export class FixtureChaosDial implements ChaosDial {
         violations: this.refuseWith,
       });
     }
+    // Batch-local label -> minted token, themis's exact rule: a NON-EMPTY
+    // createNode label names its mint for later ops in the SAME batch;
+    // first create wins a duplicate. Without this, a one-transaction slot
+    // birth (create + three edges) is untestable offline. Two passes,
+    // because themis pre-indexes creates before translating edges.
+    const batchLabels = new Map<string, string>();
     const minted: string[] = [];
     for (const op of ops) {
-      if (op.op === "createNode") {
-        this.seq += 1;
-        const token = this.seq.toString(16).padStart(64, "0");
-        const kind = asStr(op.kind);
-        const label = asStr(op.label);
-        this.byName.set(this.key(kind, label), token);
-        this.labels.set(token, label);
-        minted.push(token);
-      } else if (op.op === "addEdge") {
-        const from = asStr(op.from_id);
+      if (op.op !== "createNode") continue;
+      this.seq += 1;
+      const token = this.seq.toString(16).padStart(64, "0");
+      const kind = asStr(op.kind);
+      const label = asStr(op.label);
+      this.byName.set(this.key(kind, label), token);
+      this.labels.set(token, label);
+      if (label !== "" && !batchLabels.has(label)) {
+        batchLabels.set(label, token);
+      }
+      minted.push(token);
+    }
+    const resolveRef = (v: unknown): string => {
+      const raw = asStr(v);
+      return batchLabels.get(raw) ?? raw;
+    };
+    this.#txSeq += 1;
+    const tx = this.#txSeq;
+    for (const op of ops) {
+      if (op.op === "addEdge") {
+        const from = resolveRef(op.from_id);
         const list = this.nodeEdges.get(from) ?? [];
         const toNode = op.to_node;
-        list.push({
+        const toBlob = op.to_blob;
+        const hasBlob = toBlob !== null && toBlob !== undefined;
+        const isNode = !hasBlob && toNode !== null && toNode !== undefined;
+        const edge: NodeEdge = {
           predicate: asStr(op.predicate),
-          value: asStr(toNode) || asStr(op.to_literal),
-          isNode: toNode !== null && toNode !== undefined,
-        });
+          value: hasBlob
+            ? asStr(toBlob)
+            : isNode
+              ? resolveRef(toNode)
+              : asStr(op.to_literal),
+          isNode,
+          domain: hasBlob ? "blob" : isNode ? "node" : "scalar",
+        };
+        list.push(edge);
         this.nodeEdges.set(from, list);
+        this.factLog.push({
+          tx,
+          s: from,
+          predicate: edge.predicate,
+          value: edge.value,
+          domain: edge.domain,
+          added: true,
+        });
       } else if (op.op === "removeEdge") {
-        const from = asStr(op.from_id);
-        const value = asStr(op.to_node) || asStr(op.to_literal);
+        const from = resolveRef(op.from_id);
+        const toBlob = op.to_blob;
+        const hasBlob = toBlob !== null && toBlob !== undefined;
+        const value = hasBlob
+          ? asStr(toBlob)
+          : resolveRef(op.to_node) || asStr(op.to_literal);
+        const removed = (this.nodeEdges.get(from) ?? []).find(
+          (e) => e.predicate === asStr(op.predicate) && e.value === value,
+        );
         const list = (this.nodeEdges.get(from) ?? []).filter(
           (e) => !(e.predicate === asStr(op.predicate) && e.value === value),
         );
         this.nodeEdges.set(from, list);
+        if (removed !== undefined) {
+          this.factLog.push({
+            tx,
+            s: from,
+            predicate: removed.predicate,
+            value: removed.value,
+            domain: removed.domain,
+            added: false,
+          });
+        }
       }
     }
-    return Promise.resolve({ admitted: true, minted, violations: [] });
+    return Promise.resolve({ admitted: true, minted, violations: [], tx });
   }
 
   findByName(kind: string, label: string): Promise<string[]> {
@@ -580,6 +841,106 @@ export class FixtureChaosDial implements ChaosDial {
 
   edges(token: string): Promise<NodeEdge[]> {
     return Promise.resolve(this.nodeEdges.get(token) ?? []);
+  }
+
+  registerGraph(name: string): Promise<void> {
+    this.graphs.add(name);
+    return Promise.resolve();
+  }
+
+  quadsFrom(
+    subjects: string[],
+    asOfTx: number | null,
+    predicateNames: string[] | null,
+    graph?: string,
+  ): Promise<QuadRow[]> {
+    void graph; // the fixture is single-graph; the door scopes for real
+    const want = new Set(subjects);
+    const preds = predicateNames === null ? null : new Set(predicateNames);
+    // Replay the log ≤ asOf into live state, exactly the door's rank-1 read.
+    const live = new Map<string, (typeof this.factLog)[number]>();
+    for (const entry of this.factLog) {
+      if (asOfTx !== null && entry.tx > asOfTx) continue;
+      const key = `${entry.s}\u001f${entry.predicate}\u001f${entry.value}`;
+      if (entry.added) live.set(key, entry);
+      else live.delete(key);
+    }
+    const out: QuadRow[] = [];
+    for (const entry of live.values()) {
+      if (!want.has(entry.s)) continue;
+      if (preds !== null && !preds.has(entry.predicate)) continue;
+      // Wire form: p is the predicate name-hash; a scalar o is its
+      // content-hash (invertible via resolveScalars); blob o is blob:<id>.
+      const o =
+        entry.domain === "blob"
+          ? `blob:${entry.value}`
+          : entry.domain === "node"
+            ? entry.value
+            : scopeHash(entry.value);
+      out.push({ s: entry.s, p: scopeHash(entry.predicate), o, g: "00" });
+    }
+    return Promise.resolve(out);
+  }
+
+  resolveScalars(hashes: string[]): Promise<Record<string, string>> {
+    const want = new Set(hashes);
+    const out: Record<string, string> = {};
+    for (const entry of this.factLog) {
+      if (entry.domain !== "scalar") continue;
+      const h = scopeHash(entry.value);
+      if (want.has(h)) out[h] = entry.value;
+    }
+    return Promise.resolve(out);
+  }
+
+  /** Test knob: throw on heldBlobs (an incomplete census). */
+  failHeldBlobs = false;
+
+  heldBlobs(graph?: string): Promise<string[]> {
+    void graph; // single-graph fixture: every scope answers the one log
+    if (this.failHeldBlobs) {
+      return Promise.reject(
+        new ChaosClientError("held_blobs: fixture refuses", "wire_error"),
+      );
+    }
+    const held = new Set<string>();
+    for (const entry of this.factLog) {
+      if (entry.domain === "blob") held.add(entry.value);
+    }
+    return Promise.resolve([...held].sort((a, b) => Number(a) - Number(b)));
+  }
+
+  history(
+    subjects: string[],
+    follow: string[],
+    graph?: string,
+  ): Promise<HistoryEntry[]> {
+    void graph; // single-graph fixture
+    const followSet = new Set(follow);
+    const closure = new Set(subjects);
+    for (const entry of this.factLog) {
+      if (
+        entry.added &&
+        entry.domain === "node" &&
+        followSet.has(entry.predicate) &&
+        closure.has(entry.s)
+      ) {
+        closure.add(entry.value);
+      }
+    }
+    const txs = new Map<number, HistoryEntry>();
+    for (const entry of this.factLog) {
+      if (!closure.has(entry.s)) continue;
+      if (!txs.has(entry.tx)) {
+        txs.set(entry.tx, {
+          tx: entry.tx,
+          at: null,
+          author: FixtureChaosDial.AUTHOR,
+          note: "",
+        });
+      }
+    }
+    return Promise.resolve([...txs.values()].sort((a, b) => a.tx - b.tx));
   }
 
   findByValue(

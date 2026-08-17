@@ -41,7 +41,6 @@ import {
 import type { TagCount, TagStore } from "../tag-store.js";
 import type { FocusRegister } from "../focus-register.js";
 import type { BodyPointer } from "../types.js";
-import { between } from "../order-key.js";
 
 /** A section as the MCP returns it (the lib {@link Section} shape, verbatim). */
 export interface ToolSection {
@@ -130,70 +129,6 @@ export async function writeBody(
   return { ok: true, count: sections.length };
 }
 
-/**
- * append_section(node_id, text) -> append ONE section at the end of the body.
- *
- * Implemented as read-current + coarse-save(current + new) so it composes with
- * the existing {@link BodyClient} contract without a new wire verb. The appended
- * section is resolved by reading the body back and taking the last (highest
- * `orderKey`) section — the coarse save mints its placement id and order key.
- */
-export async function appendSection(
-  client: BodyClient,
-  nodeId: string,
-  text: string,
-  authoredBy?: AuthoredBy,
-  kafkaOffset?: number,
-): Promise<AppendSectionResult> {
-  const current = await client.readBody(nodeId);
-  const next: SectionInput[] = [
-    ...current.map((s) => ({ text: s.text })),
-    { text },
-  ];
-  await client.saveBody(nodeId, next, authoredBy, kafkaOffset);
-
-  const after = await client.readBody(nodeId);
-  const appended = after.at(-1);
-  if (appended === undefined) {
-    throw new Error(
-      `append_section: body of node ${nodeId} was empty after append.`,
-    );
-  }
-  return { section: toToolSection(appended), count: after.length };
-}
-
-/**
- * edit_section(node_id, section_id, text) -> single-section copy-on-write edit:
- * replace one section's prose, keeping its order and every other section intact.
- *
- * Requires a {@link BodyClient} that implements the optional `editSection`
- * method (both shipped clients do). Rejects with a clear error if the backend
- * does not support it, rather than silently falling back to a coarse rewrite.
- */
-export async function editSection(
-  client: BodyClient,
-  nodeId: string,
-  sectionId: string,
-  text: string,
-  authoredBy?: AuthoredBy,
-  kafkaOffset?: number,
-): Promise<EditSectionResult> {
-  if (client.editSection === undefined) {
-    throw new Error(
-      "edit_section: the configured body backend does not support " +
-        "single-section edits (no editSection method).",
-    );
-  }
-  const section = await client.editSection(
-    nodeId,
-    sectionId,
-    text,
-    authoredBy,
-    kafkaOffset,
-  );
-  return { section: toToolSection(section) };
-}
-
 /** Decode one wire op into the lib {@link SectionOp}, validating shape. */
 function decodeOp(w: WireSectionOp, i: number): SectionOp {
   const need = (field: string): never => {
@@ -243,12 +178,6 @@ export async function applySectionOps(
   authoredBy?: AuthoredBy,
   kafkaOffset?: number,
 ): Promise<ApplySectionOpsToolResult> {
-  if (client.applySectionOps === undefined) {
-    throw new Error(
-      "apply_section_ops: the configured body backend does not support " +
-        "block-grain applies (no applySectionOps method).",
-    );
-  }
   const decoded = ops.map((w, i) => decodeOp(w, i));
   const result = await client.applySectionOps(
     nodeId,
@@ -273,12 +202,6 @@ export async function readBodyRevisions(
   nodeId: string,
   limit?: number,
 ): Promise<ReadBodyRevisionsResult> {
-  if (client.readRevisions === undefined) {
-    throw new Error(
-      "read_body_revisions: the configured body backend does not support " +
-        "revision reads (no readRevisions method).",
-    );
-  }
   const revisions = await client.readRevisions(nodeId, limit);
   return { revisions };
 }
@@ -293,12 +216,6 @@ export async function readBodyAt(
   nodeId: string,
   revision: string,
 ): Promise<ReadBodyAtResult> {
-  if (client.readRevisionAt === undefined) {
-    throw new Error(
-      "read_body_at: the configured body backend does not support " +
-        "revision reads (no readRevisionAt method).",
-    );
-  }
   const sections = await client.readRevisionAt(nodeId, revision);
   return { revision, sections: sections.map(toToolSection) };
 }
@@ -317,11 +234,6 @@ export interface BlockMiss {
   detail: string;
 }
 
-/** Type guard for the miss shape. */
-export function isBlockMiss(r: BlockResult | BlockMiss): r is BlockMiss {
-  return "error" in r;
-}
-
 /** `delete_block` result. */
 export interface DeleteBlockResult {
   ok: true;
@@ -331,59 +243,6 @@ export interface DeleteBlockResult {
 /** `split_block` result: the two children, in order. */
 export interface SplitBlockResult {
   blocks: [ToolSection, ToolSection];
-}
-
-/**
- * create_block(container_id, text, after_block_id?) -> { block } — mint one
- * block. Position: after the named sibling, or appended at the end when no
- * position is given. The fractional key is minted SERVER-side
- * (`between(after, next)`), so callers never learn key grammar — that stays
- * `apply_section_ops`' contract for the editor. A stale `after_block_id`
- * rejects with `stale_section`.
- */
-export async function createBlock(
-  client: BodyClient,
-  nodeId: string,
-  text: string,
-  afterBlockId?: string,
-  authoredBy?: AuthoredBy,
-  kafkaOffset?: number,
-): Promise<BlockResult> {
-  if (client.applySectionOps === undefined) {
-    throw new Error(
-      "create_block: the configured body backend does not support " +
-        "block-grain writes (no applySectionOps method).",
-    );
-  }
-  const body = await client.readBody(nodeId);
-  let prevKey: string | null;
-  let nextKey: string | null;
-  if (afterBlockId !== undefined) {
-    const idx = body.findIndex((s) => s.id === afterBlockId);
-    const anchor = idx >= 0 ? body[idx] : undefined;
-    if (anchor === undefined) {
-      throw new Error(
-        `stale_section: block ${afterBlockId} is not part of container ${nodeId}.`,
-      );
-    }
-    prevKey = anchor.orderKey;
-    nextKey = body[idx + 1]?.orderKey ?? null;
-  } else {
-    prevKey = body.at(-1)?.orderKey ?? null;
-    nextKey = null;
-  }
-  const orderKey = between(prevKey, nextKey);
-  const result = await client.applySectionOps(
-    nodeId,
-    [{ op: "add", text, orderKey }],
-    authoredBy,
-    kafkaOffset,
-  );
-  const applied = result.applied.at(0);
-  if (applied === undefined) {
-    throw new Error(`create_block: the store applied no op for ${nodeId}.`);
-  }
-  return { block: { id: applied.id, text, orderKey: applied.orderKey } };
 }
 
 /** One entry of a section-container index (F5): the address, never the prose. */
@@ -405,171 +264,6 @@ export interface ListContainerBlocksResult {
   blocks: ContainerBlockRef[];
 }
 
-/**
- * list_blocks(container_id) — the node-family container index (F5): block
- * ids, first-line titles, sizes and order, with NO prose crossing the wire.
- * The general form that `read_plan`'s whole-plan index special-cased.
- */
-export async function listContainerBlocks(
-  client: BodyClient,
-  nodeId: string,
-): Promise<ListContainerBlocksResult> {
-  const sections = await client.readBody(nodeId);
-  const blocks = sections.map((s) => {
-    const firstLine =
-      s.text
-        .split("\n")
-        .map((l) => l.trim())
-        .find((l) => l.length > 0) ?? "";
-    return {
-      id: s.id,
-      title: firstLine.slice(0, 80),
-      chars: s.text.length,
-      order_key: s.orderKey,
-    };
-  });
-  return {
-    container_id: nodeId,
-    kind: "node",
-    block_count: blocks.length,
-    blocks,
-  };
-}
-
-/**
- * read_block(container_id, block_id) -> { block } | block_not_found — serve
- * ONE block's content; only that block's markdown crosses the wire.
- */
-export async function readBlock(
-  client: BodyClient,
-  nodeId: string,
-  blockId: string,
-): Promise<BlockResult | BlockMiss> {
-  const body = await client.readBody(nodeId);
-  const section = body.find((s) => s.id === blockId);
-  if (section === undefined) {
-    return {
-      error: "block_not_found",
-      detail: `block ${blockId} is not part of container ${nodeId}`,
-    };
-  }
-  return { block: toToolSection(section) };
-}
-
-/**
- * update_block(container_id, block_id, text) -> { block } — one superseding
- * row; the container's other blocks are untouched and shared by reference
- * (the {@link editSection} copy-on-write engine, block-named).
- */
-export async function updateBlock(
-  client: BodyClient,
-  nodeId: string,
-  blockId: string,
-  text: string,
-  authoredBy?: AuthoredBy,
-  kafkaOffset?: number,
-): Promise<BlockResult> {
-  const result = await editSection(
-    client,
-    nodeId,
-    blockId,
-    text,
-    authoredBy,
-    kafkaOffset,
-  );
-  return { block: result.section };
-}
-
-/**
- * delete_block(container_id, block_id) -> { ok, deleted } — the block leaves
- * the body; history preserves it (tombstone lineage on the store backends).
- */
-export async function deleteBlock(
-  client: BodyClient,
-  nodeId: string,
-  blockId: string,
-  authoredBy?: AuthoredBy,
-  kafkaOffset?: number,
-): Promise<DeleteBlockResult> {
-  if (client.applySectionOps === undefined) {
-    throw new Error(
-      "delete_block: the configured body backend does not support " +
-        "block-grain writes (no applySectionOps method).",
-    );
-  }
-  const result = await client.applySectionOps(
-    nodeId,
-    [{ op: "delete", sectionId: blockId }],
-    authoredBy,
-    kafkaOffset,
-  );
-  const applied = result.applied.at(0);
-  if (applied === undefined) {
-    throw new Error(`delete_block: the store applied no op for ${nodeId}.`);
-  }
-  return { ok: true, deleted: { id: applied.id, orderKey: applied.orderKey } };
-}
-
-/**
- * split_block(container_id, block_id, offset) -> { blocks: [first, second] }
- * — the Enter-mid-paragraph gesture as an identity-preserving op: both
- * children trace to the original through the lineage record.
- */
-export async function splitBlock(
-  client: BodyClient,
-  nodeId: string,
-  blockId: string,
-  offset: number,
-  authoredBy?: AuthoredBy,
-  kafkaOffset?: number,
-): Promise<SplitBlockResult> {
-  if (client.splitSection === undefined) {
-    throw new Error(
-      "split_block: the configured body backend does not support " +
-        "identity-preserving splits (no splitSection method).",
-    );
-  }
-  const [first, second] = await client.splitSection(
-    nodeId,
-    blockId,
-    offset,
-    authoredBy,
-    kafkaOffset,
-  );
-  return { blocks: [toToolSection(first), toToolSection(second)] };
-}
-
-/**
- * merge_block(container_id, first_block_id, second_block_id, separator?) ->
- * { block } — the Backspace-at-block-start gesture: two ADJACENT blocks
- * become one whose lineage records BOTH parents.
- */
-export async function mergeBlock(
-  client: BodyClient,
-  nodeId: string,
-  firstBlockId: string,
-  secondBlockId: string,
-  separator?: string,
-  authoredBy?: AuthoredBy,
-  kafkaOffset?: number,
-): Promise<BlockResult> {
-  if (client.mergeSections === undefined) {
-    throw new Error(
-      "merge_block: the configured body backend does not support " +
-        "identity-preserving merges (no mergeSections method).",
-    );
-  }
-  const section = await client.mergeSections(
-    nodeId,
-    firstBlockId,
-    secondBlockId,
-    separator,
-    authoredBy,
-    kafkaOffset,
-  );
-  return { block: toToolSection(section) };
-}
-
 // ── 026: comments — a block plus a commentsOn edge ───────────────────────────
 
 /** `create_comment` result: the comment block + where it lives. */
@@ -582,64 +276,6 @@ export interface CreateCommentResult {
 /** `list_comments` result: threads keyed by target. */
 export interface ListCommentsResult {
   threads: CommentThread[];
-}
-
-/**
- * create_comment(container_id, target_block_id, text, authored_by,
- * kafka_offset?) — one atomic block+edge creation. The store enforces the
- * session-principal author requirement (a comment is attributed by
- * definition); this handler only routes.
- */
-export async function createComment(
-  client: BodyClient,
-  containerId: string,
-  targetBlockId: string,
-  text: string,
-  authoredBy: AuthoredBy,
-  kafkaOffset?: number,
-): Promise<CreateCommentResult> {
-  if (client.createComment === undefined) {
-    throw new Error(
-      "create_comment: the configured body backend does not support " +
-        "comments (no createComment method).",
-    );
-  }
-  const result = await client.createComment(
-    containerId,
-    targetBlockId,
-    text,
-    authoredBy,
-    kafkaOffset,
-  );
-  return {
-    comment: toToolSection(result.comment),
-    target_id: result.targetId,
-    comment_container_id: result.commentContainerId,
-  };
-}
-
-/**
- * list_comments(container_id, block_id?) — threads for one block (lineage-
- * following) or the whole document. Both edge directions in one read.
- */
-export async function listComments(
-  client: BodyClient,
-  containerId: string,
-  blockId?: string,
-  resolveAnchors?: boolean,
-): Promise<ListCommentsResult> {
-  if (client.listComments === undefined) {
-    throw new Error(
-      "list_comments: the configured body backend does not support " +
-        "comments (no listComments method).",
-    );
-  }
-  const threads = await client.listComments(
-    containerId,
-    blockId,
-    resolveAnchors,
-  );
-  return { threads };
 }
 
 // ── C8: the note-native mint ─────────────────────────────────────────────────
@@ -1019,11 +655,14 @@ async function resolvePointerAgainstBody(
   pointer: BodyPointer,
   receivedAt: string,
 ): Promise<ResolvedPointer> {
-  const block = await readBlock(client, pointer.node, pointer.section);
-  if (isBlockMiss(block)) {
+  // The block read, inline since F12 retired the block verb family: one
+  // body read, the pointed-at section found by id (slots are durable).
+  const sections = await client.readBody(pointer.node);
+  const hit = sections.find((s) => s.id === pointer.section);
+  if (hit === undefined) {
     return { pointer, received_at: receivedAt, drift: "gone" };
   }
-  const current = block.block.text;
+  const current = hit.text;
   const drift =
     current.slice(pointer.offsetFrom, pointer.offsetTo) === pointer.text ||
     current.includes(pointer.text)

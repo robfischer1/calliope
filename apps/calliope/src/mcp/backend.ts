@@ -34,6 +34,13 @@ import {
   LiveChaosDial,
   notesScope,
 } from "../chaos-client.js";
+import {
+  BlobStore,
+  FixtureBlobGc,
+  FixtureBlobStore,
+  PgBlobGc,
+} from "../blob-store.js";
+import type { ContainerFacet } from "../container-write.js";
 import { FixtureTagStore, PgTagStore, type TagStore } from "../tag-store.js";
 import { FixtureRevisionStore, PgRevisionStore } from "../revision-store.js";
 import { FixtureBodyClient } from "../fixture-client.js";
@@ -197,6 +204,9 @@ export interface Backend {
   revisions?: RevisionStore;
   /** The graph-write muscle (C8) — same presence rule as `documents`. */
   chaos?: ChaosFacet;
+  /** The container surface (041 F4) — the blob store + the dial, the
+   *  write path's facet. Same presence rule as `documents`. */
+  containers?: ContainerFacet;
   /** The tag mirror (C9) — same presence rule as `documents`. */
   tags?: TagStore;
 }
@@ -219,6 +229,12 @@ export function makeBackend(
       documents: new NotesDocumentStore(client, dial, scope, tags),
       revisions: new FixtureRevisionStore(),
       chaos: { dial, scope },
+      // The SAME dial instance as the chaos facet, so containers minted via
+      // create_note are addressable by the container write.
+      containers: (() => {
+        const blobs = new FixtureBlobStore();
+        return { blobs, dial, gc: new FixtureBlobGc(blobs) };
+      })(),
       tags,
     };
   }
@@ -237,6 +253,8 @@ export function makeBackend(
       documents: new NotesDocumentStore(client, dial, scope, tags),
       revisions: new PgRevisionStore(pool),
       chaos: { dial, scope },
+      // ONE pool (the sovereign store is one database), one dial.
+      containers: { blobs: new BlobStore(pool), dial, gc: new PgBlobGc(pool) },
       tags,
     };
   }

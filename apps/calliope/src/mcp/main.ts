@@ -15,7 +15,7 @@
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { backendKind, initBackend, makeBackend } from "./backend.js";
-import { makeErosProvider } from "../fs-search/eros-provider.js";
+import { makeErosProvider } from "../eros-provider.js";
 import { createServer } from "./server.js";
 
 async function main(): Promise<void> {
@@ -25,15 +25,19 @@ async function main(): Promise<void> {
   // Findability F4: the eros-routed pg search arm (env-gated).
   const search = makeErosProvider();
   const server = createServer(backend.client, {
-    ...(backend.documents !== undefined
-      ? { documents: backend.documents }
-      : {}),
     ...(backend.revisions !== undefined
       ? { revisions: backend.revisions }
       : {}),
     ...(backend.chaos !== undefined ? { chaos: backend.chaos } : {}),
     ...(backend.tags !== undefined ? { tags: backend.tags } : {}),
     ...(search !== undefined ? { search } : {}),
+    // F12 audit finding: the container surface (F4/F5) was wired in
+    // the BACKEND but never passed to the server — the fleet entry
+    // points served body verbs only. With the families retired, the
+    // container verbs ARE the write path; they ship from here.
+    ...(backend.containers !== undefined
+      ? { containers: backend.containers }
+      : {}),
   });
   const transport = new StdioServerTransport();
   await server.connect(transport);

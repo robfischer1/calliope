@@ -284,7 +284,7 @@ export interface BodyClient {
    * method (e.g. a host's own adapter) need not implement it; the two clients
    * shipped here ({@link FixtureBodyClient}, {@link UraniaBodyClient}) both do.
    */
-  editSection?(
+  editSection(
     nodeId: string,
     sectionId: string,
     text: string,
@@ -302,7 +302,7 @@ export interface BodyClient {
    *
    * Optional for backward compatibility, like {@link editSection}.
    */
-  applySectionOps?(
+  applySectionOps(
     nodeId: string,
     ops: SectionOp[],
     authoredBy?: AuthoredBy,
@@ -404,7 +404,7 @@ export interface BodyClient {
    * one event. Optional for backward compatibility, like {@link editSection}:
    * a transport without it simply has no history surface.
    */
-  readRevisions?(nodeId: string, limit?: number): Promise<RevisionMeta[]>;
+  readRevisions(nodeId: string, limit?: number): Promise<RevisionMeta[]>;
 
   /**
    * Findability F10 — bulk prose-presence: active-block counts for every id
@@ -415,14 +415,14 @@ export interface BodyClient {
    * Optional: store-backed clients implement it; the fs grain's directory
    * has the local index for this.
    */
-  hasBody?(nodeIds: readonly string[]): Promise<Map<string, number>>;
+  hasBody(nodeIds: readonly string[]): Promise<Map<string, number>>;
 
   /**
    * Reconstruct the body as it stood at the write-event `revision` (a value
    * returned by {@link readRevisions}). Resolves to the ordered sections of
    * that moment; a revision predating the body resolves to `[]`.
    */
-  readRevisionAt?(nodeId: string, revision: string): Promise<Section[]>;
+  readRevisionAt(nodeId: string, revision: string): Promise<Section[]>;
 }
 
 /**

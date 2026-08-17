@@ -20,33 +20,19 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { isAuthoredBy, validateWriteProvenance } from "../types.js";
 import type { AuthoredBy, BodyClient } from "../types.js";
-import type { DocumentStore } from "../document-store.js";
 import type { RevisionStore } from "../revision-store.js";
 import {
-  appendSection,
   applySectionOps,
   copyReference,
-  createBlock,
-  createComment,
-  deleteBlock,
-  editSection,
-  listComments,
-  isBlockMiss,
   isCopyReferenceError,
   look,
   unpin,
-  listContainerBlocks,
-  mergeBlock,
-  readBlock,
   readBody,
   readBodyAt,
   readBodyRevisions,
-  splitBlock,
-  updateBlock,
   writeBody,
 } from "./tools.js";
-import { readPlan, isReadPlanError } from "./plan-ingest.js";
-import { dissolveContainer, type SinkResult } from "../notes-sink.js";
+import { dissolveContainer } from "../notes-sink.js";
 import type { FocusRegister } from "../focus-register.js";
 import {
   createNote,
@@ -56,8 +42,12 @@ import {
   maybeReconcileInlineTags,
 } from "./tools.js";
 import type { ChaosFacet } from "../chaos-client.js";
+import { ChaosClientError } from "../chaos-client.js";
+import { type ContainerFacet, writeContainer } from "../container-write.js";
+import { containerHistory, readContainer } from "../container-read.js";
+import { runBlobCensus } from "../blob-census.js";
 import type { TagStore } from "../tag-store.js";
-import type { SearchProvider, SearchResponse } from "../fs-search/index.js";
+import type { SearchProvider, SearchResponse } from "../search-types.js";
 
 /**
  * Adapt a typed tool result to the MCP SDK's `structuredContent` slot, which
@@ -71,12 +61,11 @@ function structured(result: object): Record<string, unknown> {
 
 /** Optional extra facets a server can carry beside the body verbs. */
 export interface ServerOptions {
-  /**
-   * The document store (C3, the prose strangle). When present, the server
-   * additionally registers `write_document` + `read_documents` — the dissolve
-   * sink the monolith's typed-write surface strangled onto the star.
-   */
-  documents?: DocumentStore;
+  /** Serve the PATH-ADDRESSED body verbs (read_body/write_body/…): the
+   *  DESKTOP's loopback surface, engine-backed since F14. The fleet never
+   *  passes this — F12 retired the body families from the fleet surface
+   *  (the container verbs are the one write path). */
+  pathBodies?: boolean;
   /**
    * The revision store (C4). When present, the server additionally registers
    * `file_revisions` + `revision_deltas` — the git-for-ideas archive
@@ -109,6 +98,12 @@ export interface ServerOptions {
    * F4 lights the pg backend by routing its provider at Eros.
    */
   search?: SearchProvider;
+  /**
+   * The container surface (041 F4 — Git for Ideas). When present, the
+   * server registers `write_container` — the tree-native save: blob-first,
+   * one graph transaction, identical content nets to nothing.
+   */
+  containers?: ContainerFacet;
 }
 
 /** Build a configured MCP server bound to `client`, ready to `connect()`. */
@@ -178,952 +173,254 @@ export function createServer(
     }
   };
 
-  server.registerTool(
-    "read_body",
-    {
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
+  if (options?.pathBodies === true) {
+    server.registerTool(
+      "read_body",
+      {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
+        title: "Read node body",
+        description:
+          "Resolve a plan node's body — its prose sections, sorted by order key. " +
+          "Returns { sections: [{ id, text, orderKey }] }; a node with no body " +
+          "returns an empty list.",
+        inputSchema: {
+          node_id: z.string().describe("The node whose body to read."),
+        },
       },
-      title: "Read node body",
-      description:
-        "Resolve a plan node's body — its prose sections, sorted by order key. " +
-        "Returns { sections: [{ id, text, orderKey }] }; a node with no body " +
-        "returns an empty list.",
-      inputSchema: {
-        node_id: z.string().describe("The node whose body to read."),
+      async ({ node_id }) => {
+        const result = await readBody(client, node_id);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${String(result.sections.length)} section(s).`,
+            },
+          ],
+          structuredContent: structured(result),
+        };
       },
-    },
-    async ({ node_id }) => {
-      const result = await readBody(client, node_id);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${String(result.sections.length)} section(s).`,
-          },
-        ],
-        structuredContent: structured(result),
-      };
-    },
-  );
+    );
+  }
 
   // ── F3: the block-native verb surface — the primary grain ────────────────
 
-  server.registerTool(
-    "create_block",
-    {
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-      },
-      title: "Create a block",
-      description:
-        "F3: mint ONE block into a container — after the named sibling, or " +
-        "appended at the end when no position is given. The fractional order " +
-        "key is minted server-side; siblings' ids and keys never move. " +
-        "Returns { block: { id, text, orderKey } }. A stale after_block_id " +
-        "rejects with stale_section.",
-      inputSchema: {
-        container_id: z
-          .string()
-          .describe("The container (note/document node) to create into."),
-        text: z.string().describe("The new block's prose."),
-        after_block_id: z
-          .string()
-          .optional()
-          .describe("Insert after this block; omitted = append at the end."),
-        authored_by: authoredByField,
-        kafka_offset: kafkaOffsetField,
-      },
-    },
-    async ({
-      container_id,
-      text,
-      after_block_id,
-      authored_by,
-      kafka_offset,
-    }) => {
-      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
-      const result = await createBlock(
-        client,
-        container_id,
-        text,
-        after_block_id,
-        asAuthor(authored_by),
-        kafka_offset,
-      );
-      await afterBodyWrite(container_id);
-      return {
-        content: [{ type: "text", text: `Created block ${result.block.id}.` }],
-        structuredContent: structured(result),
-      };
-    },
-  );
-
-  server.registerTool(
-    "read_block",
-    {
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-      title: "Read one block",
-      description:
-        "F3/F5: serve ONE block's content — only that block's markdown " +
-        "crosses the wire. Two handle families: { container_id, block_id } " +
-        "reads a section-store block (returns { block: { id, text, " +
-        "orderKey } }); { document | source_path, block_id } reads one " +
-        "feature block of a stored plan document (returns { handle, block: " +
-        "{ id, title, size, order, text } }). Misses are structured: " +
-        "block_not_found / document_not_found / bad_handle.",
-      inputSchema: {
-        container_id: z
-          .string()
-          .optional()
-          .describe("Node family: the container owning the block."),
-        block_id: z.string().describe("The block to read (or a feature id)."),
-        document: z
-          .number()
-          .int()
-          .optional()
-          .describe("Document family: the plan document id."),
-        source_path: z
-          .string()
-          .optional()
-          .describe("Document family: the plan's source path (newest wins)."),
-      },
-    },
-    async ({ container_id, block_id, document, source_path }) => {
-      if (container_id !== undefined) {
-        const result = await readBlock(client, container_id, block_id);
-        if (isBlockMiss(result)) {
-          return {
-            content: [
-              { type: "text", text: `${result.error}: ${result.detail}` },
-            ],
-            structuredContent: structured(result),
-            isError: true,
-          };
-        }
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Block ${result.block.id} (${String(result.block.text.length)} chars).`,
-            },
-          ],
-          structuredContent: structured(result),
-        };
-      }
-      const documents = options?.documents;
-      if (
-        (document === undefined && source_path === undefined) ||
-        documents === undefined
-      ) {
-        const miss = {
-          error: "bad_handle",
-          detail:
-            documents === undefined &&
-            (document !== undefined || source_path !== undefined)
-              ? "this backend carries no document store"
-              : "read_block needs a container_id, or a document/source_path.",
-        };
-        return {
-          content: [{ type: "text", text: `${miss.error}: ${miss.detail}` }],
-          structuredContent: structured(miss),
-          isError: true,
-        };
-      }
-      const result = await readPlan(documents, {
-        ...(document !== undefined ? { document } : {}),
-        ...(source_path !== undefined ? { source_path } : {}),
-        block: block_id,
-      });
-      if (isReadPlanError(result)) {
-        return {
-          content: [
-            { type: "text", text: `${result.error}: ${result.detail}` },
-          ],
-          structuredContent: structured(result),
-          isError: true,
-        };
-      }
-      const summary =
-        "block" in result
-          ? `Block ${result.block.id} (${String(result.block.text.length)} chars).`
-          : "unexpected whole-plan result";
-      return {
-        content: [{ type: "text", text: summary }],
-        structuredContent: structured(result),
-      };
-    },
-  );
-
-  server.registerTool(
-    "list_blocks",
-    {
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-      title: "List a container's blocks (the index)",
-      description:
-        "F5: the general container index — block ids, titles, sizes and " +
-        "order, with NO body text crossing the wire. Two handle families: " +
-        "{ container_id } serves a section container (entries { id, title, " +
-        "chars, order_key }, kind: 'node'); { document | source_path } " +
-        "serves a stored plan document's feature-block index (entries " +
-        "{ id, title, size, order }, kind: 'document'). This is the read " +
-        "that replaces read_plan's whole-plan index.",
-      inputSchema: {
-        container_id: z
-          .string()
-          .optional()
-          .describe("Node family: the section container."),
-        document: z
-          .number()
-          .int()
-          .optional()
-          .describe("Document family: the plan document id."),
-        source_path: z
-          .string()
-          .optional()
-          .describe("Document family: the plan's source path (newest wins)."),
-      },
-    },
-    async ({ container_id, document, source_path }) => {
-      if (container_id !== undefined) {
-        const result = await listContainerBlocks(client, container_id);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `${String(result.block_count)} block(s) in ${container_id}.`,
-            },
-          ],
-          structuredContent: structured(result),
-        };
-      }
-      const documents = options?.documents;
-      if (
-        (document === undefined && source_path === undefined) ||
-        documents === undefined
-      ) {
-        const miss = {
-          error: "bad_handle",
-          detail:
-            documents === undefined &&
-            (document !== undefined || source_path !== undefined)
-              ? "this backend carries no document store"
-              : "list_blocks needs a container_id, or a document/source_path.",
-        };
-        return {
-          content: [{ type: "text", text: `${miss.error}: ${miss.detail}` }],
-          structuredContent: structured(miss),
-          isError: true,
-        };
-      }
-      const result = await readPlan(documents, {
-        ...(document !== undefined ? { document } : {}),
-        ...(source_path !== undefined ? { source_path } : {}),
-        omit_body: true,
-      });
-      if (isReadPlanError(result)) {
-        return {
-          content: [
-            { type: "text", text: `${result.error}: ${result.detail}` },
-          ],
-          structuredContent: structured(result),
-          isError: true,
-        };
-      }
-      if ("block" in result) {
-        // Unreachable: no block address was passed.
-        throw new Error("list_blocks: unexpected single-block result");
-      }
-      const index = {
-        kind: "document" as const,
-        handle: result.handle,
-        title: result.title,
-        block_count: result.block_count,
-        blocks: result.blocks,
-      };
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${String(index.block_count)} feature block(s).`,
-          },
-        ],
-        structuredContent: structured(index),
-      };
-    },
-  );
-
-  server.registerTool(
-    "update_block",
-    {
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-      title: "Update one block",
-      description:
-        "F3: rewrite ONE block's prose (copy-on-write — exactly one " +
-        "superseding row; the container's other blocks are untouched and " +
-        "shared by reference). The block's position is kept. Returns " +
-        "{ block }. A stale block_id rejects.",
-      inputSchema: {
-        container_id: z.string().describe("The container owning the block."),
-        block_id: z.string().describe("The block to rewrite."),
-        text: z.string().describe("The block's new prose."),
-        authored_by: authoredByField,
-        kafka_offset: kafkaOffsetField,
-      },
-    },
-    async ({ container_id, block_id, text, authored_by, kafka_offset }) => {
-      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
-      const result = await updateBlock(
-        client,
-        container_id,
-        block_id,
-        text,
-        asAuthor(authored_by),
-        kafka_offset,
-      );
-      await afterBodyWrite(container_id);
-      return {
-        content: [{ type: "text", text: `Updated block ${result.block.id}.` }],
-        structuredContent: structured(result),
-      };
-    },
-  );
-
-  server.registerTool(
-    "delete_block",
-    {
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
-      },
-      title: "Delete one block",
-      description:
-        "F3: remove ONE block from its container. History preserves it — " +
-        "as-of reconstruction still shows the block before the delete. " +
-        "Returns { ok, deleted: { id, orderKey } }. A stale block_id rejects.",
-      inputSchema: {
-        container_id: z.string().describe("The container owning the block."),
-        block_id: z.string().describe("The block to remove."),
-        authored_by: authoredByField,
-        kafka_offset: kafkaOffsetField,
-      },
-    },
-    async ({ container_id, block_id, authored_by, kafka_offset }) => {
-      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
-      const result = await deleteBlock(
-        client,
-        container_id,
-        block_id,
-        asAuthor(authored_by),
-        kafka_offset,
-      );
-      await afterBodyWrite(container_id);
-      return {
-        content: [
-          { type: "text", text: `Deleted block ${result.deleted.id}.` },
-        ],
-        structuredContent: structured(result),
-      };
-    },
-  );
-
-  server.registerTool(
-    "split_block",
-    {
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-      },
-      title: "Split a block (identity-preserving)",
-      description:
-        "F3: cut one block at a caret offset (UTF-16 units; 0..length — " +
-        "boundary splits make an empty block) into TWO blocks whose order " +
-        "keys land between the original's neighbours. BOTH children record " +
-        "the original as lineage predecessor, so comments/pins/anchors " +
-        "resolve forward. Returns { blocks: [first, second] }.",
-      inputSchema: {
-        container_id: z.string().describe("The container owning the block."),
-        block_id: z.string().describe("The block to split."),
-        offset: z
-          .number()
-          .int()
-          .min(0)
-          .describe("The caret offset (UTF-16 code units into the text)."),
-        authored_by: authoredByField,
-        kafka_offset: kafkaOffsetField,
-      },
-    },
-    async ({ container_id, block_id, offset, authored_by, kafka_offset }) => {
-      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
-      const result = await splitBlock(
-        client,
-        container_id,
-        block_id,
-        offset,
-        asAuthor(authored_by),
-        kafka_offset,
-      );
-      await afterBodyWrite(container_id);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Split into ${result.blocks[0].id} + ${result.blocks[1].id}.`,
-          },
-        ],
-        structuredContent: structured(result),
-      };
-    },
-  );
-
-  server.registerTool(
-    "merge_block",
-    {
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-      },
-      title: "Merge two adjacent blocks (identity-preserving)",
-      description:
-        "F3: join a block with its immediate successor into ONE block " +
-        "(first + separator + second, at the first's position). The " +
-        "survivor's lineage records BOTH parents (the supersessions join " +
-        "table), so anchors on either resolve forward. Non-adjacent pairs " +
-        "reject with not_adjacent; stale ids with stale_section. Returns " +
-        "{ block }.",
-      inputSchema: {
-        container_id: z.string().describe("The container owning the blocks."),
-        first_block_id: z
-          .string()
-          .describe("The earlier block (keeps its position)."),
-        second_block_id: z
-          .string()
-          .describe("Its immediate successor (merged into the first)."),
-        separator: z
-          .string()
-          .optional()
-          .describe("Joined between the two texts (default: none)."),
-        authored_by: authoredByField,
-        kafka_offset: kafkaOffsetField,
-      },
-    },
-    async ({
-      container_id,
-      first_block_id,
-      second_block_id,
-      separator,
-      authored_by,
-      kafka_offset,
-    }) => {
-      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
-      const result = await mergeBlock(
-        client,
-        container_id,
-        first_block_id,
-        second_block_id,
-        separator,
-        asAuthor(authored_by),
-        kafka_offset,
-      );
-      await afterBodyWrite(container_id);
-      return {
-        content: [{ type: "text", text: `Merged into ${result.block.id}.` }],
-        structuredContent: structured(result),
-      };
-    },
-  );
-
   // ── 026: comments — the attributed-review surface ────────────────────────
 
-  server.registerTool(
-    "create_comment",
-    {
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
+  if (options?.pathBodies === true) {
+    server.registerTool(
+      "write_body",
+      {
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+        },
+        title: "Write node body (LEGACY coarse save)",
+        description:
+          "LEGACY (F3): the whole-body replace. Prefer the block verbs " +
+          "(create_block / update_block / delete_block / split_block / " +
+          "merge_block) — they preserve block identity; this replaces every " +
+          "block's id in one stroke. Kept for coarse imports and the editor's " +
+          "degraded path. Returns { ok, count }.",
+        inputSchema: {
+          node_id: z.string().describe("The node whose body to replace."),
+          sections: z
+            .array(z.object({ text: z.string() }))
+            .describe("The new sections, in display order."),
+          authored_by: authoredByField,
+          kafka_offset: kafkaOffsetField,
+        },
       },
-      title: "Comment on a block",
-      description:
-        "026: attach a comment to a block — an ordinary block plus a " +
-        "commentsOn edge, landed atomically. Target a comment to reply. " +
-        "REQUIRES a session-principal authored_by: sessions comment as " +
-        "users, with identity (TURN 258); anonymous and legacy-authored " +
-        "comments are refused. The document's own body is untouched. " +
-        "Returns { comment, target_id, comment_container_id }.",
-      inputSchema: {
-        container_id: z
-          .string()
-          .describe("The DOCUMENT container owning the target block."),
-        target_block_id: z
-          .string()
-          .describe("The block to comment on (or a comment id, to reply)."),
-        text: z.string().describe("The comment's prose."),
-        authored_by: z
-          .string()
-          .refine(isAuthoredBy, {
-            message:
-              'authored_by must be "human", "calliope", or a SPIFFE session ' +
-              "principal (spiffe://{trust-domain}/session/{uuid}).",
-          })
-          .describe(
-            "REQUIRED: the commenting session's principal " +
-              "(spiffe://{trust-domain}/session/{uuid}).",
-          ),
-        kafka_offset: kafkaOffsetField,
-      },
-    },
-    async ({
-      container_id,
-      target_block_id,
-      text,
-      authored_by,
-      kafka_offset,
-    }) => {
-      const author = asAuthor(authored_by);
-      if (author === undefined) {
-        // Unreachable past the schema refine; keeps the type narrow honest.
-        throw new Error("create_comment: authored_by failed validation.");
-      }
-      validateWriteProvenance(author, kafka_offset);
-      const result = await createComment(
-        client,
-        container_id,
-        target_block_id,
-        text,
-        author,
-        kafka_offset,
-      );
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Comment ${result.comment.id} on ${result.target_id}.`,
-          },
-        ],
-        structuredContent: structured(result),
-      };
-    },
-  );
-
-  server.registerTool(
-    "list_comments",
-    {
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-      title: "Read comment threads",
-      description:
-        "026: read a document's comment threads. With block_id: that " +
-        "block's thread, INCLUDING comments made on its lineage " +
-        "predecessors (an edit never orphans its review trail); without: " +
-        "every thread in the container. Each thread reports its target's " +
-        "state (active | superseded | deleted) and each comment's author, " +
-        "log offset, and creation stamp. Returns { threads }.",
-      inputSchema: {
-        container_id: z.string().describe("The DOCUMENT container."),
-        block_id: z
-          .string()
-          .optional()
-          .describe("Focus on one block's thread (lineage-following)."),
-        resolve_anchors: z
-          .boolean()
-          .optional()
-          .describe(
-            "027: also resolve, per comment, the target's prose as the " +
-              "commenter saw it (anchorText), its current prose " +
-              "(currentText), and a drift flag. Costs a read per comment; " +
-              "default false.",
-          ),
-      },
-    },
-    async ({ container_id, block_id, resolve_anchors }) => {
-      const result = await listComments(
-        client,
-        container_id,
-        block_id,
-        resolve_anchors,
-      );
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${String(result.threads.length)} thread(s).`,
-          },
-        ],
-        structuredContent: structured(result),
-      };
-    },
-  );
-
-  server.registerTool(
-    "coalesce_block_writes",
-    {
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-      },
-      title: "Coalesce a writing arc's pause-writes (gated)",
-      description:
-        "F8: collapse one block's intra-arc supersession chain to its " +
-        "endpoints — the pre-arc state and the final row — physically " +
-        "removing the pause-write intermediates and rewiring lineage across " +
-        "the gap, so row growth is bounded by sessions rather than pauses. " +
-        "The arc is named by the caller: the final block id plus the " +
-        "arc-start revision (from read_body_revisions). Structural events " +
-        "(splits, merges, batches) are never collapsed across. OFF BY " +
-        "DEFAULT: refuses unless CALLIOPE_COALESCE_ARCS=1. Returns " +
-        "{ removed, from, to }.",
-      inputSchema: {
-        container_id: z.string().describe("The container owning the block."),
-        block_id: z.string().describe("The arc's final (active) block."),
-        since_revision: z
-          .string()
-          .describe("The arc-start revision timestamp (pre-arc moment)."),
-      },
-    },
-    async ({ container_id, block_id, since_revision }) => {
-      if (process.env.CALLIOPE_COALESCE_ARCS !== "1") {
-        const miss = {
-          error: "coalesce_disabled",
-          detail:
-            "arc coalescing is off by default until verified — set " +
-            "CALLIOPE_COALESCE_ARCS=1 to enable (master-plan F8).",
-        };
-        return {
-          content: [{ type: "text", text: `${miss.error}: ${miss.detail}` }],
-          structuredContent: structured(miss),
-          isError: true,
-        };
-      }
-      if (client.coalesceArc === undefined) {
-        throw new Error(
-          "coalesce_block_writes: the configured body backend does not " +
-            "support arc coalescing (no coalesceArc method).",
+      async ({ node_id, sections, authored_by, kafka_offset }) => {
+        validateWriteProvenance(asAuthor(authored_by), kafka_offset);
+        const result = await writeBody(
+          client,
+          node_id,
+          sections,
+          asAuthor(authored_by),
+          kafka_offset,
         );
-      }
-      const result = await client.coalesceArc(
-        container_id,
-        block_id,
-        since_revision,
-      );
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Removed ${String(result.removed)} intermediate row(s).`,
-          },
-        ],
-        structuredContent: structured(result),
-      };
-    },
-  );
+        await afterBodyWrite(node_id);
+        return {
+          content: [
+            { type: "text", text: `Saved ${String(result.count)} section(s).` },
+          ],
+          structuredContent: structured(result),
+        };
+      },
+    );
+  }
 
-  server.registerTool(
-    "write_body",
-    {
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
+  if (options?.pathBodies === true) {
+    server.registerTool(
+      "apply_section_ops",
+      {
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+        },
+        title: "Apply block-grain section ops",
+        description:
+          "A11: apply the editor's block-op batch in ONE transaction — add " +
+          "(caller-minted fractional order_key), update (copy-on-write, key " +
+          "kept unless order_key is supplied), delete, reorder. ALL ops apply " +
+          "or none; a stale section_id rejects the whole batch " +
+          "(stale_section) — the compare-before-write race backstop. Returns " +
+          "{ sections, applied } (applied aligned to the ops array).",
+        inputSchema: {
+          node_id: z.string().describe("The node whose body the ops target."),
+          ops: z
+            .array(
+              z.discriminatedUnion("op", [
+                z.object({
+                  op: z.literal("add"),
+                  text: z.string().describe("The new block's prose."),
+                  order_key: z
+                    .string()
+                    .min(1)
+                    .describe(
+                      "Caller-minted fractional key (between neighbors).",
+                    ),
+                }),
+                z.object({
+                  op: z.literal("update"),
+                  section_id: z.string().describe("The section to rewrite."),
+                  text: z.string().describe("The section's new prose."),
+                  order_key: z
+                    .string()
+                    .min(1)
+                    .optional()
+                    .describe(
+                      "Optional new key (an edit+move in one gesture).",
+                    ),
+                }),
+                z.object({
+                  op: z.literal("delete"),
+                  section_id: z.string().describe("The section to remove."),
+                }),
+                z.object({
+                  op: z.literal("reorder"),
+                  section_id: z.string().describe("The section to move."),
+                  order_key: z
+                    .string()
+                    .min(1)
+                    .describe("The new fractional key (between neighbors)."),
+                }),
+              ]),
+            )
+            .min(1)
+            .describe(
+              "The op batch, in apply order; at most one op per section.",
+            ),
+          authored_by: authoredByField,
+          kafka_offset: kafkaOffsetField,
+        },
       },
-      title: "Write node body (LEGACY coarse save)",
-      description:
-        "LEGACY (F3): the whole-body replace. Prefer the block verbs " +
-        "(create_block / update_block / delete_block / split_block / " +
-        "merge_block) — they preserve block identity; this replaces every " +
-        "block's id in one stroke. Kept for coarse imports and the editor's " +
-        "degraded path. Returns { ok, count }.",
-      inputSchema: {
-        node_id: z.string().describe("The node whose body to replace."),
-        sections: z
-          .array(z.object({ text: z.string() }))
-          .describe("The new sections, in display order."),
-        authored_by: authoredByField,
-        kafka_offset: kafkaOffsetField,
+      async ({ node_id, ops, authored_by, kafka_offset }) => {
+        validateWriteProvenance(asAuthor(authored_by), kafka_offset);
+        const result = await applySectionOps(
+          client,
+          node_id,
+          ops,
+          asAuthor(authored_by),
+          kafka_offset,
+        );
+        await afterBodyWrite(node_id);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Applied ${String(ops.length)} op(s); body now ${String(
+                result.sections.length,
+              )} section(s).`,
+            },
+          ],
+          structuredContent: structured(result),
+        };
       },
-    },
-    async ({ node_id, sections, authored_by, kafka_offset }) => {
-      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
-      const result = await writeBody(
-        client,
-        node_id,
-        sections,
-        asAuthor(authored_by),
-        kafka_offset,
-      );
-      await afterBodyWrite(node_id);
-      return {
-        content: [
-          { type: "text", text: `Saved ${String(result.count)} section(s).` },
-        ],
-        structuredContent: structured(result),
-      };
-    },
-  );
+    );
+  }
 
-  server.registerTool(
-    "append_section",
-    {
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
+  if (options?.pathBodies === true) {
+    server.registerTool(
+      "read_body_revisions",
+      {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
+        title: "List a body's revisions",
+        description:
+          "List a plan node body's stored write-events (copy-on-write lineage), " +
+          "newest first — each coarse save and each single-section edit is one " +
+          "event. Returns { revisions: [{ revision, kind, authoredBy, " +
+          "sections }] }. Read-only.",
+        inputSchema: {
+          node_id: z.string().describe("The node whose history to list."),
+          limit: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("Max events to return (default 50, newest first)."),
+        },
       },
-      title: "Append a section",
-      description:
-        "Append one new section to the end of a plan node's body. Returns the " +
-        "appended { section } and the new body { count }.",
-      inputSchema: {
-        node_id: z.string().describe("The node to append to."),
-        text: z.string().describe("The new section's prose."),
-        authored_by: authoredByField,
-        kafka_offset: kafkaOffsetField,
+      async ({ node_id, limit }) => {
+        const result = await readBodyRevisions(client, node_id, limit);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${String(result.revisions.length)} revision(s).`,
+            },
+          ],
+          structuredContent: structured(result),
+        };
       },
-    },
-    async ({ node_id, text, authored_by, kafka_offset }) => {
-      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
-      const result = await appendSection(
-        client,
-        node_id,
-        text,
-        asAuthor(authored_by),
-        kafka_offset,
-      );
-      await afterBodyWrite(node_id);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Appended; body now has ${String(result.count)} section(s).`,
-          },
-        ],
-        structuredContent: structured(result),
-      };
-    },
-  );
+    );
+  }
 
-  server.registerTool(
-    "edit_section",
-    {
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
+  if (options?.pathBodies === true) {
+    server.registerTool(
+      "read_body_at",
+      {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
+        title: "Read a body at a revision",
+        description:
+          "Reconstruct a plan node's body as it stood at a write-event returned " +
+          "by read_body_revisions. Returns { revision, sections }; a revision " +
+          "predating the body returns an empty list. Read-only.",
+        inputSchema: {
+          node_id: z.string().describe("The node whose body to reconstruct."),
+          revision: z
+            .string()
+            .describe("The write-event timestamp (from read_body_revisions)."),
+        },
       },
-      title: "Edit one section",
-      description:
-        "Replace the prose of a single section (copy-on-write), keeping its " +
-        "position and every other section untouched. Returns the edited " +
-        "{ section }.",
-      inputSchema: {
-        node_id: z.string().describe("The node owning the section."),
-        section_id: z.string().describe("The section to edit."),
-        text: z.string().describe("The section's new prose."),
-        authored_by: authoredByField,
-        kafka_offset: kafkaOffsetField,
+      async ({ node_id, revision }) => {
+        const result = await readBodyAt(client, node_id, revision);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${String(result.sections.length)} section(s) at ${result.revision}.`,
+            },
+          ],
+          structuredContent: structured(result),
+        };
       },
-    },
-    async ({ node_id, section_id, text, authored_by, kafka_offset }) => {
-      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
-      const result = await editSection(
-        client,
-        node_id,
-        section_id,
-        text,
-        asAuthor(authored_by),
-        kafka_offset,
-      );
-      await afterBodyWrite(node_id);
-      return {
-        content: [
-          { type: "text", text: `Edited section ${result.section.id}.` },
-        ],
-        structuredContent: structured(result),
-      };
-    },
-  );
-
-  server.registerTool(
-    "apply_section_ops",
-    {
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
-      },
-      title: "Apply block-grain section ops",
-      description:
-        "A11: apply the editor's block-op batch in ONE transaction — add " +
-        "(caller-minted fractional order_key), update (copy-on-write, key " +
-        "kept unless order_key is supplied), delete, reorder. ALL ops apply " +
-        "or none; a stale section_id rejects the whole batch " +
-        "(stale_section) — the compare-before-write race backstop. Returns " +
-        "{ sections, applied } (applied aligned to the ops array).",
-      inputSchema: {
-        node_id: z.string().describe("The node whose body the ops target."),
-        ops: z
-          .array(
-            z.discriminatedUnion("op", [
-              z.object({
-                op: z.literal("add"),
-                text: z.string().describe("The new block's prose."),
-                order_key: z
-                  .string()
-                  .min(1)
-                  .describe(
-                    "Caller-minted fractional key (between neighbors).",
-                  ),
-              }),
-              z.object({
-                op: z.literal("update"),
-                section_id: z.string().describe("The section to rewrite."),
-                text: z.string().describe("The section's new prose."),
-                order_key: z
-                  .string()
-                  .min(1)
-                  .optional()
-                  .describe("Optional new key (an edit+move in one gesture)."),
-              }),
-              z.object({
-                op: z.literal("delete"),
-                section_id: z.string().describe("The section to remove."),
-              }),
-              z.object({
-                op: z.literal("reorder"),
-                section_id: z.string().describe("The section to move."),
-                order_key: z
-                  .string()
-                  .min(1)
-                  .describe("The new fractional key (between neighbors)."),
-              }),
-            ]),
-          )
-          .min(1)
-          .describe(
-            "The op batch, in apply order; at most one op per section.",
-          ),
-        authored_by: authoredByField,
-        kafka_offset: kafkaOffsetField,
-      },
-    },
-    async ({ node_id, ops, authored_by, kafka_offset }) => {
-      validateWriteProvenance(asAuthor(authored_by), kafka_offset);
-      const result = await applySectionOps(
-        client,
-        node_id,
-        ops,
-        asAuthor(authored_by),
-        kafka_offset,
-      );
-      await afterBodyWrite(node_id);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Applied ${String(ops.length)} op(s); body now ${String(
-              result.sections.length,
-            )} section(s).`,
-          },
-        ],
-        structuredContent: structured(result),
-      };
-    },
-  );
-
-  server.registerTool(
-    "read_body_revisions",
-    {
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-      title: "List a body's revisions",
-      description:
-        "List a plan node body's stored write-events (copy-on-write lineage), " +
-        "newest first — each coarse save and each single-section edit is one " +
-        "event. Returns { revisions: [{ revision, kind, authoredBy, " +
-        "sections }] }. Read-only.",
-      inputSchema: {
-        node_id: z.string().describe("The node whose history to list."),
-        limit: z
-          .number()
-          .int()
-          .positive()
-          .optional()
-          .describe("Max events to return (default 50, newest first)."),
-      },
-    },
-    async ({ node_id, limit }) => {
-      const result = await readBodyRevisions(client, node_id, limit);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${String(result.revisions.length)} revision(s).`,
-          },
-        ],
-        structuredContent: structured(result),
-      };
-    },
-  );
-
-  server.registerTool(
-    "read_body_at",
-    {
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-      title: "Read a body at a revision",
-      description:
-        "Reconstruct a plan node's body as it stood at a write-event returned " +
-        "by read_body_revisions. Returns { revision, sections }; a revision " +
-        "predating the body returns an empty list. Read-only.",
-      inputSchema: {
-        node_id: z.string().describe("The node whose body to reconstruct."),
-        revision: z
-          .string()
-          .describe("The write-event timestamp (from read_body_revisions)."),
-      },
-    },
-    async ({ node_id, revision }) => {
-      const result = await readBodyAt(client, node_id, revision);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${String(result.sections.length)} section(s) at ${result.revision}.`,
-          },
-        ],
-        structuredContent: structured(result),
-      };
-    },
-  );
+    );
+  }
 
   server.registerTool(
     "search",
@@ -1180,251 +477,43 @@ export function createServer(
     },
   );
 
-  server.registerTool(
-    "has_body",
-    {
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-      title: "Bulk prose-presence",
-      description:
-        "Findability F10: active-block counts for a whole extent in ONE " +
-        "call — the browse list badges without N per-node reads (footgun " +
-        "#5). Returns { present: [{ node_id, blocks }] }; ids with no body " +
-        "are absent from the list. Bounded: at most 2048 ids per call.",
-      inputSchema: {
-        node_ids: z
-          .array(z.string())
-          .min(1)
-          .max(2048)
-          .describe("The extent to check (bounded at 2048 ids)."),
-      },
-    },
-    async ({ node_ids }) => {
-      if (client.hasBody === undefined) {
-        throw new Error(
-          "has_body: the configured body backend does not support bulk " +
-            "prose-presence (no hasBody method).",
-        );
-      }
-      const counts = await client.hasBody(node_ids);
-      const present = [...counts.entries()].map(([node_id, blocks]) => ({
-        node_id,
-        blocks,
-      }));
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${String(present.length)} of ${String(node_ids.length)} carry prose.`,
-          },
-        ],
-        structuredContent: structured({ present }),
-      };
-    },
-  );
-
-  const documents = options?.documents;
-  if (documents !== undefined) {
+  if (options?.pathBodies === true) {
     server.registerTool(
-      "write_document",
+      "has_body",
       {
         annotations: {
-          readOnlyHint: false,
+          readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
         },
-        title: "Write a dissolved document",
+        title: "Bulk prose-presence",
         description:
-          "Store one dissolved vault note's body verbatim (the typed-write " +
-          "dissolve sink, strangled from phdb). Dedup key is (source_path, " +
-          "raw_hash) — an identical re-submit is a no-op. Returns " +
-          "{ ok, table, id, deduped }.",
+          "Findability F10: active-block counts for a whole extent in ONE " +
+          "call — the browse list badges without N per-node reads (footgun " +
+          "#5). Returns { present: [{ node_id, blocks }] }; ids with no body " +
+          "are absent from the list. Bounded: at most 2048 ids per call.",
         inputSchema: {
-          source_path: z
-            .string()
-            .describe("The note's vault-relative source path."),
-          body_text: z.string().describe("The note body, stored verbatim."),
-          schema_type: z
-            .string()
-            .optional()
-            .describe("Schema.org @type (default DigitalDocument)."),
-          subject: z.string().optional().describe("The note's title."),
-          file_path: z
-            .string()
-            .optional()
-            .describe("Absolute file path at dissolve time."),
-          mtime: z
-            .string()
-            .optional()
-            .describe("Frontmatter `updated` (ISO-8601), provenance."),
-          ctime: z
-            .string()
-            .optional()
-            .describe("Frontmatter `created` (ISO-8601), provenance."),
-          source_kind: z
-            .string()
-            .optional()
-            .describe("Capture-kind tag (default vault-note)."),
-          raw_hash: z
-            .string()
-            .optional()
-            .describe("Dedup hash override (default sha256(body_text))."),
+          node_ids: z
+            .array(z.string())
+            .min(1)
+            .max(2048)
+            .describe("The extent to check (bounded at 2048 ids)."),
         },
       },
-      async (input) => {
-        // F7 — the strangler finished: the store IS the note-native sink;
-        // no table write exists anymore. Fresh dissolves carry no document
-        // id (the table's sequence died with it) — source_path is the
-        // durable handle; migrated ids resolve via the bridge attributes.
-        const result = await documents.write(input);
-        const note = (result as { note?: SinkResult }).note;
+      async ({ node_ids }) => {
+        const counts = await client.hasBody(node_ids);
+        const present = [...counts.entries()].map(([node_id, blocks]) => ({
+          node_id,
+          blocks,
+        }));
         return {
           content: [
             {
               type: "text",
-              text:
-                (result.deduped
-                  ? `Deduped (already stored): ${input.source_path}`
-                  : `Stored document #${String(result.id ?? 0)}.`) +
-                (note !== undefined
-                  ? ` Note ${note.node_id} (${note.generation}).`
-                  : ""),
+              text: `${String(present.length)} of ${String(node_ids.length)} carry prose.`,
             },
           ],
-          structuredContent: structured(
-            note === undefined ? result : { ...result, note },
-          ),
-        };
-      },
-    );
-
-    server.registerTool(
-      "read_documents",
-      {
-        annotations: {
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: true,
-        },
-        title: "Read dissolved documents",
-        description:
-          "Read the document store: by id, by source_path, or list " +
-          "(schema_type filter, newest first). Returns { documents: [...] }.",
-        inputSchema: {
-          id: z.number().int().optional().describe("A single document id."),
-          source_path: z
-            .string()
-            .optional()
-            .describe("All versions stored for one source path."),
-          schema_type: z
-            .string()
-            .optional()
-            .describe("List filter: Schema.org @type."),
-          limit: z
-            .number()
-            .int()
-            .positive()
-            .optional()
-            .describe("List cap (default 50)."),
-          omit_body: z
-            .boolean()
-            .optional()
-            .describe("List mode: skip body_text (index-style)."),
-        },
-      },
-      async ({ id, source_path, schema_type, limit, omit_body }) => {
-        let rows;
-        if (id !== undefined) {
-          const row = await documents.byId(id);
-          rows = row === null ? [] : [row];
-        } else if (source_path !== undefined) {
-          rows = await documents.bySourcePath(source_path);
-        } else {
-          rows = await documents.list({
-            ...(schema_type !== undefined ? { schema_type } : {}),
-            ...(limit !== undefined ? { limit } : {}),
-            ...(omit_body !== undefined ? { omit_body } : {}),
-          });
-        }
-        return {
-          content: [
-            { type: "text", text: `${String(rows.length)} document(s).` },
-          ],
-          structuredContent: { documents: rows },
-        };
-      },
-    );
-
-    server.registerTool(
-      "read_plan",
-      {
-        annotations: {
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: true,
-        },
-        title:
-          "Read a plan by reference (LEGACY — prefer list_blocks + read_block)",
-        description:
-          "C7 projection-shaped ingest: resolve a plan document BY REFERENCE " +
-          "(a handle — `document` id or `source_path`, newest version wins) and " +
-          "serve it block-granular, so a prose->graph consumer (athena " +
-          "orchestrate_plan) never loads the whole plan_text into its context. " +
-          "Whole-plan read (no `block`): returns { handle, title, block_count, " +
-          "blocks:[{id,title,size,order}], body_text? } — the feature-block index " +
-          "(the addresses) plus the body unless omit_body. Single-block read " +
-          "(`block` = a feature id like C7): returns { handle, block:{id,title," +
-          "size,order,text} } — just that feature's markdown; the block ref is a " +
-          "Calliope handle a conflict payload can return. Misses are structured: " +
-          "document_not_found / block_not_found.",
-        inputSchema: {
-          document: z
-            .number()
-            .int()
-            .optional()
-            .describe("The plan document id (the primary handle)."),
-          source_path: z
-            .string()
-            .optional()
-            .describe(
-              "The plan's source path (resolves to the newest version).",
-            ),
-          block: z
-            .string()
-            .optional()
-            .describe("A feature-id block address (e.g. C7) — serve just it."),
-          omit_body: z
-            .boolean()
-            .optional()
-            .describe("Whole-plan read: omit body_text (index-only)."),
-        },
-      },
-      async ({ document, source_path, block, omit_body }) => {
-        const result = await readPlan(documents, {
-          ...(document !== undefined ? { document } : {}),
-          ...(source_path !== undefined ? { source_path } : {}),
-          ...(block !== undefined ? { block } : {}),
-          ...(omit_body !== undefined ? { omit_body } : {}),
-        });
-        if (isReadPlanError(result)) {
-          return {
-            content: [
-              { type: "text", text: `${result.error}: ${result.detail}` },
-            ],
-            structuredContent: structured(result),
-            isError: true,
-          };
-        }
-        const summary =
-          "block" in result
-            ? `Block ${result.block.id} (${String(result.block.text.length)} chars).`
-            : `${String(result.block_count)} feature block(s).`;
-        return {
-          content: [{ type: "text", text: summary }],
-          structuredContent: structured(result),
+          structuredContent: structured({ present }),
         };
       },
     );
@@ -1618,6 +707,17 @@ export function createServer(
             .string()
             .optional()
             .describe("Capture-kind provenance (default vault-note)."),
+          schema_type: z
+            .string()
+            .optional()
+            .describe(
+              "The note_type provenance (Plan, Note, …) — the attribute " +
+                "typed queries key on (F10).",
+            ),
+          file_path: z
+            .string()
+            .optional()
+            .describe("The source's absolute path provenance."),
           mtime: z.string().optional().describe("Local modified time."),
           ctime: z.string().optional().describe("Local created time."),
           raw_hash: z
@@ -1631,6 +731,8 @@ export function createServer(
         blocks,
         title,
         source_kind,
+        schema_type,
+        file_path,
         mtime,
         ctime,
         raw_hash,
@@ -1645,6 +747,8 @@ export function createServer(
             blocks: blocks.map((b) => b.text),
             ...(title !== undefined ? { title } : {}),
             ...(source_kind !== undefined ? { source_kind } : {}),
+            ...(schema_type !== undefined ? { schema_type } : {}),
+            ...(file_path !== undefined ? { file_path } : {}),
             ...(mtime !== undefined ? { mtime } : {}),
             ...(ctime !== undefined ? { ctime } : {}),
             ...(raw_hash !== undefined ? { raw_hash } : {}),
@@ -1983,6 +1087,243 @@ export function createServer(
             { type: "text", text: `${String(result.tags.length)} tag(s).` },
           ],
           structuredContent: structured(result),
+        };
+      },
+    );
+  }
+
+  if (options?.containers !== undefined) {
+    const facet = options.containers;
+    const containerOpField = z.discriminatedUnion("op", [
+      z.object({
+        op: z.literal("add"),
+        text: z.string().describe("The new block's prose."),
+        position: z
+          .string()
+          .min(1)
+          .describe("Fractional order key (bytewise order; client-minted)."),
+      }),
+      z.object({
+        op: z.literal("update"),
+        slot: z.string().regex(/^[0-9a-f]{64}$/),
+        oldBlobId: z.string().min(1),
+        text: z.string(),
+      }),
+      z.object({
+        op: z.literal("reorder"),
+        slot: z.string().regex(/^[0-9a-f]{64}$/),
+        oldPosition: z.string().min(1),
+        position: z.string().min(1),
+      }),
+      z.object({
+        op: z.literal("remove"),
+        slot: z.string().regex(/^[0-9a-f]{64}$/),
+        position: z.string().min(1),
+        blobId: z.string().min(1),
+      }),
+    ]);
+    server.registerTool(
+      "write_container",
+      {
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+        },
+        title: "Write a container (the tree-native save)",
+        description:
+          "041 F4 (Git for Ideas): save a container as ONE graph " +
+          "transaction. Blob-first: prose mints into the content-deduped " +
+          "blob store, then the surviving ops ride one admit batch of tree " +
+          "facts (add births a slot; update repoints one; reorder rewrites " +
+          "a position; remove retracts a slot's facts). Byte-identical " +
+          "content nets out before the batch — a save that nets to nothing " +
+          "writes nothing. Returns {noop, applied, minted, blobIds}; a " +
+          "refused batch surfaces the gate's violations and leaves NO tree " +
+          "change (minted blobs remain as orphans for the census).",
+        inputSchema: {
+          container: z
+            .string()
+            .regex(/^[0-9a-f]{64}$/)
+            .describe("The container node's 64-hex token."),
+          ops: z.array(containerOpField).min(1).describe("The save's ops."),
+          tenant: z
+            .enum(["notes", "documents", "comments", "governance"])
+            .optional()
+            .describe("The tenant graph (default: notes)."),
+        },
+      },
+      async ({ container, ops, tenant }) => {
+        try {
+          const result = await writeContainer(
+            facet,
+            container,
+            ops,
+            tenant ?? "notes",
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: result.noop
+                  ? "noop: every op netted out"
+                  : `applied ${String(result.applied.length)} op(s)`,
+              },
+            ],
+            structuredContent: structured(result),
+          };
+        } catch (err) {
+          if (err instanceof ChaosClientError) {
+            return {
+              content: [{ type: "text", text: `${err.code}: ${err.message}` }],
+              structuredContent: structured({
+                error: err.code,
+                violations: err.violations,
+              }),
+              isError: true,
+            };
+          }
+          throw err;
+        }
+      },
+    );
+  }
+
+  if (options?.containers !== undefined) {
+    const facet = options.containers;
+    server.registerTool(
+      "read_container",
+      {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
+        title: "Read a container (ordered blocks, optionally as-of)",
+        description:
+          "042 F5 (Git for Ideas): resolve a container's tree and fetch its " +
+          "prose in ONE batched blob lookup — blocks in position order. " +
+          "as_of_tx reads the container as it stood at that transaction " +
+          "(members since removed included). A tree fact naming an absent " +
+          "blob surfaces as dangling (text null) — reported, never " +
+          "fabricated.",
+        inputSchema: {
+          container: z
+            .string()
+            .regex(/^[0-9a-f]{64}$/)
+            .describe("The container node's 64-hex token."),
+          as_of_tx: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("Read the container as it stood at this transaction."),
+        },
+      },
+      async ({ container, as_of_tx }) => {
+        const result = await readContainer(
+          facet,
+          container,
+          as_of_tx !== undefined ? { asOfTx: as_of_tx } : undefined,
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${String(result.blocks.length)} block(s)${
+                as_of_tx !== undefined ? ` as of tx ${String(as_of_tx)}` : ""
+              }`,
+            },
+          ],
+          structuredContent: structured(result),
+        };
+      },
+    );
+
+    server.registerTool(
+      "container_history",
+      {
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
+        title: "A container's history (the graph's transactions)",
+        description:
+          "042 F5 (Git for Ideas): every transaction that touched the " +
+          "container or any slot it EVER held (the door's log closure over " +
+          "tree_member — removed members' edits stay reachable), ascending, " +
+          "with authors and timestamps. No revision table: history IS the " +
+          "graph. Reconstruct any moment with read_container(as_of_tx).",
+        inputSchema: {
+          container: z
+            .string()
+            .regex(/^[0-9a-f]{64}$/)
+            .describe("The container node's 64-hex token."),
+        },
+      },
+      async ({ container }) => {
+        const transactions = await containerHistory(facet, container);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${String(transactions.length)} transaction(s)`,
+            },
+          ],
+          structuredContent: structured({
+            transactions,
+            count: transactions.length,
+          }),
+        };
+      },
+    );
+  }
+
+  if (options?.containers?.gc !== undefined) {
+    const gc = options.containers.gc;
+    const dial = options.containers.dial;
+    server.registerTool(
+      "blob_census",
+      {
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+        },
+        title: "The blob census (mark-and-sweep GC)",
+        description:
+          "F7 (Git for Ideas): the reachability census with the roles " +
+          "swapped — the blob store asks, each tenant graph reports the " +
+          "blob ids its LOG holds. A census with ANY reporter missing is " +
+          "incomplete and reaps nothing. Mark-and-sweep: a complete census " +
+          "marks the unheld; execute=true reaps only ids a PREVIOUS " +
+          "complete census already marked and that are still unheld (the " +
+          "grace window for saves in flight). Facts naming absent blobs " +
+          "are reported dangling, never fixed. Held is the log, so only " +
+          "never-referenced orphans ever reap.",
+        inputSchema: {
+          execute: z
+            .boolean()
+            .optional()
+            .describe("Reap previously-marked, still-unheld blobs."),
+        },
+      },
+      async ({ execute }) => {
+        const report = await runBlobCensus(
+          { gc, dial },
+          execute === true ? { execute: true } : {},
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: report.complete
+                ? `complete: ${String(report.held)} held, ${String(report.marked.length)} marked, ${String(report.reaped.length)} reaped, ${String(report.dangling.length)} dangling`
+                : "INCOMPLETE census — nothing marked, nothing reaped",
+            },
+          ],
+          structuredContent: structured(report),
         };
       },
     );

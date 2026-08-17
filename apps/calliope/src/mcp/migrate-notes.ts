@@ -202,10 +202,10 @@ export async function migrateNotes(
       if (standing !== undefined && newestRow !== undefined) {
         const activeBody = await client.readBody(standing);
         const activeText = activeBody.map((s) => s.text).join("\n");
-        const events =
-          client.readRevisions === undefined
-            ? []
-            : await client.readRevisions(standing, versions.length + 1);
+        const events = await client.readRevisions(
+          standing,
+          versions.length + 1,
+        );
         if (
           activeBody.length === 1 &&
           activeText === newestRow.body_text &&

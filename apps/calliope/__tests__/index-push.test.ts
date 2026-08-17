@@ -4,6 +4,7 @@ import { FixtureBodyClient } from "../src/fixture-client.js";
 import { makeBodyClient } from "../src/mcp/backend.js";
 import { IndexingBodyClient, type IndexPusher } from "../src/mcp/index-push.js";
 import type { BodyClient } from "../src/types.js";
+import { bareClient } from "./helpers/bare-client.js";
 
 /** Records every index push (or fails on demand) for assertions. */
 class RecordingPusher implements IndexPusher {
@@ -36,7 +37,7 @@ describe("IndexingBodyClient — the write-side body push (B)", () => {
     if (first === undefined) throw new Error("expected a section");
     pusher.calls = [];
 
-    await client.editSection?.("n", first.id, "ONE");
+    await client.editSection("n", first.id, "ONE");
 
     expect(pusher.calls).toEqual([{ node: "n", body: "ONE\n\ntwo" }]);
   });
@@ -52,7 +53,7 @@ describe("IndexingBodyClient — the write-side body push (B)", () => {
       authoredBy?: string;
       kafkaOffset?: number;
     }[] = [];
-    const inner: BodyClient = {
+    const inner: BodyClient = bareClient({
       readBody: () => Promise.resolve([]),
       saveBody: (_n, _s, authoredBy, kafkaOffset) => {
         seen.push({ verb: "saveBody", authoredBy, kafkaOffset });
@@ -66,28 +67,18 @@ describe("IndexingBodyClient — the write-side body push (B)", () => {
         seen.push({ verb: "applySectionOps", authoredBy, kafkaOffset });
         return Promise.resolve({ applied: [], sections: [] });
       },
-    };
+    });
     const client = new IndexingBodyClient(inner, new RecordingPusher());
 
     await client.saveBody("n", [{ text: "x" }], principal, 42);
-    await client.editSection?.("n", "s", "y", principal, 43);
-    await client.applySectionOps?.("n", [], principal, 44);
+    await client.editSection("n", "s", "y", principal, 43);
+    await client.applySectionOps("n", [], principal, 44);
 
     expect(seen).toEqual([
       { verb: "saveBody", authoredBy: principal, kafkaOffset: 42 },
       { verb: "editSection", authoredBy: principal, kafkaOffset: 43 },
       { verb: "applySectionOps", authoredBy: principal, kafkaOffset: 44 },
     ]);
-  });
-
-  it("does not expose editSection when the inner client lacks it", () => {
-    const inner: BodyClient = {
-      readBody: () => Promise.resolve([]),
-      saveBody: () => Promise.resolve(),
-    };
-    const client = new IndexingBodyClient(inner, new RecordingPusher());
-
-    expect(client.editSection).toBeUndefined();
   });
 
   it("swallows a push failure — the body write still resolves", async () => {

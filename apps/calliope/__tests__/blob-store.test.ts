@@ -172,6 +172,33 @@ describe.skipIf(!HAVE_DOCKER)("BlobStore (real postgres)", () => {
     expect(await rowCount()).toBe(before + 1);
   });
 
+  // 042 F5 SC-004 — the two-store read's blob half, measured: a
+  // representative 50-block container's batched text fetch. The number is
+  // recorded in specs/042-container-read/measurement.md.
+  it("fetches a 50-block container's prose in one batched read (measured)", async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      ids.push(
+        await store.mint(
+          `Measurement block ${String(i)}: ` + "durable prose. ".repeat(64),
+        ),
+      );
+    }
+    const runs: number[] = [];
+    for (let r = 0; r < 5; r++) {
+      const t0 = performance.now();
+      const texts = await store.getTexts(ids);
+      runs.push(performance.now() - t0);
+      expect(texts.size).toBe(50);
+    }
+    const mean = runs.reduce((a, b) => a + b, 0) / runs.length;
+
+    console.log(
+      `[measurement 042 SC-004] batched getTexts(50 x ~1KB): mean ${mean.toFixed(2)}ms over ${String(runs.length)} runs (${runs.map((r) => r.toFixed(1)).join(", ")})`,
+    );
+    expect(mean).toBeLessThan(250); // sanity ceiling, not the recorded number
+  });
+
   // FR-001 — immutability: the module exposes no update/delete path. Static
   // guarantee (surface is mint/getText/findByContent/search only); assert the
   // surface here so a future verb addition trips this suite.
@@ -181,6 +208,7 @@ describe.skipIf(!HAVE_DOCKER)("BlobStore (real postgres)", () => {
       "constructor",
       "findByContent",
       "getText",
+      "getTexts", // 042 F5: the batched read — still a read
       "mint",
       "search",
     ]);

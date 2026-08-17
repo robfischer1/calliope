@@ -7,7 +7,6 @@
 import { describe, expect, it } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { applySectionOps, writeBody } from "../src/mcp/tools.js";
-import type { BodyClient } from "../src/types.js";
 
 async function seeded(): Promise<FixtureBodyClient> {
   const client = new FixtureBodyClient();
@@ -88,16 +87,6 @@ describe("apply_section_ops tool — over FixtureBodyClient", () => {
       "beta",
       "gamma",
     ]);
-  });
-
-  it("guards a backend without the capability with a clear error", async () => {
-    const bare: BodyClient = {
-      readBody: () => Promise.resolve([]),
-      saveBody: () => Promise.resolve(),
-    };
-    await expect(
-      applySectionOps(bare, "n1", [{ op: "delete", section_id: "s" }]),
-    ).rejects.toThrow(/does not support/);
   });
 
   it("readRevisionAt reconstructs across ops events (snapshot fixture)", async () => {
