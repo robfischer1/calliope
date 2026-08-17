@@ -65,6 +65,15 @@ few smaller additions that never got their own spec-kit dir:
 There's also an op-contract heartbeat publisher (`mcp/heartbeat.ts`, no
 C-number) publishing this star's liveness to Pontus.
 
+- **039–047 — GIT FOR IDEAS (2026-08-16, the current model).** The whole
+  storage story above is superseded: blobs (039) + the tree in chaos
+  (040) + container write/read/history (041/042) + the full production
+  migration with archived parity report (043) + blob GC (044) + the
+  desktop engine (045, baby chaos) + the fs-backend deletion (046) + the
+  cut (047 — the old verb families retired, `sections`/`supersessions`/
+  `comments_on` DROPPED from production). Read the README's "Body model"
+  and "MCP tools" sections first; the C2–C7 material above is history.
+
 ## Architecture / module map
 
 Repo root is a turbo monorepo; everything below is under `apps/calliope/`
@@ -112,17 +121,20 @@ apps/calliope/
                           schemas async, before serving. withIndexPush() wraps
                           pg/urania clients with the similarity-index push (below);
                           hades is NOT wrapped (the gateway does its own push).
-      server.ts          createServer(client, {documents?, revisions?}) ->
-                          McpServer. Registers read_body/write_body/
-                          append_section/edit_section/apply_section_ops/
-                          read_body_revisions/read_body_at always; write_document/
-                          read_documents/read_plan iff documents given;
-                          file_revisions/revision_deltas iff revisions given.
-      tools.ts           Pure handler functions (readBody/writeBody/appendSection/
-                          editSection/applySectionOps/readBodyRevisions/
-                          readBodyAt) — the thing server.ts wraps and
-                          __tests__/mcp-tools.test.ts (+ apply-section-ops.test.ts,
-                          body-revisions.test.ts) drive directly against
+      server.ts          createServer(client, options) -> McpServer. Since the
+                          F12 cut the fleet surface is 16 verbs: the container
+                          surface (write_container/read_container/
+                          container_history, iff containers facet; blob_census
+                          iff its gc) + the _note four (iff chaos facet) + tags
+                          (iff tags) + search/look/unpin/copy_reference +
+                          file_revisions/revision_deltas (iff revisions). The
+                          path-addressed body verbs register ONLY under
+                          options.pathBodies (the desktop sidecar).
+      tools.ts           Pure handler functions (readBody/writeBody/
+                          applySectionOps/readBodyRevisions/readBodyAt/
+                          copyReference/look/unpin/createNote/tags) — the F12
+                          cut deleted the block/comment/append/edit helpers;
+                          the survivors serve the desktop dialect + note verbs
                           FixtureBodyClient. Each optional-capability handler
                           (editSection, applySectionOps, the revision reads)
                           throws a named "backend does not support X" error when
@@ -297,13 +309,13 @@ workflows, not here.
   id-only PK silently drops twin-owner rows on read. This was found live by
   the C2 parity gate (15 affected owners) — don't "simplify" the PK back to
   `id` alone.
-- **`editSection`/`applySectionOps`/`readRevisions`/`readRevisionAt` are all
-  optional on `BodyClient`** for backward compatibility, but all three
-  shipped clients (`FixtureBodyClient`, `UraniaBodyClient`, `PgBodyClient`)
-  implement them. Each corresponding tool handler (`edit_section`,
-  `apply_section_ops`, `read_body_revisions`, `read_body_at`) REJECTS loudly
-  if a configured backend lacks the method — no silent fallback to a coarse
-  rewrite.
+- **The BodyClient capability methods are REQUIRED since F14** (the
+  interface collapse): `editSection`/`applySectionOps`/`readRevisions`/
+  `readRevisionAt`/`hasBody` lost their `?` and every surviving client
+  implements them (the fs backend, which couldn't, is deleted). Only the
+  F12-bound five (`splitSection`/`mergeSections`/`coalesceArc`/
+  `createComment`/`listComments`) stay optional with guards — their verbs
+  are gone from every surface.
 - **`CALLIOPE_URANIA_WIRED` gates the live substrate transport** inside
   `UraniaBodyClient`; `backend.ts` sets it on for both live substrate
   backends (`urania`, `hades`) — if you construct a `UraniaBodyClient`

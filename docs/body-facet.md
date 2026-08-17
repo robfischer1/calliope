@@ -56,3 +56,16 @@ migrated from Chaos, which recorded no per-section authorship on reads).
 - Retraction: `--retract` (refuses without the export; re-verifies parity
   first) removes `hasPart` edges + section-node `text`/`order_key`/`hasType`
   facts, current and superseded versions alike.
+
+
+---
+
+**Superseded (2026-08-16, Git for Ideas 039–047).** This record describes
+the C2 sovereign-store era: the `sections` table with copy-on-write
+lineage. That model was migrated to the blob store + tree (7,416
+containers, two-sided parity — `specs/043-migrate-tree/
+parity-report.json`) and the three tables were dropped from production by
+the gated cut (spec `047`). The OWNERSHIP decision recorded here — bodies
+are Calliope's facet, graph structure is clotho's — still stands; only
+the storage substrate beneath it changed. Current model: the README's
+"Body model" section.
