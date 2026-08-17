@@ -127,7 +127,7 @@ repos:
         name: opengrep SAST (CI parity — pre-push; notice if absent)
         entry: >-
           bash -c 'command -v opengrep >/dev/null 2>&1 ||
-          { echo "opengrep not installed — skipping SAST locally (CI enforces)"; exit 0; };
+          { echo "opengrep: CANNOT RUN - not installed (https://github.com/opengrep/opengrep). It is baked into every CI image, so this is a local gap only. Refusing to report success without scanning." >&2; exit 2; };
           export LANG=C.UTF-8 LC_ALL=C.UTF-8; opengrep scan --config rules/sast --error .'
         language: system
         stages: [pre-push]
@@ -150,14 +150,62 @@ repos:
       # check — the discriminator (--git-dir vs --git-common-dir) is easy to get
       # subtly wrong, and it must scrub git's repo-location env or an inherited
       # GIT_DIR makes every directory answer "worktree", the shared checkout
-      # included. Exempt under CI; bypass with FORGE_ALLOW_SHARED_CHECKOUT=1.
+      # included. Exempt under CI (the script returns 0 when $CI is set — a plain
+      # clone has no worktree to be wrong about); bypass with
+      # FORGE_ALLOW_SHARED_CHECKOUT=1. A MISSING foundry-stocks is NOT a bypass:
+      # it exits 2, 'could not run', never 0. It used to exit 0, and because
+      # pre-commit hides a passing hook's output that skip was invisible — every
+      # green 'commit from a linked worktree' may have been a skip, not a pass.
       - id: worktree-guard
         name: commit from a linked worktree, not the shared checkout
         entry: >-
-          bash -c 'S=${FOUNDRY_STOCKS:-../foundry-stocks};
-          [ -f "$S/ci/lib/verified_worktree.py" ] ||
-          { echo "foundry-stocks not at $S — worktree guard not installed"; exit 0; };
+          bash -c 'S="${FOUNDRY_STOCKS:-}";
+          [ -n "$S" ] || { G=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null);
+          S="${G%/.git}/../foundry-stocks"; };
+          [ -f "$S/ci/lib/verified_worktree.py" ] || {
+          echo "worktree-guard: CANNOT RUN - no foundry-stocks at $S" >&2;
+          echo "worktree-guard: set FOUNDRY_STOCKS to your checkout. Refusing to report success without checking." >&2;
+          exit 2; };
           python3 "$S/ci/lib/verified_worktree.py" .'
+        language: system
+        stages: [pre-commit]
+        pass_filenames: false
+        always_run: true
+
+      # stop-justifications — a suppression is a claim that the tool is wrong.
+      # This refuses to let that claim be filed silently, in any of the four
+      # languages, for any tool the reusable gates actually run.
+      #
+      # One definition in foundry-stocks (ci/lib/stop_justifications.py) so all
+      # four templates forbid the SAME list. Copying the list into each template
+      # is the defect it exists to catch: on 2026-08-16 a sweep found 533 noqa
+      # on one rule, 368 of them EIGHT decisions replicated into 46 repos by a
+      # scaffold pour — every copy carrying the same justification comment that
+      # nobody had re-read, because it was cp'd rather than written.
+      #
+      # THE ESCAPE IS PROSE, NOT A CODE. When two tools genuinely disagree the
+      # more permissive one yields, and the line says which:
+      #     x = cast(int, y)  # <directive>  # tool-conflict: <what disagrees>
+      # A code would be copyable without thought, which is the failure this
+      # exists to stop. Bare `tool-conflict:` with no prose does not excuse.
+      #
+      # IT DOES NOT FAIL SOFT. No foundry-stocks means exit 2 — "could not run",
+      # never "passed". pre-commit hides a passing hook's output, so a hook that
+      # skipped quietly would be indistinguishable from one that scanned clean,
+      # which is the same silent-success defect the gate is here to remove. CI
+      # provides FOUNDRY_STOCKS explicitly (the reusable gate clones it at a
+      # pinned ref); locally it defaults to the sibling checkout.
+      - id: stop-justifications
+        name: "no silent suppression of any gate - excuse with a tool-conflict line"
+        entry: >-
+          bash -c 'S="${FOUNDRY_STOCKS:-}";
+          [ -n "$S" ] || { G=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null);
+          S="${G%/.git}/../foundry-stocks"; };
+          [ -f "$S/ci/lib/stop_justifications.py" ] || {
+          echo "stop-justifications: CANNOT RUN - no foundry-stocks at $S" >&2;
+          echo "stop-justifications: set FOUNDRY_STOCKS to your checkout. Refusing to report success without scanning." >&2;
+          exit 2; };
+          python3 "$S/ci/lib/stop_justifications.py" .'
         language: system
         stages: [pre-commit]
         pass_filenames: false

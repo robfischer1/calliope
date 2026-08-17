@@ -97,21 +97,41 @@ clean:
 changelog:
     uvx git-cliff@2.13.1 --config cliff.toml -o CHANGELOG.md
 
-# Compute the next semver from the commit types, tag it, and regenerate.
+# Compute the next semver, write it into the version literal, and regenerate.
 #
-# feat -> MINOR, fix -> PATCH, `!` or BREAKING CHANGE -> MAJOR. Prints the tag
-# without creating it unless you pass EXECUTE=1, because a pushed tag is not
-# something to discover you did by accident.
-[doc('Compute + apply the next semver tag, then regenerate the changelog')]
+# feat -> MINOR, fix -> PATCH, `!` or BREAKING CHANGE -> MAJOR (MINOR below 1.0).
+# Prints what it would do unless you pass 1.
+#
+# THIS DOES NOT TAG, and that is the fix. The version LITERAL is authority: the
+# package published from this repo carries it, and the ourea door mints
+# refs/tags/vX.Y.Z FROM it when the landing merges. This recipe used to run
+# `git tag -a` without touching package.json, which names a new version while
+# shipping the previous one — and hand-made version tags are forbidden
+# fleet-wide for that reason.
+#
+# Written with sed on the FIRST "version" key rather than a JSON rewrite: the
+# manifest is hand-maintained and formatted, and piping it through a JSON tool
+# reformats every line, burying a one-field release in a whole-file diff.
+#
+# INVOKE AS `just release 1`, NOT `just release EXECUTE=1`. The second form
+# looks like it sets the parameter and does not: just reads `NAME=value` as a
+# variable assignment, so the RECIPE PARAMETER keeps its "0" default and the
+# run silently dry-runs. That was the old recipe's own advice and it is why
+# this was never run — the documented invocation could not work.
+[doc('Compute the next semver, write it to package.json, regenerate the changelog')]
 release EXECUTE="0":
     #!/usr/bin/env bash
     set -euo pipefail
     next="$(uvx git-cliff@2.13.1 --config cliff.toml --bumped-version)"
-    echo "next version: ${next}"
+    bare="${next#v}"
+    echo "next version: ${next}  (literal: package.json version)"
     if [[ "{{EXECUTE}}" != "1" ]]; then
-        echo "dry run — re-run with EXECUTE=1 to tag"
+        echo "dry run — re-run as \`just release 1\` to write the literal + changelog"
         exit 0
     fi
+    sed -i -E '0,/^([[:space:]]*)"version":[[:space:]]*"[^"]+"/s//\1"version": "'"${bare}"'"/' package.json
+    grep -qE "^[[:space:]]*\"version\": \"${bare}\"" package.json \
+        || { echo "literal write failed in package.json" >&2; exit 1; }
     uvx git-cliff@2.13.1 --config cliff.toml --bump -o CHANGELOG.md
-    git tag -a "${next}" -m "${next}"
-    echo "tagged ${next} — push it with: git push origin ${next}"
+    echo "wrote ${bare} to package.json, regenerated CHANGELOG.md"
+    echo "land it as: chore(release): ${bare} — the door mints ${next} when it merges"
