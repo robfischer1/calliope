@@ -138,12 +138,14 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
     const ops = stub.calls[0]?.args.ops as WireOp[];
     expect(stub.calls[0]?.verb).toBe("capture");
     expect(ops).toContainEqual({ op: "intern", value: "section" });
+    // p/g are sent bare (request side moved to names 2026-08-17); chaos
+    // derives sha256(name) internally — no client-side hash on this leg.
     expect(ops).toContainEqual({
       op: "addEdge",
       s: sid,
-      p: REF.name.hasType,
+      p: "hasType",
       o: REF.content.section,
-      g: REF.name.moirae,
+      g: "moirae",
     });
   });
 
@@ -159,31 +161,32 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
     await cap.capture(ops);
 
     const wire = stub.calls[0]?.args.ops as WireOp[];
-    // text literal interned + edge at its content-hash
+    // text literal interned + edge at its content-hash. p/g are sent bare
+    // (request side moved to names 2026-08-17).
     expect(wire).toContainEqual({ op: "intern", value: "Hello, world." });
     expect(wire).toContainEqual({
       op: "addEdge",
       s: sid,
-      p: REF.name.text,
+      p: "text",
       o: REF.content.hello,
-      g: REF.name.moirae,
+      g: "moirae",
     });
     // order_key literal interned + edge
     expect(wire).toContainEqual({ op: "intern", value: "N" });
     expect(wire).toContainEqual({
       op: "addEdge",
       s: sid,
-      p: REF.name.order_key,
+      p: "order_key",
       o: contentHash("N"),
-      g: REF.name.moirae,
+      g: "moirae",
     });
     // hasPart points at the section NODE (no intern, object is the node id)
     expect(wire).toContainEqual({
       op: "addEdge",
       s: note,
-      p: REF.name.hasPart,
+      p: "hasPart",
       o: sid,
-      g: REF.name.moirae,
+      g: "moirae",
     });
     expect(wire.some((o) => o.op === "intern" && o.value === sid)).toBe(false);
   });
@@ -195,12 +198,13 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
       { op: "removeEdge", from: sid, predicate: "order_key", to: "N" },
     ]);
     const wire = stub.calls[0]?.args.ops as WireOp[];
+    // p/g are sent bare (request side moved to names 2026-08-17).
     expect(wire).toContainEqual({
       op: "removeEdge",
       s: sid,
-      p: REF.name.order_key,
+      p: "order_key",
       o: contentHash("N"),
-      g: REF.name.moirae,
+      g: "moirae",
     });
     expect(wire.some((o) => o.op === "intern")).toBe(false);
   });
@@ -269,9 +273,7 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
       { op: "addEdge", from: sid, predicate: "order_key", to: "N" },
     ]);
     const wire = stub.calls[0]?.args.ops as WireOp[];
-    const edges = wire.filter(
-      (o) => o.op === "addEdge" && o.p === REF.name.order_key,
-    );
+    const edges = wire.filter((o) => o.op === "addEdge" && o.p === "order_key");
     expect(edges).toHaveLength(1);
     const interns = wire.filter((o) => o.op === "intern" && o.value === "N");
     expect(interns).toHaveLength(1);

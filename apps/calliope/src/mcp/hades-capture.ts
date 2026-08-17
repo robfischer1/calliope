@@ -218,6 +218,11 @@ export class HadesCapture implements UraniaCapture {
    * Mint a fresh section placement id. Matches {@link LiveUraniaCapture}'s
    * strategy (SHA-256 of a UUID-based URI) so ids round-trip through the
    * substrate correctly.
+   *
+   * NOT part of the 2026-08-17 graph/predicates name migration: this hashes
+   * a fresh per-call random UUID to mint an opaque NODE id (`node_id` above),
+   * not a stable graph or predicate NAME — node ids stay hex tokens. Left
+   * hashed on purpose.
    */
   mintSectionId(): string {
     return nameHash(`calliope:${randomUUID()}`);

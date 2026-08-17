@@ -54,22 +54,16 @@ export function contentHash(value: string): string {
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
 
-/** The `moirae` named-graph — the `g` shared with clotho's work facet. */
-const MOIRAE_GRAPH = nameHash("moirae");
+/** The `moirae` named-graph — the `g` shared with clotho's work facet.
+ *  Sent bare: chaos derives sha256(name) internally (request side moved to
+ *  names 2026-08-17). */
+const MOIRAE_GRAPH = "moirae";
 
 /**
  * Predicates whose object is a node (a `hasPart` edge points note→section);
  * everything else (`text`, `order_key`, `hasType`) carries a scalar literal.
  */
 const NODE_PREDICATES = new Set<string>([HAS_PART]);
-
-/** Name-hash of each calliope predicate, for wire encoding (the write path). */
-const PREDICATE_HASH: Record<string, string> = {
-  [HAS_PART]: nameHash(HAS_PART),
-  [TEXT]: nameHash(TEXT),
-  [ORDER_KEY]: nameHash(ORDER_KEY),
-  [HAS_TYPE]: nameHash(HAS_TYPE),
-};
 
 /** calliope's body-model predicates — the set resolve() keeps. */
 const BODY_PREDICATES = new Set<string>([HAS_PART, TEXT, ORDER_KEY, HAS_TYPE]);
@@ -239,6 +233,12 @@ export class LiveUraniaCapture implements UraniaCapture {
    * `nodeId` of the owning note is not needed (ids are globally unique), so the
    * structurally-compatible no-arg form satisfies the {@link UraniaCapture}
    * contract.
+   *
+   * NOT part of the 2026-08-17 graph/predicates name migration: this hashes a
+   * fresh per-call random UUID to mint an opaque NODE id (the wire `s`/`o`
+   * subject/object slot), not a stable graph or predicate NAME. Node ids stay
+   * hex tokens on both the request and response side — chaos has nothing to
+   * resolve a random UUID against. Left hashed on purpose.
    */
   mintSectionId(): string {
     return nameHash(`calliope:${randomUUID()}`);
@@ -252,7 +252,9 @@ function edgeOps(
   to: string,
   add: boolean,
 ): WireOp[] {
-  const p = PREDICATE_HASH[predicate] ?? nameHash(predicate);
+  // Sent bare: chaos derives sha256(name) internally (request side moved to
+  // names 2026-08-17).
+  const p = predicate;
   const kind = add ? "addEdge" : "removeEdge";
   if (NODE_PREDICATES.has(predicate)) {
     // Object is a node id (already a name-hash hex) — a relation edge.

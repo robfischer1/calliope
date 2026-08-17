@@ -41,19 +41,21 @@ describe("the local admit translation (045 F13)", () => {
       kind: "Work",
     });
     expect(wire[1]).toEqual({ op: "intern", value: "done" });
+    // g is sent bare (request side moved to names 2026-08-17): chaos's
+    // capture door derives sha256(name) internally.
     expect(wire[2]).toEqual({
       op: "addEdge",
       s: { $mint: 0 },
       predicate: "status",
       o: DONE_CONTENT_HASH,
-      g: MOIRAE_GRAPH_HASH,
+      g: "moirae",
     });
     expect(wire[3]).toEqual({
       op: "addEdge",
       s: { $mint: 0 },
       predicate: "parent",
       o: "aa11",
-      g: MOIRAE_GRAPH_HASH,
+      g: "moirae",
     });
   });
 
@@ -66,7 +68,7 @@ describe("the local admit translation (045 F13)", () => {
     expect(wire[0]).toMatchObject({
       op: "addEdge",
       o: { $blob: "17" },
-      g: scopeHash("notes"),
+      g: "notes",
     });
   });
 

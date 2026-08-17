@@ -41,7 +41,7 @@ import {
 } from "../urania-client.js";
 import type { UraniaOp } from "../urania-client.js";
 import { PgBodyClient } from "../pg-client.js";
-import { LiveUraniaCapture, nameHash } from "./live-capture.js";
+import { LiveUraniaCapture } from "./live-capture.js";
 
 const MOIRAE = "moirae";
 const EXPORT_PATH =
@@ -69,7 +69,7 @@ async function enumerateMoirae(live: LiveUraniaCapture): Promise<EdgeNode[]> {
     }
   ).rpc.bind(live);
   const rows = (await rpc("graph_edges", {
-    graph: nameHash(MOIRAE),
+    graph: MOIRAE,
   })) as EdgeNode[] | null;
   return rows ?? [];
 }
