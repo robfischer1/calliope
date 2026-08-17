@@ -27,6 +27,29 @@
 default_install_hook_types: [pre-commit, pre-push, post-commit]
 exclude: '^(\.(claude|specify|furnace)/|vendor/)|\.melt$'
 repos:
+  # Incidental Python — hook scripts, probes, fixture generators, conformance
+  # recorders. UNCONDITIONAL and inert rather than gated behind a copier
+  # question: this file is copied verbatim, so a `{% if %}` here would make it a
+  # RENDERED file. `types: [python]` does the gating — a repo with no .py
+  # answers "(no files to check) Skipped" and pays nothing.
+  #
+  # ADDED BACK 2026-08-16, having been added and reverted earlier the same day.
+  # The revert was honest about its cause: the measurement behind the first
+  # landing used `ruff check --quiet` and grepped for the summary line `--quiet`
+  # suppresses, so four of seven repos would have gone red on contact. Its
+  # remedy — withdraw, because "no ruleset fixes it" — is what changed. All
+  # seven repos are now at 0 under the config in ruff.toml, cerberus included,
+  # which was 319. The fixes landed FIRST; this arrives at repos that are
+  # already green.
+  #
+  # Lint only, no ruff-format: the formatter here is the repo's own language
+  # toolchain, and a second formatter with an opinion about these files is how a
+  # hook starts rewriting code nobody asked it to.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.3
+    hooks:
+      - id: ruff-check
+        types: [python]
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
