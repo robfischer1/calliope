@@ -25,7 +25,7 @@
         "calliope-mcp-http": "./src/mcp/http.ts",
       },
       "dependencies": {
-        "@forge/stellar-core-ts": "0.2.1",
+        "@forge/stellar-core-ts": "0.3.0",
         "@modelcontextprotocol/sdk": "^1.29.0",
         "kafkajs": "^2.2.4",
         "onnxruntime-web": "^1.27.0",
@@ -124,7 +124,7 @@
 
     "@forge/calliope": ["@forge/calliope@workspace:apps/calliope"],
 
-    "@forge/stellar-core-ts": ["@forge/stellar-core-ts@0.2.1", "https://forgejo.notusmi.com/api/packages/rob/npm/%40forge%2Fstellar-core-ts/-/0.2.1/stellar-core-ts-0.2.1.tgz", { "dependencies": { "@peculiar/x509": "^1.14.3", "spiffe": "0.5.1" } }, "sha512-HInKCIO2bynrRdfl/nhUQNCZs2wK7mGdMnyAZaU0oL0K29csd2coeSI84cM540AOdwYYp9OQ4ptFraKsMNb4QQ=="],
+    "@forge/stellar-core-ts": ["@forge/stellar-core-ts@0.3.0", "https://forgejo.notusmi.com/api/packages/rob/npm/%40forge%2Fstellar-core-ts/-/0.3.0/stellar-core-ts-0.3.0.tgz", { "dependencies": { "@peculiar/x509": "^1.14.3", "spiffe": "0.5.1" } }, "sha512-p445plIbpzeG+OCxrCrZ6ITz224BoCw6cTfyG1PeTI4rhEW0w+h1KWVSKQYbpBNYMKGcpCEnvZa92Dv4J0f90A=="],
 
     "@grpc/grpc-js": ["@grpc/grpc-js@1.14.4", "", { "dependencies": { "@grpc/proto-loader": "^0.8.0", "@js-sdsl/ordered-map": "^4.4.2" } }, "sha512-k9Dj3DV/itK9D06Y8f190Qgop7/Ui+D0njFV3LHMPwPT75DpXLQohE9Wmz0QElrJnzsjB7KPWiKJbOl7IPDArQ=="],
 

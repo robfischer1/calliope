@@ -18,6 +18,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { withHeartbeat } from "@forge/stellar-core-ts";
 import { isAuthoredBy, validateWriteProvenance } from "../types.js";
 import type { AuthoredBy, BodyClient } from "../types.js";
 import type { RevisionStore } from "../revision-store.js";
@@ -1309,10 +1310,19 @@ export function createServer(
             .describe("Reap previously-marked, still-unheld blobs."),
         },
       },
-      async ({ execute }) => {
-        const report = await runBlobCensus(
-          { gc, dial },
-          execute === true ? { execute: true } : {},
+      // `extra` carries the caller's progress token; the census is the one
+      // verb here that can outlive hades' 25s IDLE reap, because it is a
+      // mark-and-sweep in which every tenant graph reports the blob ids its
+      // log holds — unbounded by construction and growing with the store.
+      // Without a beat the router stops waiting, the sweep keeps running
+      // star-side, and the caller is told to consider retrying a GC pass
+      // that may already be reaping.
+      async ({ execute }, extra) => {
+        const report = await withHeartbeat(extra, "blob census", () =>
+          runBlobCensus(
+            { gc, dial },
+            execute === true ? { execute: true } : {},
+          ),
         );
         return {
           content: [
