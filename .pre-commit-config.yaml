@@ -159,14 +159,21 @@ repos:
       - id: worktree-guard
         name: commit from a linked worktree, not the shared checkout
         entry: >-
-          bash -c 'S="${FOUNDRY_STOCKS:-}";
-          [ -n "$S" ] || { G=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null);
-          S="${G%/.git}/../foundry-stocks"; };
-          [ -f "$S/ci/lib/verified_worktree.py" ] || {
-          echo "worktree-guard: CANNOT RUN - no foundry-stocks at $S" >&2;
-          echo "worktree-guard: set FOUNDRY_STOCKS to your checkout. Refusing to report success without checking." >&2;
+          bash -c 'S="${FOUNDRY_STOCKS:-}"; C="${STOCKS_CACHE:-}";
+          P=ci/lib/verified_worktree.py;
+          if [ -n "$C" ]; then
+          git -C "$C" cat-file -e "$S:$P" 2>/dev/null || {
+          echo "worktree-guard: CANNOT RUN - STOCKS_CACHE is set, so FOUNDRY_STOCKS must be a git REF carrying $P; got ref=$S cache=$C" >&2;
+          echo "worktree-guard: refusing to fall back to a possibly-drifted checkout, and refusing to report success without checking." >&2;
           exit 2; };
-          python3 "$S/ci/lib/verified_worktree.py" .'
+          t=$(mktemp); git -C "$C" show "$S:$P" >"$t"; python3 "$t" .; rc=$?; rm -f "$t"; exit $rc; fi;
+          if [ -n "$S" ] && [ -f "$S/$P" ]; then python3 "$S/$P" .; exit $?; fi;
+          G=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null);
+          D="${G%/.git}/../foundry-stocks";
+          if [ -f "$D/$P" ]; then python3 "$D/$P" .; exit $?; fi;
+          echo "worktree-guard: CANNOT RUN - no canonical source (FOUNDRY_STOCKS=$S STOCKS_CACHE=$C)" >&2;
+          echo "worktree-guard: set STOCKS_CACHE plus a FOUNDRY_STOCKS git REF (canonical gate), or FOUNDRY_STOCKS as a checkout PATH. Refusing to report success without checking." >&2;
+          exit 2'
         language: system
         stages: [pre-commit]
         pass_filenames: false
@@ -198,14 +205,21 @@ repos:
       - id: stop-justifications
         name: "no silent suppression of any gate - excuse with a tool-conflict line"
         entry: >-
-          bash -c 'S="${FOUNDRY_STOCKS:-}";
-          [ -n "$S" ] || { G=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null);
-          S="${G%/.git}/../foundry-stocks"; };
-          [ -f "$S/ci/lib/stop_justifications.py" ] || {
-          echo "stop-justifications: CANNOT RUN - no foundry-stocks at $S" >&2;
-          echo "stop-justifications: set FOUNDRY_STOCKS to your checkout. Refusing to report success without scanning." >&2;
+          bash -c 'S="${FOUNDRY_STOCKS:-}"; C="${STOCKS_CACHE:-}";
+          P=ci/lib/stop_justifications.py;
+          if [ -n "$C" ]; then
+          git -C "$C" cat-file -e "$S:$P" 2>/dev/null || {
+          echo "stop-justifications: CANNOT RUN - STOCKS_CACHE is set, so FOUNDRY_STOCKS must be a git REF carrying $P; got ref=$S cache=$C" >&2;
+          echo "stop-justifications: refusing to fall back to a possibly-drifted checkout, and refusing to report success without scanning." >&2;
           exit 2; };
-          python3 "$S/ci/lib/stop_justifications.py" .'
+          t=$(mktemp); git -C "$C" show "$S:$P" >"$t"; python3 "$t" .; rc=$?; rm -f "$t"; exit $rc; fi;
+          if [ -n "$S" ] && [ -f "$S/$P" ]; then python3 "$S/$P" .; exit $?; fi;
+          G=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null);
+          D="${G%/.git}/../foundry-stocks";
+          if [ -f "$D/$P" ]; then python3 "$D/$P" .; exit $?; fi;
+          echo "stop-justifications: CANNOT RUN - no canonical source (FOUNDRY_STOCKS=$S STOCKS_CACHE=$C)" >&2;
+          echo "stop-justifications: set STOCKS_CACHE plus a FOUNDRY_STOCKS git REF (canonical gate), or FOUNDRY_STOCKS as a checkout PATH. Refusing to report success without scanning." >&2;
+          exit 2'
         language: system
         stages: [pre-commit]
         pass_filenames: false
