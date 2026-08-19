@@ -25,8 +25,20 @@
 
 import { createHash } from "node:crypto";
 
+import {
+  X509Source,
+  authorizeStar,
+  tlsFetchOptions,
+  type TlsFetchOptions,
+} from "@forge/stellar-core-ts";
+
 const DEFAULT_THEMIS_URL = "http://themis:8200";
-const DEFAULT_CHAOS_URL = "http://chaos:8206";
+// ⚑ https AND 8207, both load-bearing. The SCHEME is not cosmetic: it is what
+// makes this client present calliope's SVID, and chaos types an unauthenticated
+// caller `unidentified` no matter how correct the rest of the call is. chaos
+// serves mTLS on plaintext+1 via a DualListener, so 8206 stays a live plaintext
+// door and reverting is a one-value CHAOS_URL override — no redeploy of chaos.
+const DEFAULT_CHAOS_URL = "https://chaos:8207";
 const TIMEOUT_MS = 30_000;
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -319,6 +331,7 @@ async function rpc(
   id: number,
   verb: string,
   args: Record<string, unknown>,
+  tls?: TlsFetchOptions,
 ): Promise<unknown> {
   const payload = JSON.stringify({
     jsonrpc: "2.0",
@@ -347,6 +360,10 @@ async function rpc(
       },
       body: payload,
       signal: controller.signal,
+      // bun reads `tls` off the fetch init. Spread rather than passed
+      // unconditionally: a plaintext endpoint must stay a plain fetch, which is
+      // what keeps the CHAOS_URL rollback a one-value change.
+      ...(tls ? { tls } : {}),
     });
     body = decodeRpcBody(
       await resp.text(),
@@ -383,6 +400,21 @@ export class LiveChaosDial implements ChaosDial {
   private readonly themis: string;
   private readonly chaos: string;
   private id = 0;
+  /**
+   * The workload identity, held for the process's whole life.
+   *
+   * ⚑ HELD, NEVER RE-FETCHED PER CALL — the entire point of the library it
+   * comes from. `stellar-boot` writes svid.0.pem ONCE at boot and nothing
+   * rotates it, while the SVID TTL is 24h, so a credential read off disk is a
+   * one-day fuse. `X509Source` subscribes to the agent's streaming feed and
+   * swaps the credential underneath us; `tlsFetchOptions` reads `.current()`
+   * per request, so a rotation is picked up with no restart and no caller
+   * doing anything.
+   *
+   * Lazy and once: the constructor cannot await, and a source per request
+   * would open a Workload API stream per request.
+   */
+  private identity?: Promise<X509Source>;
 
   constructor(opts?: { themisUrl?: string; chaosUrl?: string }) {
     const themisBase = (
@@ -400,6 +432,39 @@ export class LiveChaosDial implements ChaosDial {
       ? themisBase
       : `${themisBase}/mcp`;
     this.chaos = chaosBase.endsWith("/mcp") ? chaosBase : `${chaosBase}/mcp`;
+  }
+
+  /**
+   * TLS material for a chaos call, or undefined when the dial is plaintext.
+   *
+   * The SCHEME decides. An `http://` chaos URL — the documented rollback — must
+   * take the plain path, so this returns undefined rather than presenting a
+   * certificate to a door that terminates no TLS.
+   *
+   * `authorizeStar("chaos")` pins WHO may answer: a peer presenting any other
+   * SPIFFE id fails the handshake. Without it, anything holding a valid fleet
+   * SVID could answer as chaos — which is why the mesh reads the SAN rather
+   * than trusting the hostname.
+   */
+  /**
+   * One chaos `tools/call`, over the mesh door when the dial is https.
+   *
+   * Every chaos read goes through here so the TLS decision is made in ONE
+   * place. A call site that dialled `rpc` directly would silently go
+   * unauthenticated and still succeed — chaos serves both doors — and the only
+   * visible difference would be a `caller_class` on chaos's side.
+   */
+  private async chaosRpc(
+    verb: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    return rpc(this.chaos, this.id, verb, args, await this.tls());
+  }
+
+  private async tls(): Promise<TlsFetchOptions | undefined> {
+    if (!this.chaos.startsWith("https:")) return undefined;
+    this.identity ??= X509Source.create();
+    return tlsFetchOptions(await this.identity, authorizeStar("chaos"));
   }
 
   async admit(ops: ChaosOp[], scope: string): Promise<AdmitResult> {
@@ -425,7 +490,7 @@ export class LiveChaosDial implements ChaosDial {
 
   async findByName(kind: string, label: string): Promise<string[]> {
     this.id += 1;
-    const raw = await rpc(this.chaos, this.id, "find_by_name", {
+    const raw = await this.chaosRpc("find_by_name", {
       kind,
       label,
     });
@@ -437,7 +502,7 @@ export class LiveChaosDial implements ChaosDial {
 
   async resolveNodes(tokens: string[]): Promise<Record<string, string>> {
     this.id += 1;
-    const raw = await rpc(this.chaos, this.id, "resolve_nodes", {
+    const raw = await this.chaosRpc("resolve_nodes", {
       hashes: tokens,
     });
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
@@ -457,7 +522,7 @@ export class LiveChaosDial implements ChaosDial {
     value: string,
   ): Promise<string[]> {
     this.id += 1;
-    const raw = await rpc(this.chaos, this.id, "find_by_value", {
+    const raw = await this.chaosRpc("find_by_value", {
       graph: scope,
       predicate,
       value,
@@ -470,7 +535,7 @@ export class LiveChaosDial implements ChaosDial {
 
   async edges(token: string): Promise<NodeEdge[]> {
     this.id += 1;
-    const raw = (await rpc(this.chaos, this.id, "materialize_edges", {
+    const raw = (await this.chaosRpc("materialize_edges", {
       node: token,
     })) as {
       edges?: { predicate?: unknown; value?: unknown; is_node?: unknown }[];
@@ -497,7 +562,7 @@ export class LiveChaosDial implements ChaosDial {
 
   async registerGraph(name: string): Promise<void> {
     this.id += 1;
-    await rpc(this.chaos, this.id, "register_graph", {
+    await this.chaosRpc("register_graph", {
       graph: name,
       name,
     });
@@ -510,7 +575,7 @@ export class LiveChaosDial implements ChaosDial {
     graph?: string,
   ): Promise<QuadRow[]> {
     this.id += 1;
-    const raw = await rpc(this.chaos, this.id, "quads_from", {
+    const raw = await this.chaosRpc("quads_from", {
       subjects,
       as_of_tx: asOfTx,
       predicates: predicateNames ?? null,
@@ -534,7 +599,7 @@ export class LiveChaosDial implements ChaosDial {
   async resolveScalars(hashes: string[]): Promise<Record<string, string>> {
     if (hashes.length === 0) return {};
     this.id += 1;
-    const raw = (await rpc(this.chaos, this.id, "resolve_scalars", {
+    const raw = (await this.chaosRpc("resolve_scalars", {
       hashes,
     })) as Record<string, unknown> | null;
     const out: Record<string, string> = {};
@@ -550,7 +615,7 @@ export class LiveChaosDial implements ChaosDial {
     graph?: string,
   ): Promise<HistoryEntry[]> {
     this.id += 1;
-    const raw = (await rpc(this.chaos, this.id, "history", {
+    const raw = (await this.chaosRpc("history", {
       subjects,
       follow,
       graph: graph ?? null,
@@ -569,7 +634,7 @@ export class LiveChaosDial implements ChaosDial {
 
   async heldBlobs(graph?: string): Promise<string[]> {
     this.id += 1;
-    const raw = (await rpc(this.chaos, this.id, "held_blobs", {
+    const raw = (await this.chaosRpc("held_blobs", {
       graph: graph ?? null,
     })) as { held?: unknown[] } | null;
     if (raw === null || !Array.isArray(raw.held)) {
