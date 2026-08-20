@@ -1,0 +1,92 @@
+# Caller stub — the per-PR typescript mutation gate (foundry-stocks track C1).
+#
+# Coverage says a line RAN. Mutation says a line is TESTED. This is the second
+# oracle: it breaks the source on purpose and fails when the suite does not
+# notice.
+#
+# THREE THINGS HAD TO BE NARROWED TO MAKE THIS RUNNABLE AT ALL, and each one is
+# a measured cost rather than a preference.
+#
+# 1. src/mcp ONLY, not all of src. A full-src run (45 files, 8155 mutants) was
+#    abandoned after an hour with no end in sight — 4 workers, 108 minutes of
+#    CPU between them, still going. The cost is not the mutant count; it is that
+#    13 of the 49 test files drive a REAL POSTGRES container, and the dry run
+#    alone costs 50 seconds of which only 6.8s is testing and 44s is container
+#    startup. src/mcp is the MCP server surface — the part of this star that is
+#    the product — and it excludes the store/client modules where the container
+#    cost lives. The rest is unmeasured, deliberately, and wants a cheaper
+#    harness before it is gated.
+#
+# 2. `!src/mcp/migrate-tree.ts`. That file has two LABELED LOOPS (`containers:`
+#    and `replay:`, with `break replay` / `continue replay`), and Stryker's
+#    instrumentation cannot preserve them:
+#
+#        src/mcp/migrate-tree.ts:1024:25: ERROR: Cannot continue to label "replay"
+#
+#    The whole run dies in the dry run. They are the only two labeled loops in
+#    the entire source tree, so excluding this one file costs nothing else.
+#
+#    A `!` ENTRY IS HONOURED BY STRYKER AND INERT TO GIT, which is why it is
+#    written this way and why it has a sharp edge. Verified both halves: on the
+#    command line `--mutate 'src/mcp/*.ts,!src/mcp/migrate-tree.ts'` instruments
+#    21 files rather than 22; and `git diff -- ':(glob)!path'` is ACCEPTED (rc=0)
+#    but matches nothing, because git spells exclusion `:(exclude)` / `:!`. So in
+#    FULL mode the exclusion holds, and in DIFF mode it does not — a PR that
+#    edits migrate-tree.ts will scope it and the gate will die with the label
+#    error above. That is a loud failure with a known cause rather than a silent
+#    one, which is the right way round; the fix when it happens is to rewrite the
+#    labeled loop, not to widen the gate.
+#
+# 3. `ignoreStatic: true`. Stryker measured 664 static mutants (8% of the full
+#    set) at an estimated 93% of run time. A static mutant lives in module-load
+#    code, so each one restarts the test process — and every restart here pays
+#    that 44s of postgres startup again.
+#
+# MEASURED BEFORE WIRING, in a CLEAN CLONE, at the scope this gate uses:
+#
+#     3577 mutants  1158 killed / 15 timeout / 677 survived / 1643 no-coverage
+#     33.58% total, 63.41% covered, 9m39s at concurrency 4
+#
+# 1.45 TESTS PER MUTANT LOOKS BROKEN AND IS NOT — this is the one number on this
+# stub that needs its own explanation, because the same figure elsewhere meant a
+# suite that never loaded. demeter/packages/engine scored 13.83% at 0.54 tests
+# per mutant because 9 of its 14 test FILES failed to import, and Stryker
+# validates failed tests rather than failed files, so it called that a success.
+#
+# Here the low ratio is real. Stryker narrows the dry run to the test files
+# RELATED to the mutated scope, and that narrowing was verified rather than
+# assumed: 22 of the 49 test files import src/mcp, and running exactly those 22
+# by hand gives 187 tests — against the 184 Stryker's dry run reported. The full
+# suite is healthy at 431 passing. So 1.45 is a statement about how thinly 3577
+# mutants in 21 files are covered by 187 tests, not about a broken run.
+#
+#   workdir: apps/calliope   bun does NOT hoist; the package carries its own
+#                            vitest, the root carries none.
+#   install-root: "."        `bun install` must run at the workspace root.
+#                            foundry-stocks#582 added the input.
+#
+# KEEP `critical-modules` AND stryker.config.json's `mutate` IDENTICAL. The
+# workflow passes --mutate explicitly and that OVERRIDES the config file, so a
+# scope set only in the config is not the scope CI measures. demeter learned
+# this the expensive way: 928 mutants locally, 2718 in CI, and a killed job.
+#
+# NO electron-to-chromium PIN. charon, grace and gijmo-ui pinned 1.5.410 when
+# 1.5.411's tarball 404'd on Nexus; that mismatch has since cleared (re-probed:
+# 3/3 200s, real tarball), so this lockfile ships 1.5.411 unpinned. All 127
+# package@version entries this branch adds were probed against Nexus, 0
+# unavailable. See foundry-stocks#5001 for the correction.
+name: mutation-ts
+
+on:
+  pull_request:
+
+jobs:
+  mutation:
+    uses: foundry/foundry-stocks/.forgejo/workflows/mutation-ts.yml@main
+    with:
+      workdir: apps/calliope
+      install-root: "."
+      critical-modules: src/mcp/*.ts !src/mcp/migrate-tree.ts
+    # pragma comment: detect-secrets flags the word 'secrets' as a Secret Keyword,
+    # and `secrets: inherit` is the reusable-workflow idiom, not a credential.
+    secrets: inherit  # pragma: allowlist secret

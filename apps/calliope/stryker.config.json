@@ -1,0 +1,9 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "coverageAnalysis": "perTest",
+  "reporters": ["clear-text", "json"],
+  "plugins": ["@stryker-mutator/vitest-runner"],
+  "ignoreStatic": true,
+  "mutate": ["src/mcp/*.ts", "!src/mcp/migrate-tree.ts"]
+}

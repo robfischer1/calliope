@@ -1,0 +1,52 @@
+# Caller stub — the nightly FULL typescript mutation run (track C1).
+#
+# Separate file from mutation-ts.yml on purpose: both triggers in one workflow
+# means a pull_request reports the scheduled job as `skipped`, and a required
+# check reporting anything but success blocks its PR.
+#
+# NOT GATED — `gate: false`. Measured before wiring, in a clean clone:
+#
+#     3577 mutants  1158 killed / 15 timeout / 677 survived / 1643 no-coverage
+#     33.58% total, 63.41% covered, 9m39s at concurrency 4
+#
+# THE GAP BETWEEN 33.58% AND 63.41% IS THE WHOLE STORY. 1643 mutants — 46% of
+# the scope — are in code no test executes at all, and they concentrate hard:
+# server.ts 342, migrate-revisions.ts 170, babychaos.ts 159, sidecar.ts 126,
+# migrate.ts 122, migrate-documents.ts 120. Four of those six are migration
+# tools. Where the tests DO reach, the suite kills 63.41% of what it touches,
+# which is in line with the rest of this lane.
+#
+# So the actionable half is coverage, not assertions: gating today would red the
+# nightly for six files nobody's PR wrote. The PR gate is diff-scoped and will
+# ask the moment somebody edits them.
+#
+# WHAT THE SURVIVORS ARE MADE OF: StringLiteral 298, ConditionalExpression 137,
+# ObjectLiteral 50, Regex 35, LogicalOperator 28, MethodExpression 27. The
+# StringLiteral plurality is largely MCP tool names, error text and SQL
+# fragments — satisfiable by asserting them rather than unfixable.
+#
+# 16:55 UTC, and it sits BEFORE the block rather than after it. This run takes
+# ~10 minutes where the rest of the lane takes 1-6, so at 16:55 it finishes as
+# stellar-core-ts starts at 17:05 instead of running into the go family at
+# 18:05. The typescript block is 17:05 stellar-core-ts, 17:15 grace, 17:25
+# charon, 17:35 gijmo-ui, 17:45 demeter, 17:55 theia. Verified against the cron
+# lines present in the sibling repos, not from memory.
+name: mutation-ts-nightly
+
+on:
+  schedule:
+    - cron: '55 16 * * *'
+  workflow_dispatch:
+
+jobs:
+  mutation:
+    uses: foundry/foundry-stocks/.forgejo/workflows/mutation-ts.yml@main
+    with:
+      mode: full
+      gate: false
+      workdir: apps/calliope
+      install-root: "."
+      critical-modules: src/mcp/*.ts !src/mcp/migrate-tree.ts
+    # pragma comment: detect-secrets flags the word 'secrets' as a Secret Keyword,
+    # and `secrets: inherit` is the reusable-workflow idiom, not a credential.
+    secrets: inherit  # pragma: allowlist secret
