@@ -4,6 +4,35 @@
 # A bun star's gate IS the frontend gate, reused verbatim (the bun-server-leaf
 # precedent): `bun install --frozen-lockfile && bun run gate` + bun audit + opengrep is
 # exactly the gate a bun star needs, so don't fork a near-identical one.
+#
+# ON THE CANONICAL GATE since 2026-08-19. This stub used to call foundry-stocks'
+# frontend-ci.yml, which ran EXPLICIT BAKED STEPS — format / lint / typecheck /
+# test / build, a bun audit vuln scan, and an opengrep SAST pass — plus a
+# manifest-guard job. gate.yml runs two lines instead:
+#
+#     uv tool run pre-commit run --all-files                        (pre-commit stage)
+#     uv tool run pre-commit run --all-files --hook-stage pre-push  (pre-push stage)
+#
+# so THIS REPO'S .pre-commit-config.yaml IS NOW ITS ENTIRE CI SURFACE. The hooks
+# standing in for the baked steps:
+#
+#     lint-staged, bun-gate-commit            -> pre-commit stage
+#     bun-gate, bun-audit, opengrep-sast      -> stages: [pre-push]
+#
+# A hook moved, restaged or dropped in that file is now a CI check moved,
+# restaged or dropped, with a green status either way.
+#
+# MANIFEST-GUARD IS NOT LOST IN THIS MOVE, and it nearly was. frontend-ci.yml
+# carried it as a SECOND job and gate.yml had none, so repointing would have
+# silently dropped the check that stops a copier update regressing package.json.
+# It was folded into gate.yml as its own lane-guarded job (foundry-stocks#4889 /
+# #570) first; this stub was not repointed until that landed.
+#
+# uv, NOT python3, IS THE LANE REQUIREMENT — measured in the published image,
+# not inferred. frontend-ci carries NO python3 and does not need to: the
+# non-python lanes invoke `uv tool run pre-commit`, and uv provisions its own
+# interpreter. The 2026-08-18 note claiming this lane could not migrate until
+# its base gained both outlived its cause by a day.
 name: ci
 on:
   # NO paths-ignore, deliberately. A filtered-out PR runs no workflow and therefore
@@ -20,7 +49,9 @@ on:
   pull_request:
 jobs:
   ci:
-    uses: foundry/foundry-stocks/.forgejo/workflows/frontend-ci.yml@main
+    uses: foundry/foundry-stocks/.forgejo/workflows/gate.yml@main
+    with:
+      lane: frontend
     # pragma comment: detect-secrets flags the word 'secrets' as a Secret Keyword,
     # and `secrets: inherit` is the reusable-workflow idiom, not a credential.
     secrets: inherit  # pragma: allowlist secret

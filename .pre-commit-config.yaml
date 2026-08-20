@@ -118,7 +118,23 @@ repos:
         always_run: true
       - id: bun-audit
         name: bun audit dependency vuln scan (CI parity — pre-push)
-        entry: bash -c 'bun audit --audit-level=high'
+        # BUN_CONFIG_REGISTRY IS OVERRIDDEN FOR THIS ONE COMMAND, deliberately.
+        # The frontend-ci image carries BUN_CONFIG_REGISTRY pointing at Nexus so
+        # `bun install` resolves through the proxy — correct, and it must stay that
+        # way. But `bun audit` POSTs to the registry's npm ADVISORY endpoint, which
+        # Nexus Community does not implement (that is Nexus Firewall/IQ, paid), and
+        # it answers 400. MEASURED in the published image against calliope:
+        #
+        #     default (Nexus)  -> error: audit request failed (status 400)   RC=1
+        #     npmjs override   -> RC=0
+        #
+        # The legacy frontend-ci.yml set this env on its bun-audit STEP for exactly
+        # this reason. The canonical gate cannot: it runs whole pre-commit stages,
+        # and a step-level env would also send `bun-gate`'s `bun install` to npmjs,
+        # bypassing the proxy. So the exception lives on the command that needs it.
+        # It is an advisory-database QUERY, not an artifact fetch — no code enters
+        # an image through it.
+        entry: bash -c 'BUN_CONFIG_REGISTRY=https://registry.npmjs.org/ bun audit --audit-level=high'
         language: system
         stages: [pre-push]
         pass_filenames: false
