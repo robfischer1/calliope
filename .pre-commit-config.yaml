@@ -25,7 +25,7 @@
 #
 # furnace owns .claude/ .specify/ .furnace/; exclude that managed surface.
 default_install_hook_types: [pre-commit, pre-push, post-commit]
-exclude: '^(\.(claude|specify|furnace)/|vendor/)|\.melt$'
+exclude: '^\.(claude|specify|furnace)/|(^|/)(vendor|node_modules)/|\.melt$'
 repos:
   # Incidental Python — hook scripts, probes, fixture generators, conformance
   # recorders. UNCONDITIONAL and inert rather than gated behind a copier
@@ -50,6 +50,7 @@ repos:
     hooks:
       - id: ruff-check
         types: [python]
+        stages: [pre-commit]
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
@@ -82,8 +83,11 @@ repos:
       # breaking everyone else's CI and naming the wrong PR, and the jam's real symptom (a
       # frozen copier manager) is now watched at the source fix instead.
       - id: check-yaml
+        stages: [pre-commit]
       - id: check-added-large-files
+        stages: [pre-commit]
       - id: check-merge-conflict
+        stages: [pre-commit]
   - repo: local
     hooks:
       # PRE-COMMIT stage — husky's former job, moved here verbatim. lint-staged
@@ -140,11 +144,34 @@ repos:
         pass_filenames: false
         always_run: true
       - id: opengrep-sast
-        name: opengrep SAST (CI parity — pre-push; notice if absent)
+        name: opengrep SAST (CI parity - pre-push; notice if absent)
+        # REFUSES A ZERO-FILE SCAN. `Ran N rules on 0 files: 0 findings` exits 0 and
+        # renders as Passed, which is indistinguishable from a clean scan. That is not
+        # hypothetical: go-repo-template and rust-repo-template shipped the PYTHON
+        # ruleset verbatim, so EVERY Go and Rust star ran a security gate that had
+        # never examined a single file, and reported success every time
+        # (foundry-stocks#4415). cerberus was worse - 29 .py and 37 .rs, so the count
+        # looked plausible while the whole Rust surface went unscanned.
+        #
+        # Fixing the two rulesets fixes the instances. This fixes the CLASS: any future
+        # languages/file-type mismatch is now loud on the first run instead of silent
+        # forever. Same principle as the CANNOT-RUN branch below - a check that cannot
+        # see anything must not answer "fine".
+        #
+        # Inline rather than a foundry-stocks script, deliberately: the opengrep hook
+        # has no FOUNDRY_STOCKS dependency today, and stars still on the per-family
+        # gates do not provision foundry-stocks on the go/rust/frontend lanes. Adding
+        # that coupling mid-migration would break them.
         entry: >-
           bash -c 'command -v opengrep >/dev/null 2>&1 ||
           { echo "opengrep: CANNOT RUN - not installed (https://github.com/opengrep/opengrep). It is baked into every CI image, so this is a local gap only. Refusing to report success without scanning." >&2; exit 2; };
-          export LANG=C.UTF-8 LC_ALL=C.UTF-8; opengrep scan --config rules/sast --error .'
+          export LANG=C.UTF-8 LC_ALL=C.UTF-8;
+          out=$(opengrep scan --config rules/sast --error . 2>&1); rc=$?;
+          printf "%s\n" "$out";
+          if printf "%s" "$out" | grep -qE "Ran [0-9]+ rules on 0 files"; then
+          echo "opengrep: REFUSING a zero-file scan. The ruleset matched no file in this repo, so 0 findings means NOTHING WAS EXAMINED - not that the code is clean. Check that rules/sast/dataflow.yml declares the language(s) this repo is actually written in." >&2;
+          exit 2; fi;
+          exit $rc'
         language: system
         stages: [pre-push]
         pass_filenames: false
@@ -216,8 +243,13 @@ repos:
       # never "passed". pre-commit hides a passing hook's output, so a hook that
       # skipped quietly would be indistinguishable from one that scanned clean,
       # which is the same silent-success defect the gate is here to remove. CI
-      # provides FOUNDRY_STOCKS explicitly (the reusable gate clones it at a
-      # pinned ref); locally it defaults to the sibling checkout.
+      # provides it explicitly. TWO CONTRACTS, both honoured here: the CANONICAL
+      # gate (foundry-stocks#506) sets STOCKS_CACHE to a bare clone and
+      # FOUNDRY_STOCKS to a git REF, and the script is read out of that cache at
+      # that ref — local == CI by construction. Older callers set FOUNDRY_STOCKS
+      # to a checkout PATH. With STOCKS_CACHE set, an unresolvable ref REFUSES
+      # rather than falling back to a sibling working tree, because scanning a
+      # drifted copy is the exact class of staleness this hook exists to catch.
       - id: stop-justifications
         name: "no silent suppression of any gate - excuse with a tool-conflict line"
         entry: >-
