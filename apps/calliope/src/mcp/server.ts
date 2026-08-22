@@ -811,20 +811,29 @@ export function createServer(
           const [hit] = await dial.findByName("Note", source_path);
           nodeId = hit;
         }
-        const body = nodeId === undefined ? [] : await bodies.readBody(nodeId);
-        if (nodeId === undefined || body.length === 0) {
-          const miss = {
+        // A missing handle never reaches a read — the miss is decided
+        // before the body is asked for, so the no-handle path performs no
+        // dial read at all (pinned by the container-body suite).
+        const miss = (detail: string) => ({
+          content: [
+            { type: "text" as const, text: `container_not_found: ${detail}` },
+          ],
+          structuredContent: structured({
             error: "container_not_found",
-            detail:
-              container_id ??
+            detail,
+          }),
+          isError: true,
+        });
+        if (nodeId === undefined) {
+          return miss(
+            container_id ??
               source_path ??
               "export_note needs a container_id or a source_path",
-          };
-          return {
-            content: [{ type: "text", text: `${miss.error}: ${miss.detail}` }],
-            structuredContent: structured(miss),
-            isError: true,
-          };
+          );
+        }
+        const body = await bodies.readBody(nodeId);
+        if (body.length === 0) {
+          return miss(nodeId);
         }
         const markdown = body.map((s) => s.text).join("\n\n");
         const result = {

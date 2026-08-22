@@ -192,6 +192,34 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
     }
   });
 
+  it("a no-handle export decides the miss before any read", async () => {
+    const { mcp, dial } = await rig();
+    const reads: string[] = [];
+    const edges = dial.edges.bind(dial);
+    dial.edges = (token: string) => {
+      reads.push(token);
+      return edges(token);
+    };
+    const res = await mcp.callTool({ name: "export_note", arguments: {} });
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent).toEqual({
+      error: "container_not_found",
+      detail: "export_note needs a container_id or a source_path",
+    });
+    expect(reads).toEqual([]);
+    // An unknown id reads the (empty) tree and misses with the id as detail.
+    const unknown = "e".repeat(64);
+    const res2 = await mcp.callTool({
+      name: "export_note",
+      arguments: { container_id: unknown },
+    });
+    expect(res2.structuredContent).toEqual({
+      error: "container_not_found",
+      detail: unknown,
+    });
+    expect(reads).toContain(unknown);
+  });
+
   it("without a containers facet the note verbs ride the body client (the fixture-only shape)", async () => {
     const dial = new FixtureChaosDial();
     const server = createServer(new FixtureBodyClient(), {
