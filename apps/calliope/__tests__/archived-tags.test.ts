@@ -10,7 +10,7 @@
  * takes the standing inline rows off every archived note, explicit rows
  * untouched, probe mode writing nothing.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { FixtureChaosDial, opAdd, opCreate } from "../src/chaos-client.js";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import {
@@ -124,6 +124,49 @@ describe("cleanup-tags --archived (the CLI seam)", () => {
     await expect(
       main(["bun", "cleanup-tags.ts", "--archived"], {}, { dial, store }),
     ).rejects.toThrow("DATABASE_URL is required.");
+  });
+
+  it("without --archived the legacy plan runs against the store (and here cannot reach one)", async () => {
+    const dial = new FixtureChaosDial();
+    const store = new FixtureTagStore();
+    const a = await mintNote(dial, "F:\\OneDrive :: a.c", true);
+    await reconcileNoteTags(dial, SCOPE, store, a, { inline: ["#include"] });
+    const lines: string[] = [];
+    // The legacy mode reads note_tags off the pool — a closed port refuses,
+    // and the archived sweep must NOT have run in its place.
+    await expect(
+      main(
+        ["bun", "cleanup-tags.ts", "--probe"],
+        { DATABASE_URL: "postgres://nobody@127.0.0.1:1/none" },
+        { dial, store, write: (l) => lines.push(l) },
+      ),
+    ).rejects.toThrow();
+    expect(lines).toEqual([]);
+    expect((await store.byNode(a)).map((r) => r.tag)).toEqual(["#include"]);
+  });
+
+  it("the default writer is stdout", async () => {
+    const dial = new FixtureChaosDial();
+    const store = new FixtureTagStore();
+    const written: string[] = [];
+    const spy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: string | Uint8Array) => {
+        written.push(String(chunk));
+        return true;
+      });
+    try {
+      await main(
+        ["bun", "cleanup-tags.ts", "--archived", "--probe"],
+        { DATABASE_URL: "postgres://unused" },
+        { dial, store },
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(written).toEqual([
+      `${JSON.stringify({ probe: true, archived: 0, carriers: 0, rows: 0, tags: [] })}\n`,
+    ]);
   });
 });
 
