@@ -24,7 +24,7 @@
 import { pathToFileURL } from "node:url";
 import { Pool } from "pg";
 import { isJunkTag, normalizeTag } from "../tags.js";
-import type { TagCount } from "../tag-store.js";
+import type { TagCount, TagStore } from "../tag-store.js";
 import {
   LiveChaosDial,
   notesScope,
@@ -57,22 +57,35 @@ export function planTagCleanup(distinct: readonly TagCount[]): TagCleanupPlan {
   return { remove, merge };
 }
 
-async function main(): Promise<void> {
-  const probe = process.argv.includes("--probe");
-  const dbUrl = process.env.DATABASE_URL;
+/** The seams `main` reaches for when not handed them — the live store and
+ *  door in production, fixtures under test. */
+export interface CleanupDeps {
+  dial?: ChaosDial;
+  store?: TagStore;
+  write?: (line: string) => void;
+}
+
+export async function main(
+  argv: readonly string[] = process.argv,
+  env: NodeJS.ProcessEnv = process.env,
+  deps: CleanupDeps = {},
+): Promise<void> {
+  const probe = argv.includes("--probe");
+  const dbUrl = env.DATABASE_URL;
   if (dbUrl === undefined || dbUrl === "") {
     throw new Error("DATABASE_URL is required.");
   }
   const pool = new Pool({ connectionString: dbUrl });
+  const write = deps.write ?? ((line: string) => process.stdout.write(line));
   try {
-    if (process.argv.includes("--archived")) {
+    if (argv.includes("--archived")) {
       const report = await sweepArchivedTags(
-        new LiveChaosDial(),
-        notesScope(process.env),
-        new PgTagStore(pool),
+        deps.dial ?? new LiveChaosDial(),
+        notesScope(env),
+        deps.store ?? new PgTagStore(pool),
         probe,
       );
-      process.stdout.write(`${JSON.stringify({ probe, ...report })}\n`);
+      write(`${JSON.stringify({ probe, ...report })}\n`);
       return;
     }
     const distinct = await pool.query<{ tag: string; count: string }>(

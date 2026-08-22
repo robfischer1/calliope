@@ -19,6 +19,7 @@ import {
   reconcileNoteTags,
   sweepArchivedTags,
 } from "../src/mcp/tools.js";
+import { main } from "../src/mcp/cleanup-tags.js";
 import { FixtureTagStore } from "../src/tag-store.js";
 
 const SCOPE = "notes";
@@ -79,7 +80,50 @@ describe("the inline-tag hook skips an archived note", () => {
     expect(
       isArchived([{ predicate: "isArchived", value: "true", isNode: true }]),
     ).toBe(false);
+    // Another predicate's "true" is not this one's.
+    expect(
+      isArchived([{ predicate: "published", value: "true", isNode: false }]),
+    ).toBe(false);
     expect(isArchived([])).toBe(false);
+  });
+});
+
+describe("cleanup-tags --archived (the CLI seam)", () => {
+  it("probe reports the sweep on the handed dial + store and writes one JSON line", async () => {
+    const dial = new FixtureChaosDial();
+    const store = new FixtureTagStore();
+    const a = await mintNote(dial, "F:\\OneDrive :: a.c", true);
+    await reconcileNoteTags(dial, SCOPE, store, a, { inline: ["#include"] });
+    const lines: string[] = [];
+    await main(
+      ["bun", "cleanup-tags.ts", "--archived", "--probe"],
+      { DATABASE_URL: "postgres://unused" },
+      { dial, store, write: (l) => lines.push(l) },
+    );
+    expect(lines).toEqual([
+      `${JSON.stringify({ probe: true, archived: 1, carriers: 1, rows: 1, tags: ["#include"] })}\n`,
+    ]);
+    // Probe wrote nothing.
+    expect((await store.byNode(a)).map((r) => r.tag)).toEqual(["#include"]);
+  });
+
+  it("apply sweeps, and DATABASE_URL is still required", async () => {
+    const dial = new FixtureChaosDial();
+    const store = new FixtureTagStore();
+    const a = await mintNote(dial, "F:\\OneDrive :: a.c", true);
+    await reconcileNoteTags(dial, SCOPE, store, a, { inline: ["#include"] });
+    const lines: string[] = [];
+    await main(
+      ["bun", "cleanup-tags.ts", "--archived"],
+      { DATABASE_URL: "postgres://unused" },
+      { dial, store, write: (l) => lines.push(l) },
+    );
+    expect(lines[0]).toContain('"probe":false');
+    expect(lines[0]).toContain('"rows":1');
+    expect(await store.byNode(a)).toEqual([]);
+    await expect(
+      main(["bun", "cleanup-tags.ts", "--archived"], {}, { dial, store }),
+    ).rejects.toThrow("DATABASE_URL is required.");
   });
 });
 
