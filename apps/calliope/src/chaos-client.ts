@@ -739,11 +739,16 @@ export interface ChaosFacet {
   scope: string;
 }
 
-/** The tenant set — five tenants, five graphs (Git for Ideas F3). Notes
+/** The tenant set — one graph per tenant (Git for Ideas F3). Notes
  *  predates F3; the others are registered idempotently at first use.
- *  Mnemosyne stays graph-native on its own and joins only if it adopts
- *  the shared store. */
-export type Tenant = "notes" | "documents" | "comments" | "governance";
+ *  `issues` is the sixth (2026-08-22, ourea#5289): a capture's prose —
+ *  the pin body and Casper's enriched report — lands as blocks on the
+ *  intent node, scoped to graph:issues so the structure stays invisible
+ *  from every other tenant's graph while the bytes dedupe in the one
+ *  blob store. Mnemosyne stays graph-native on its own and joins only if
+ *  it adopts the shared store. */
+export type Tenant =
+  "notes" | "documents" | "comments" | "governance" | "issues";
 
 /** The bare-scope convention (the chaos guard registers graphs bare),
  *  generalized per tenant. Env overrides keep the notes compat knob and
@@ -757,6 +762,7 @@ export function tenantScope(
     documents: env.CALLIOPE_DOCUMENTS_SCOPE,
     comments: env.CALLIOPE_COMMENTS_SCOPE,
     governance: env.CALLIOPE_GOVERNANCE_SCOPE,
+    issues: env.CALLIOPE_ISSUES_SCOPE,
   };
   return overrides[tenant] ?? tenant;
 }

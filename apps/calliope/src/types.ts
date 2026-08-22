@@ -493,3 +493,12 @@ export function isBodyPointer(p: unknown): p is BodyPointer {
     typeof c.ts === "string"
   );
 }
+
+/**
+ * The note-grain body surface: what a container-backed adapter
+ * (`containerBodies`, calliope#5290) and a full {@link BodyClient} both
+ * satisfy. The note verbs and the inline-tag reconcile take THIS, so a
+ * backend whose body client still dials a retired table cannot be handed to
+ * them by type.
+ */
+export type NoteBodies = Pick<BodyClient, "readBody" | "saveBody">;
