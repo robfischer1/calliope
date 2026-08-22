@@ -177,6 +177,74 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
     expect(miss.structuredContent).toMatchObject({
       error: "container_not_found",
     });
+    // export_note: no handle at all, an unknown path, an unknown id — every
+    // miss is the structured container_not_found, never a body-client call.
+    for (const args of [
+      {},
+      { source_path: "never/dissolved.md" },
+      { container_id: "e".repeat(64) },
+    ]) {
+      const res = await mcp.callTool({ name: "export_note", arguments: args });
+      expect(res.isError).toBe(true);
+      expect(res.structuredContent).toMatchObject({
+        error: "container_not_found",
+      });
+    }
+  });
+
+  it("without a containers facet the note verbs ride the body client (the fixture-only shape)", async () => {
+    const dial = new FixtureChaosDial();
+    const server = createServer(new FixtureBodyClient(), {
+      chaos: { dial, scope: "notes" },
+    });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const mcp = new Client({ name: "test", version: "0" });
+    await Promise.all([server.connect(st), mcp.connect(ct)]);
+    const dissolved = await mcp.callTool({
+      name: "dissolve_note",
+      arguments: { source_path: "c.md", blocks: [{ text: "client-backed" }] },
+    });
+    expect(dissolved.isError).toBeFalsy();
+    const { node_id } = dissolved.structuredContent as { node_id: string };
+    const exported = await mcp.callTool({
+      name: "export_note",
+      arguments: { container_id: node_id },
+    });
+    expect(exported.structuredContent).toMatchObject({
+      markdown: "client-backed",
+      block_count: 1,
+    });
+  });
+
+  it("write_container scopes the admit to each tenant, issues included", async () => {
+    const { mcp, dial } = await rig();
+    const tenants = ["notes", "documents", "comments", "governance", "issues"];
+    for (const tenant of tenants) {
+      const minted = await dial.admit(
+        [{ op: "createNode", kind: "Note", label: `c-${tenant}` }],
+        tenant,
+      );
+      const container = minted.minted[0] ?? "";
+      const res = await mcp.callTool({
+        name: "write_container",
+        arguments: {
+          container,
+          ops: [{ op: "add", text: `in ${tenant}`, position: "5" }],
+          tenant,
+        },
+      });
+      expect(res.isError, tenant).toBeFalsy();
+      expect(dial.admits.at(-1)?.scope).toBe(tenant);
+    }
+    const bogus = await mcp.callTool({
+      name: "write_container",
+      arguments: {
+        container: "a".repeat(64),
+        ops: [{ op: "add", text: "x", position: "5" }],
+        tenant: "bogus",
+      },
+    });
+    expect(bogus.isError).toBe(true);
   });
 });
 
