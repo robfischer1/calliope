@@ -519,11 +519,78 @@ export async function maybeReconcileInlineTags(
   if (!isNote) {
     return;
   }
+  // An ARCHIVED note carries no inline tags. The phdb-migration corpus
+  // (2,479 notes on 2026-07-05: OneDrive files, Takeout zips, the iPhone
+  // NoteStore, C source, spreadsheets, mail) was keyed `source_path ::
+  // file` and stamped isArchived=true as its exclusion predicate — and then
+  // this hook ran the tag grammar over every body, minting `#include`,
+  // `#ifdef`, `#div/0`, `#n/a`, `#inbox/<gmail label id>` … into the
+  // picker's chip row. The predicate means what it says here too.
+  if (isArchived(edges)) {
+    return;
+  }
   const sections = await client.readBody(nodeId);
   const text = sections.map((s) => s.text).join("\n");
   await reconcileNoteTags(dial, scope, store, nodeId, {
     inline: extractInlineTags(text),
   });
+}
+
+/** The migration's exclusion predicate (migrate-notes.ts `identityOf`). */
+export const IS_ARCHIVED = "isArchived";
+
+/** True when the node's edges carry `isArchived = "true"` (a literal). */
+export function isArchived(
+  edges: readonly { predicate: string; value: string; isNode: boolean }[],
+): boolean {
+  return edges.some(
+    (e) => e.predicate === IS_ARCHIVED && !e.isNode && e.value === "true",
+  );
+}
+
+/** What an archived-tag sweep did, or would do. */
+export interface ArchivedTagSweep {
+  /** Archived notes found on the scope. */
+  archived: number;
+  /** Archived notes that carried at least one inline row. */
+  carriers: number;
+  /** Inline rows removed (or, probing, that would be). */
+  rows: number;
+  /** The distinct tags those rows named. */
+  tags: string[];
+}
+
+/**
+ * Sweep the inline tags off every archived note on the scope — the one-shot
+ * repair for the bodies the hook above reconciled before it learned to
+ * skip them. Rides `reconcileNoteTags` with an EMPTY inline set, so the
+ * explicit rows (folder tags) stay exactly as `computeTagDelta` promises
+ * and the graph edge + mirror row go together. `probe` reports without
+ * writing.
+ */
+export async function sweepArchivedTags(
+  dial: ChaosDial,
+  scope: string,
+  store: TagStore,
+  probe = false,
+): Promise<ArchivedTagSweep> {
+  const ids = await dial.findByValue(scope, IS_ARCHIVED, "true");
+  const tags = new Set<string>();
+  let carriers = 0;
+  let rows = 0;
+  for (const id of ids) {
+    const inline = (await store.byNode(id)).filter(
+      (r) => r.source === "inline",
+    );
+    if (inline.length === 0) continue;
+    carriers += 1;
+    rows += inline.length;
+    for (const r of inline) tags.add(r.tag);
+    if (!probe) {
+      await reconcileNoteTags(dial, scope, store, id, { inline: [] });
+    }
+  }
+  return { archived: ids.length, carriers, rows, tags: [...tags].sort() };
 }
 
 /** `list_by_tag(tag)` — the graph's indexed point lookup, server-side. */

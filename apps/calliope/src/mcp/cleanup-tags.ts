@@ -9,6 +9,10 @@
  *
  *   bun run src/mcp/cleanup-tags.ts            # apply (idempotent)
  *   bun run src/mcp/cleanup-tags.ts --probe    # read-only plan
+ *   bun run src/mcp/cleanup-tags.ts --archived [--probe]
+ *       sweep the INLINE tags off every isArchived note (the phdb-migration
+ *       corpus — C source, spreadsheets, mail — whose bodies the reconcile
+ *       tagged before it learned to skip them); explicit rows stay.
  *
  * Reversibility: chaos is append-only — the retractions are logged ops on
  * the substrate, so the sweep is reversible at the substrate level; no undo
@@ -20,7 +24,7 @@
 import { pathToFileURL } from "node:url";
 import { Pool } from "pg";
 import { isJunkTag, normalizeTag } from "../tags.js";
-import type { TagCount } from "../tag-store.js";
+import type { TagCount, TagStore } from "../tag-store.js";
 import {
   LiveChaosDial,
   notesScope,
@@ -29,6 +33,8 @@ import {
   type ChaosDial,
   type ChaosOp,
 } from "../chaos-client.js";
+import { PgTagStore } from "../tag-store.js";
+import { sweepArchivedTags } from "./tools.js";
 
 /** The pure plan: which stored tags are removed, which merge to what. */
 export interface TagCleanupPlan {
@@ -51,14 +57,37 @@ export function planTagCleanup(distinct: readonly TagCount[]): TagCleanupPlan {
   return { remove, merge };
 }
 
-async function main(): Promise<void> {
-  const probe = process.argv.includes("--probe");
-  const dbUrl = process.env.DATABASE_URL;
+/** The seams `main` reaches for when not handed them — the live store and
+ *  door in production, fixtures under test. */
+export interface CleanupDeps {
+  dial?: ChaosDial;
+  store?: TagStore;
+  write?: (line: string) => void;
+}
+
+export async function main(
+  argv: readonly string[] = process.argv,
+  env: NodeJS.ProcessEnv = process.env,
+  deps: CleanupDeps = {},
+): Promise<void> {
+  const probe = argv.includes("--probe");
+  const dbUrl = env.DATABASE_URL;
   if (dbUrl === undefined || dbUrl === "") {
     throw new Error("DATABASE_URL is required.");
   }
   const pool = new Pool({ connectionString: dbUrl });
+  const write = deps.write ?? ((line: string) => process.stdout.write(line));
   try {
+    if (argv.includes("--archived")) {
+      const report = await sweepArchivedTags(
+        deps.dial ?? new LiveChaosDial(),
+        notesScope(env),
+        deps.store ?? new PgTagStore(pool),
+        probe,
+      );
+      write(`${JSON.stringify({ probe, ...report })}\n`);
+      return;
+    }
     const distinct = await pool.query<{ tag: string; count: string }>(
       "SELECT tag, COUNT(*)::text AS count FROM note_tags GROUP BY tag ORDER BY tag",
     );
