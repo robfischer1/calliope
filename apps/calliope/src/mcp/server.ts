@@ -46,6 +46,7 @@ import type { ChaosFacet } from "../chaos-client.js";
 import { ChaosClientError } from "../chaos-client.js";
 import { type ContainerFacet, writeContainer } from "../container-write.js";
 import { containerHistory, readContainer } from "../container-read.js";
+import { containerBodies } from "../container-body.js";
 import { runBlobCensus } from "../blob-census.js";
 import type { TagStore } from "../tag-store.js";
 import type { SearchProvider, SearchResponse } from "../search-types.js";
@@ -676,6 +677,18 @@ export function createServer(
 
   if (options?.chaos !== undefined) {
     const { dial, scope } = options.chaos;
+    // calliope#5290: the note verbs read and write prose through the TREE
+    // — the path read_container / write_container already serve — never
+    // through the body client, whose pg form still dials the `sections`
+    // table the cut dropped (every by-id materialize on the live star
+    // erred `relation "sections" does not exist` while read_container on
+    // the same id answered). The fleet always carries the container facet
+    // (backend.ts wires it beside the chaos facet); the bare client is the
+    // fixture-only harness shape.
+    const bodies =
+      options.containers !== undefined
+        ? containerBodies(options.containers)
+        : client;
 
     server.registerTool(
       "dissolve_note",
@@ -739,7 +752,7 @@ export function createServer(
         raw_hash,
       }) => {
         const result = await dissolveContainer(
-          client,
+          bodies,
           dial,
           scope,
           options.tags,
@@ -798,7 +811,7 @@ export function createServer(
           const [hit] = await dial.findByName("Note", source_path);
           nodeId = hit;
         }
-        const body = nodeId === undefined ? [] : await client.readBody(nodeId);
+        const body = nodeId === undefined ? [] : await bodies.readBody(nodeId);
         if (nodeId === undefined || body.length === 0) {
           const miss = {
             error: "container_not_found",
@@ -875,7 +888,7 @@ export function createServer(
             isError: true,
           };
         }
-        const body = await client.readBody(nodeId);
+        const body = await bodies.readBody(nodeId);
         const tags = edges
           .filter((e) => e.predicate === "hasTag" && !e.isNode)
           .map((e) => e.value);
@@ -1149,7 +1162,7 @@ export function createServer(
             .describe("The container node's 64-hex token."),
           ops: z.array(containerOpField).min(1).describe("The save's ops."),
           tenant: z
-            .enum(["notes", "documents", "comments", "governance"])
+            .enum(["notes", "documents", "comments", "governance", "issues"])
             .optional()
             .describe("The tenant graph (default: notes)."),
         },

@@ -17,6 +17,7 @@
 import type {
   AuthoredBy,
   BodyClient,
+  NoteBodies,
   CommentThread,
   RevisionMeta,
   Section,
@@ -505,7 +506,7 @@ export async function reconcileNoteTags(
  * so every write shape (coarse, append, edit, block ops) feeds one path.
  */
 export async function maybeReconcileInlineTags(
-  client: BodyClient,
+  client: NoteBodies,
   dial: ChaosDial,
   scope: string,
   store: TagStore,

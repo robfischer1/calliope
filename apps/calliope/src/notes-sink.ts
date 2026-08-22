@@ -21,7 +21,7 @@
  * history.
  */
 
-import type { BodyClient } from "./types.js";
+import type { NoteBodies } from "./types.js";
 import type { WriteDocumentInput } from "./document-store.js";
 import { sha256 } from "./document-store.js";
 import {
@@ -131,7 +131,7 @@ async function reconcileAttrs(
  * ride this ONE path — no second sink to drift.
  */
 async function landContainer(
-  client: BodyClient,
+  client: NoteBodies,
   dial: ChaosDial,
   scope: string,
   tagStore: TagStore | undefined,
@@ -253,7 +253,7 @@ export async function assertAdditiveAttrs(
  * table row until F7 retires it).
  */
 export async function sinkNoteVersion(
-  client: BodyClient,
+  client: NoteBodies,
   dial: ChaosDial,
   scope: string,
   tagStore: TagStore | undefined,
@@ -306,7 +306,7 @@ export interface DissolveContainerInput {
  * generation (history keeps the old); identical content no-ops.
  */
 export async function dissolveContainer(
-  client: BodyClient,
+  client: NoteBodies,
   dial: ChaosDial,
   scope: string,
   tagStore: TagStore | undefined,

@@ -32,8 +32,9 @@ import { containerHistory, readContainer } from "./container-read.js";
 import type { ContainerBlock } from "./container-read.js";
 import { type ContainerFacet, writeContainer } from "./container-write.js";
 import type { ContainerOp } from "./container-write.js";
+import { bodyDiffOps } from "./container-body.js";
 import { opCreate } from "./chaos-client.js";
-import { between, sequence } from "./order-key.js";
+import { sequence } from "./order-key.js";
 import type {
   Mention,
   MentionsResponse,
@@ -418,35 +419,7 @@ export class LocalEngineStore implements BodyClient {
     await this.#serialized(abs, async () => {
       const blocks = await this.#ingest(nodeId, abs);
       const container = await this.#container(nodeId);
-      const ops: ContainerOp[] = [];
-      const shared = Math.min(blocks.length, sections.length);
-      for (let i = 0; i < shared; i++) {
-        const cur = blocks[i];
-        const want = sections[i];
-        if (cur === undefined || want === undefined) continue;
-        if ((cur.text ?? "") !== want.text) {
-          ops.push({
-            op: "update",
-            slot: cur.slot,
-            oldBlobId: cur.blobId ?? "",
-            text: want.text,
-          });
-        }
-      }
-      let tail = blocks[blocks.length - 1]?.position ?? null;
-      for (const extra of sections.slice(shared)) {
-        tail = between(tail, null);
-        ops.push({ op: "add", text: extra.text, position: tail });
-      }
-      for (const gone of blocks.slice(shared)) {
-        if (gone.blobId === null) continue;
-        ops.push({
-          op: "remove",
-          slot: gone.slot,
-          position: gone.position,
-          blobId: gone.blobId,
-        });
-      }
+      const ops = bodyDiffOps(blocks, sections);
       if (ops.length > 0) {
         await writeContainer(this.#facet, container, ops, "notes");
       }
