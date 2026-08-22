@@ -206,6 +206,13 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
       error: "container_not_found",
       detail: "export_note needs a container_id or a source_path",
     });
+    // The text half carries the same miss, for a caller reading prose only.
+    expect(res.content).toEqual([
+      {
+        type: "text",
+        text: "container_not_found: export_note needs a container_id or a source_path",
+      },
+    ]);
     expect(reads).toEqual([]);
     // An unknown id reads the (empty) tree and misses with the id as detail.
     const unknown = "e".repeat(64);
