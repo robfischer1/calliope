@@ -1,7 +1,7 @@
 # This file records the copier template + answers for this repo.
 # Managed by Copier — do not edit by hand. Run `copier update` to pull template
 # changes (3-way merged against your local edits).
-_commit: v0.34.3
+_commit: v0.35.0
 _src_path: https://forgejo.notusmi.com/rob/frontend-repo-template.git
 app_name: calliope
 author_name: Rob Fischer
