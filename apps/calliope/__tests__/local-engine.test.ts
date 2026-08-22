@@ -5,7 +5,7 @@
  * surface on top. This is the fleet's write/read model running with zero
  * fleet infrastructure.
  *
- * Gated on CALLIOPE_CHAOSSTORE_BIN (a locally built gostore/cmd/chaosstore)
+ * Gated on CALLIOPE_CHAOSSTORE_BIN (a locally built chaos `cmd/chaos`)
  * plus docker; skips visibly otherwise.
  */
 
