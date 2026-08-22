@@ -8,7 +8,9 @@
  *                              the same artifacts the embedded-postgres
  *                              ecosystem boots in tests)
  *   <out>/chaosstore[.exe]     the REAL engine door, built from the chaos
- *                              repo (gostore/cmd/chaosstore)
+ *                              repo (cmd/chaos — the store took its canonical
+ *                              name and moved to the repo root, 2026-08-22; the
+ *                              payload keeps its own file name)
  *
  * An operator script, not CI: it needs network (maven central), docker is
  * NOT needed, and a Go toolchain + a chaos checkout for the store build.
@@ -101,7 +103,7 @@ async function main(): Promise<void> {
 
   // ── chaosstore: the engine door, built from source — one store, two
   //    deployments; the desktop runs the exact fleet code.
-  if (!existsSync(join(chaosRepo, "gostore", "cmd", "chaosstore"))) {
+  if (!existsSync(join(chaosRepo, "cmd", "chaos"))) {
     throw new Error(
       `chaos repo not found at ${chaosRepo} (--chaos / CHAOS_REPO)`,
     );
@@ -112,8 +114,8 @@ async function main(): Promise<void> {
   );
   console.error(`building chaosstore (${platform}) from ${chaosRepo}`);
   run(
-    ["go", "build", "-o", storeOut, "./cmd/chaosstore"],
-    join(chaosRepo, "gostore"),
+    ["go", "build", "-mod=vendor", "-o", storeOut, "./cmd/chaos"],
+    chaosRepo,
     platform === "windows" ? { GOOS: "windows", GOARCH: "amd64" } : {},
   );
 
