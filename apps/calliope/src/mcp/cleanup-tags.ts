@@ -9,6 +9,10 @@
  *
  *   bun run src/mcp/cleanup-tags.ts            # apply (idempotent)
  *   bun run src/mcp/cleanup-tags.ts --probe    # read-only plan
+ *   bun run src/mcp/cleanup-tags.ts --archived [--probe]
+ *       sweep the INLINE tags off every isArchived note (the phdb-migration
+ *       corpus — C source, spreadsheets, mail — whose bodies the reconcile
+ *       tagged before it learned to skip them); explicit rows stay.
  *
  * Reversibility: chaos is append-only — the retractions are logged ops on
  * the substrate, so the sweep is reversible at the substrate level; no undo
@@ -29,6 +33,8 @@ import {
   type ChaosDial,
   type ChaosOp,
 } from "../chaos-client.js";
+import { PgTagStore } from "../tag-store.js";
+import { sweepArchivedTags } from "./tools.js";
 
 /** The pure plan: which stored tags are removed, which merge to what. */
 export interface TagCleanupPlan {
@@ -59,6 +65,16 @@ async function main(): Promise<void> {
   }
   const pool = new Pool({ connectionString: dbUrl });
   try {
+    if (process.argv.includes("--archived")) {
+      const report = await sweepArchivedTags(
+        new LiveChaosDial(),
+        notesScope(process.env),
+        new PgTagStore(pool),
+        probe,
+      );
+      process.stdout.write(`${JSON.stringify({ probe, ...report })}\n`);
+      return;
+    }
     const distinct = await pool.query<{ tag: string; count: string }>(
       "SELECT tag, COUNT(*)::text AS count FROM note_tags GROUP BY tag ORDER BY tag",
     );
