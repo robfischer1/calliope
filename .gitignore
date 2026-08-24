@@ -15,4 +15,7 @@ AGENTS.md
 CLAUDE.md
 .claude/
 .specify/
+# furnace local state — regenerated on each deploy / stoke, never authored.
+# `.furnace/pin.toml` is NOT here: the template pin is real config and stays tracked.
 .furnace/deployed.json
+.furnace/spans.json
