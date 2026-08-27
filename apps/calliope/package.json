@@ -30,7 +30,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@forge/stellar-core-ts": "0.3.0",
+    "@forge/stellar-core-ts": "0.4.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "kafkajs": "^2.2.4",
     "onnxruntime-web": "^1.27.0",
