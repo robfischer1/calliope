@@ -19,3 +19,6 @@ CLAUDE.md
 # `.furnace/pin.toml` is NOT here: the template pin is real config and stays tracked.
 .furnace/deployed.json
 .furnace/spans.json
+
+# furnace-provisioned (regenerable via `furnace pour`; do not commit)
+.furnace/base/
