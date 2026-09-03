@@ -6,3 +6,5 @@
 # never overwritten (`_skip_if_exists`); everything else takes the template's bytes.
 _commit: v0.68.0
 _src_path: https://forgejo.notusmi.com/foundry/foundry-stocks.git
+
+#copier updated
