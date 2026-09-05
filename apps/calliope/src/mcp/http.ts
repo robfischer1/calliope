@@ -40,6 +40,11 @@ import { backendKind, initBackend, makeBackend } from "./backend.js";
 import { createServer } from "./server.js";
 import type { ChaosFacet } from "../chaos-client.js";
 import type { TagStore } from "../tag-store.js";
+import {
+  startTelemetry,
+  telemetryConfigFromEnv,
+  withSpan,
+} from "@forge/stellar-core-ts";
 import { startHeartbeat } from "./heartbeat.js";
 import { FocusRegister, startFocusConsumer } from "../focus-register.js";
 import { makeErosProvider } from "../eros-provider.js";
@@ -170,16 +175,28 @@ export function createCalliopeHttpServer(
       return;
     }
 
-    handleMcp(
-      req,
-      res,
-      client,
-      docStore,
-      revStore,
-      chaosFacet,
-      tagStore,
-      focus,
-      containerFacet,
+    // THE SPAN IS THE POINT. stellar-core-ts wires the provider, the exporter
+    // and the W3C propagators, but it installs no instrumentation — a star
+    // that never opens a span is correctly configured and completely silent,
+    // which is the state this one was in. One span per served request is the
+    // minimum that makes calliope visible in Tempo and in hemera's
+    // per-service spanmetrics.
+    //
+    // Named for the transport, not the tool: the JSON-RPC method is in the
+    // body, which is consumed downstream by the transport itself, and reading
+    // it here to name the span would mean buffering the request twice.
+    withSpan(`POST ${MCP_PATH}`, () =>
+      handleMcp(
+        req,
+        res,
+        client,
+        docStore,
+        revStore,
+        chaosFacet,
+        tagStore,
+        focus,
+        containerFacet,
+      ),
     ).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`calliope-mcp-http: request error: ${message}\n`);
@@ -200,6 +217,14 @@ export function createCalliopeHttpServer(
 }
 
 async function main(): Promise<void> {
+  // FIRST, and bounded. stellar-core-ts 0.5.0's sender resolves its config from
+  // OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_SERVICE_NAME, both of which this star's
+  // deployment already sets — an empty endpoint disables export rather than
+  // erroring, and startTelemetry cannot outlive its budget, so this cannot stop
+  // the door from binding. Before initBackend because a span is only useful if
+  // the provider exists when the first request lands.
+  const telemetryShutdown = await startTelemetry(telemetryConfigFromEnv());
+
   const kind = backendKind();
   const port = resolvePort();
   const host = process.env.HOST ?? "0.0.0.0";
@@ -235,6 +260,10 @@ async function main(): Promise<void> {
   const shutdown = (): void => {
     void heartbeat.stop();
     void focusConsumer.stop();
+    // Flush what the batch processor is holding; a SIGTERM'd pod otherwise
+    // drops its last window of spans, which is exactly the window that
+    // explains why it was terminated.
+    void telemetryShutdown();
     httpServer.close(() => {
       process.exit(0);
     });
