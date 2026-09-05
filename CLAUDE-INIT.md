@@ -155,6 +155,11 @@ apps/calliope/
                           `index_document` verb. Best-effort — a push failure never
                           fails the body write; the index is derived state that
                           re-syncs on the next write or backfill-index.ts.
+      consciousness-emit.ts the consciousness producer (pass 4): one ConsciousnessEvent
+                          per note write on the fleet bus, keyed by eros's record id;
+                          the retired calliope-notes stream's successor
+      note-projection.ts  the note as the index sees it: blocks + hasTag edges +
+                          provenance attributes + tree history, assembled at publish
       backfill-index.ts   One-off CLI (B): sweeps every body-bearing node in the
                           sovereign store and pushes it to urania's index, closing
                           the gap for bodies written before the push shipped.

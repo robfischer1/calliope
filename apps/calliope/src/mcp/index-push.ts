@@ -180,3 +180,21 @@ export class IndexingBodyClient implements BodyClient {
     }
   }
 }
+
+/** Fan a push out to every configured index — one failing never stops the
+ *  others (each is independently best-effort; the decorator already
+ *  swallows a total failure). */
+export function fanOutPushers(pushers: readonly IndexPusher[]): IndexPusher {
+  return {
+    async indexDocument(node: string, body: string): Promise<void> {
+      const results = await Promise.allSettled(
+        pushers.map((p) => p.indexDocument(node, body)),
+      );
+      const failed = results.filter((r) => r.status === "rejected");
+      if (failed.length === pushers.length && pushers.length > 0) {
+        // Every projection failed — let the decorator log/swallow it.
+        throw new Error("all index pushes failed");
+      }
+    },
+  };
+}

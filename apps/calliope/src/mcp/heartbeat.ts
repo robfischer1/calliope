@@ -145,10 +145,24 @@ export function resolveBootstrap(env: NodeJS.ProcessEnv = process.env): string {
  * heartbeat must never stop the star from serving.
  */
 export function startHeartbeat(
-  opts: { intervalMs?: number; bootstrap?: string } = {},
+  opts: {
+    intervalMs?: number;
+    bootstrap?: string;
+    /** Extra counters folded into every beat (pass 4: the consciousness
+     *  producer's account of itself). Read per beat, so a counter that
+     *  moves between beats is reported as it stands. */
+    metrics?: () => Record<string, number>;
+  } = {},
 ): HeartbeatHandle {
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const bootstrap = opts.bootstrap ?? resolveBootstrap();
+  const payloadNow = (now: Date): HeartbeatPayload => {
+    const payload = heartbeatPayload(now);
+    if (opts.metrics !== undefined) {
+      payload.metrics = { ...payload.metrics, ...opts.metrics() };
+    }
+    return payload;
+  };
   const kafka = new Kafka({
     clientId: `${STAR}-heartbeat`,
     brokers: [bootstrap],
@@ -174,7 +188,7 @@ export function startHeartbeat(
       }
       await producer.send({
         topic: HEARTBEAT_TOPIC,
-        messages: [{ value: JSON.stringify(heartbeatPayload(new Date())) }],
+        messages: [{ value: JSON.stringify(payloadNow(new Date())) }],
       });
     } catch (err) {
       process.stderr.write(

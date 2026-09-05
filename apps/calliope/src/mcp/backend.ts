@@ -48,15 +48,12 @@ import { UraniaBodyClient } from "../urania-client.js";
 import { PgBodyClient } from "../pg-client.js";
 import { LiveUraniaCapture } from "./live-capture.js";
 import { HadesCapture, hadesEnabled } from "./hades-capture.js";
-import { IndexingBodyClient, UraniaIndexClient } from "./index-push.js";
-import type { IndexPusher } from "./index-push.js";
 import {
-  ErosNotesPusher,
   fanOutPushers,
-  makeNotesProducer,
-  notesEmitEnabled,
-} from "./notes-emit.js";
-import { resolveBootstrap } from "./heartbeat.js";
+  IndexingBodyClient,
+  UraniaIndexClient,
+} from "./index-push.js";
+import type { IndexPusher } from "./index-push.js";
 
 /** How the MCP reaches the body model. */
 export type BackendKind = "urania" | "hades" | "fixture" | "pg";
@@ -113,17 +110,21 @@ function indexUrl(env: NodeJS.ProcessEnv): string | undefined {
 
 /**
  * Wrap a directly-persisting body client so every write also pushes the
- * assembled prose to the configured projections: urania's similarity index
- * and — Findability F8 — the `calliope-notes` eros stream. A no-op wrap when
- * neither is configured, so tests and the fixture backend stay push-free.
+ * assembled prose to the configured projections — urania's similarity index.
+ * A no-op wrap when none is configured, so tests and the fixture backend stay
+ * push-free.
+ *
+ * The eros stream no longer rides here. Findability F8's `calliope-notes`
+ * emit decorated THIS client, but the fleet writes notes through the container
+ * tree (F12), which never passed through it — so the emit was an opt-in nobody
+ * set, on a path the writes did not take, to a topic that did not exist
+ * (measured 2026-09-05). Stream of Consciousness pass 4 publishes from the
+ * container write verbs instead (`consciousness-emit.ts`, `server.ts`).
  */
 function withIndexPush(client: BodyClient, env: NodeJS.ProcessEnv): BodyClient {
   const pushers: IndexPusher[] = [];
   const url = indexUrl(env);
   if (url !== undefined) pushers.push(new UraniaIndexClient(url));
-  if (notesEmitEnabled(env)) {
-    pushers.push(new ErosNotesPusher(makeNotesProducer(resolveBootstrap(env))));
-  }
   if (pushers.length === 0) return client;
   const pusher = pushers.length === 1 ? pushers[0] : fanOutPushers(pushers);
   return pusher === undefined ? client : new IndexingBodyClient(client, pusher);

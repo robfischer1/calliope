@@ -46,6 +46,11 @@ import {
   withSpan,
 } from "@forge/stellar-core-ts";
 import { startHeartbeat } from "./heartbeat.js";
+import {
+  consciousnessMetrics,
+  makeConsciousnessPublisher,
+  type NotePublisher,
+} from "./consciousness-emit.js";
 import { FocusRegister, startFocusConsumer } from "../focus-register.js";
 import { makeErosProvider } from "../eros-provider.js";
 
@@ -94,6 +99,7 @@ async function handleMcp(
   tags?: TagStore,
   focus?: FocusRegister,
   containers?: ContainerFacet,
+  consciousness?: NotePublisher,
 ): Promise<void> {
   // Findability F4: the pg arm — eros-routed when CALLIOPE_EROS_URL is set;
   // absent, the search verb answers honest darkness (F2's contract).
@@ -109,6 +115,7 @@ async function handleMcp(
     // points served body verbs only. With the families retired, the
     // container verbs ARE the write path; they ship from here.
     ...(containers !== undefined ? { containers } : {}),
+    ...(consciousness !== undefined ? { consciousness } : {}),
   });
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session id, no server-initiated streams to keep alive.
@@ -135,6 +142,7 @@ export function createCalliopeHttpServer(
   // the boot passes the consumer-fed one so live focus flows in production.
   focus: FocusRegister = new FocusRegister(),
   containers?: ContainerFacet,
+  consciousness?: NotePublisher,
 ): ReturnType<typeof createHttpServer> {
   // One backend for the server's lifetime: the store (or fixture memory)
   // is shared across every stateless request. A caller that needs async
@@ -196,6 +204,7 @@ export function createCalliopeHttpServer(
         tagStore,
         focus,
         containerFacet,
+        consciousness,
       ),
     ).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
@@ -230,6 +239,9 @@ async function main(): Promise<void> {
   const host = process.env.HOST ?? "0.0.0.0";
   const backend = makeBackend(kind);
   await initBackend(backend);
+  // Stream of Consciousness pass 4: ONE producer for the process (the
+  // servers are per-request; the broker connection is not).
+  const consciousness = makeConsciousnessPublisher(process.env);
   // 028 ("Look At This" F5): one register for the process, written by the
   // Pontus telemetry consumer, read by every stateless request's `look`.
   const focusRegister = new FocusRegister();
@@ -244,6 +256,7 @@ async function main(): Promise<void> {
     backend.tags,
     focusRegister,
     backend.containers,
+    consciousness,
   );
 
   await new Promise<void>((resolve) => {
@@ -255,7 +268,7 @@ async function main(): Promise<void> {
   );
 
   // Publish liveness to Pontus (the op-contract heartbeat) now that we serve.
-  const heartbeat = startHeartbeat();
+  const heartbeat = startHeartbeat({ metrics: consciousnessMetrics });
 
   const shutdown = (): void => {
     void heartbeat.stop();

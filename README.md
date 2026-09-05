@@ -216,6 +216,8 @@ apps/calliope/
       migrate-tree.ts      the F6 migration engine (retry armor, crash recovery,
                            carrier fallback) — the old store's replay
       index-push.ts        IndexingBodyClient — similarity-index push decorator
+      consciousness-emit.ts the consciousness producer: ConsciousnessEvent per note write, eros's row id (pass 4)
+      note-projection.ts   the note as the index sees it — blocks + tags + provenance, assembled at publish
       backfill-index.ts    one-off index backfill CLI
       heartbeat.ts         op-contract heartbeat -> Pontus
       hades-capture.ts / live-capture.ts   legacy substrate transports
