@@ -45,6 +45,8 @@ import {
 import type { ChaosFacet } from "../chaos-client.js";
 import { ChaosClientError } from "../chaos-client.js";
 import { type ContainerFacet, writeContainer } from "../container-write.js";
+import type { AuthorKind, NotePublisher } from "./consciousness-emit.js";
+import { projectNote } from "./note-projection.js";
 import { containerHistory, readContainer } from "../container-read.js";
 import { containerBodies } from "../container-body.js";
 import { runBlobCensus } from "../blob-census.js";
@@ -106,6 +108,10 @@ export interface ServerOptions {
    * one graph transaction, identical content nets to nothing.
    */
   containers?: ContainerFacet;
+  /** Stream of Consciousness pass 4: the index-bus producer the write verbs
+   *  publish through after a committed note write. Absent = no publish (and
+   *  the boot says so). */
+  consciousness?: NotePublisher;
 }
 
 /** Build a configured MCP server bound to `client`, ready to `connect()`. */
@@ -117,6 +123,27 @@ export function createServer(
     name: "calliope-mcp",
     version: "0.1.0",
   });
+
+  // Stream of Consciousness pass 4: publish the note AFTER its write landed.
+  // Best-effort by construction — the publisher counts its own failures and
+  // never throws; a projection that cannot be read is logged and the write
+  // still stands. The index being behind is the publisher's metric to carry.
+  const consciousness = options?.consciousness;
+  const publishNote = async (
+    facet: ContainerFacet,
+    node: string,
+    extras: { authorKind?: AuthorKind } = {},
+  ): Promise<void> => {
+    if (consciousness === undefined) return;
+    try {
+      const projection = await projectNote(facet, node, extras);
+      if (projection !== undefined) await consciousness.publish(projection);
+    } catch (err) {
+      process.stderr.write(
+        `calliope-consciousness: could not project note ${node.slice(0, 16)}: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+  };
 
   // 024: optional per-call write provenance, shared by every sections-writing
   // verb. Form-only validation — authenticity is the master plan's surfaced
@@ -768,6 +795,15 @@ export function createServer(
             ...(raw_hash !== undefined ? { raw_hash } : {}),
           },
         );
+        if (
+          result.generation !== "nooped" &&
+          options.containers !== undefined
+        ) {
+          // A dissolve is the human's own act of promotion.
+          await publishNote(options.containers, result.node_id, {
+            authorKind: "human",
+          });
+        }
         return {
           content: [
             {
@@ -1184,6 +1220,9 @@ export function createServer(
             ops,
             tenant ?? "notes",
           );
+          if (!result.noop && (tenant ?? "notes") === "notes") {
+            await publishNote(facet, container);
+          }
           return {
             content: [
               {

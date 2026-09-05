@@ -17,11 +17,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { backendKind, initBackend, makeBackend } from "./backend.js";
 import { makeErosProvider } from "../eros-provider.js";
 import { createServer } from "./server.js";
+import { makeConsciousnessPublisher } from "./consciousness-emit.js";
 
 async function main(): Promise<void> {
   const kind = backendKind();
   const backend = makeBackend(kind);
   await initBackend(backend);
+  const consciousness = makeConsciousnessPublisher(process.env);
   // Findability F4: the eros-routed pg search arm (env-gated).
   const search = makeErosProvider();
   const server = createServer(backend.client, {
@@ -38,6 +40,7 @@ async function main(): Promise<void> {
     ...(backend.containers !== undefined
       ? { containers: backend.containers }
       : {}),
+    ...(consciousness !== undefined ? { consciousness } : {}),
   });
   const transport = new StdioServerTransport();
   await server.connect(transport);
