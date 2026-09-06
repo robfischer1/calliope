@@ -12,6 +12,14 @@
  * Absent stays absent: a note with no tags yields no `tags`, a note never
  * dissolved from a file yields no `source_path`. The producer turns each
  * absence into a missing key, never an empty one.
+ *
+ * The title has two homes. A dissolved note carries a `title` attribute (the
+ * dissolve sink writes it); a note minted through `create_note` carries its
+ * title as the `hasName` literal that mint writes — and nothing else. Read
+ * both, attribute first. MEASURED 2026-09-06: every memory container
+ * mnemosyne mints (`create_note("memory:<label>")`) published with no title,
+ * so eros could not tell a memory's prose — already indexed as the memory's
+ * own row — from a note, and indexed it twice.
  */
 
 import type { ContainerFacet } from "../container-write.js";
@@ -53,10 +61,13 @@ export async function projectNote(
   const edges = await facet.dial.edges(node);
   const attrs: Partial<Record<Attribute, string>> = {};
   const tags = new Set<string>();
+  let name: string | undefined;
   for (const edge of edges) {
     if (edge.isNode) continue;
     if (edge.predicate === "hasTag") {
       tags.add(edge.value);
+    } else if (edge.predicate === "hasName") {
+      name = edge.value;
     } else if (isAttribute(edge.predicate)) {
       attrs[edge.predicate] = edge.value;
     }
@@ -71,7 +82,8 @@ export async function projectNote(
     body,
     lifecycle: attrs.isArchived === "true" ? "archived" : "active",
   };
-  if (attrs.title !== undefined) projection.title = attrs.title;
+  const title = attrs.title ?? name;
+  if (title !== undefined) projection.title = title;
   if (attrs.source_path !== undefined) {
     projection.sourcePath = attrs.source_path;
   }

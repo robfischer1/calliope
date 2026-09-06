@@ -148,6 +148,32 @@ describe("the write verbs publish the note (pass 4)", () => {
     expect(publisher.published).toHaveLength(2);
   });
 
+  it("a note minted by create_note publishes its title from hasName", async () => {
+    // mnemosyne's shape: create_note("memory:<label>") then write_container.
+    // The mint writes the title as `hasName` — no `title` attribute exists —
+    // and the projection must still carry it, or eros cannot tell a memory's
+    // prose (already indexed as the memory's own row) from a note.
+    const { mcp, publisher } = await rig();
+    const minted = await mcp.callTool({
+      name: "create_note",
+      arguments: { title: "memory:feedback_probe" },
+    });
+    expect(minted.isError).toBeFalsy();
+    const node = (minted.structuredContent as { node_id: string }).node_id;
+    expect(publisher.published).toHaveLength(0); // an empty container: nothing to index
+    const written = await mcp.callTool({
+      name: "write_container",
+      arguments: {
+        container: node,
+        ops: [{ op: "add", text: "the memory's prose", position: "a0" }],
+      },
+    });
+    expect(written.isError).toBeFalsy();
+    expect(publisher.published).toHaveLength(1);
+    expect(publisher.published[0]?.title).toBe("memory:feedback_probe");
+    expect(publisher.published[0]?.body).toBe("the memory's prose");
+  });
+
   it("a refusing publisher never fails the write", async () => {
     const { mcp, publisher } = await rig();
     publisher.refuse = true;
