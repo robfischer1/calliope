@@ -4,6 +4,6 @@
 # NEVER `copier update` here: `.specify/` is gitignored, and update replays an index-based
 # diff that deletes what it cannot see. The constitution and the rendered plan skill are
 # never overwritten (`_skip_if_exists`); everything else takes the template's bytes.
-_commit: v0.118.10
+_commit: v0.120.4
 _src_path: https://forgejo.notusmi.com/foundry/foundry-stocks.git
 gate_pin: git.notusmi.com/rob/foundry-tools@f0566e9bca6a1e9ddf0230c21f83816d6720a569
