@@ -7,7 +7,8 @@
 #
 # Install (copier _tasks does this, on copy AND update): `uvx pre-commit install`
 # — a bun repo has no uv project, so pre-commit rides uvx the way the go/rust
-# templates do. default_install_hook_types wires all three types in that one call.
+# templates do. default_install_hook_types wires pre-commit + post-commit in that
+# one call; pre-push is the CA gate's file (see the note above that key).
 #
 # PRE-COMMIT OWNS THE HOOKS, as of 2026-08-11. husky is gone: it set
 # `core.hooksPath=.husky/_`, and `pre-commit install` refuses against that
@@ -24,7 +25,18 @@
 # secret-scan parity with the py/go/rust templates is wanted.
 #
 # furnace owns .claude/ .specify/ .furnace/; exclude that managed surface.
-default_install_hook_types: [pre-commit, pre-push, post-commit]
+# NO pre-push HERE, DELIBERATELY (Continuous Accountability F4). `.git/hooks/
+# pre-push` belongs to the CA gate now: it is written from the declared
+# foundry-tools pin by foundry-stocks' copier task, and it CHAINS this file's
+# pre-push stage itself (`pre-commit hook-impl --hook-type=pre-push`, the same
+# flags and argv and stdin pre-commit's own generated hook uses) before it dials
+# the engine — so not one check below is lost, and a red one still reds the push
+# without paying for an engine round trip. Listing pre-push here would only make
+# `pre-commit install` overwrite the gate with its own hook. The `stages:
+# [pre-push]` markers below are UNTOUCHED and still authoritative: that key
+# decides which hooks the pre-push stage runs, `default_install_hook_types`
+# decides only which hook FILES `install` writes.
+default_install_hook_types: [pre-commit, post-commit]
 exclude: '^\.(claude|specify|furnace)/|(^|/)(vendor|node_modules)/|\.melt$'
 repos:
   # Incidental Python — hook scripts, probes, fixture generators, conformance
@@ -45,13 +57,29 @@ repos:
   # Lint only, no ruff-format: the formatter here is the repo's own language
   # toolchain, and a second formatter with an opinion about these files is how a
   # hook starts rewriting code nobody asked it to.
-  - repo: https://github.com/astral-sh/ruff-pre-commit
+# HOOK REPOS COME FROM OUR MIRROR, not github. pre-commit CLONES each `repo:`,
+# and until 2026-08-22 every gate run in the fleet fetched these from github.com
+# on each cold pre-commit cache — 53 repos pinning pre-commit-hooks, 47 ruff, 41
+# detect-secrets. A cold-cache github fetch is what reddened a cerberus gate with
+# "Executable `detect-secrets-hook` not found" while the env was still building.
+#
+# NEXUS CANNOT SERVE THIS. It is the fleet's package edge and gate.yml routes pip
+# and uv through its pypi proxy, but Nexus 3.94.1 has no git format — the
+# `gitlfs` one is LFS objects, not clones, and a raw proxy 404s the
+# git-upload-pack handshake. Forgejo pull-mirrors are the only mechanism that
+# serves a clone (rob/infra#1811, `hooks` org, 24h interval, prune on).
+#
+# RENOVATE STILL BUMPS THESE. Its pre-commit manager supports the `forgejo-tags`
+# datasource and it already runs against this Forgejo as its platform. Reading
+# revs from the mirror also means it can never propose a tag the mirror has not
+# synced yet — the pin and the source cannot drift apart.
+  - repo: https://forgejo.notusmi.com/hooks/ruff-pre-commit
     rev: v0.16.3
     hooks:
       - id: ruff-check
         types: [python]
         stages: [pre-commit]
-  - repo: https://github.com/pre-commit/pre-commit-hooks
+  - repo: https://forgejo.notusmi.com/hooks/pre-commit-hooks
     rev: v6.0.0
     hooks:
       # trailing-whitespace REMOVED 2026-08-16, on the same evidence that retired
@@ -139,6 +167,67 @@ repos:
         # It is an advisory-database QUERY, not an artifact fetch — no code enters
         # an image through it.
         entry: bash -c 'BUN_CONFIG_REGISTRY=https://registry.npmjs.org/ bun audit --audit-level=high'
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+      - id: sast-ruleset-lanes
+        name: SAST ruleset declares every lane this repo builds (pre-push)
+        # THE COMPANION TO THE ZERO-FILE REFUSAL BELOW, and it exists because that
+        # refusal has one blind spot it structurally cannot close.
+        #
+        # The refusal fires on `Ran N rules on 0 files`. It catches a repo whose
+        # ruleset matches NOTHING. It cannot catch a repo whose ruleset matches
+        # SOMETHING and misses the rest — and that is the worse case, because a
+        # non-zero file count reads as a real scan at every layer that looks.
+        # foundry-stocks#4949 measured it: chaos scanned 28 of 2636 tracked files
+        # and themis 26 of 2221, both exit 0, both green, with 74 and 44
+        # first-party Go files that had never been examined by SAST.
+        #
+        # WHY A LANE CHECK RATHER THAN A FILE-COUNT THRESHOLD. "Ruleset languages
+        # intersect actual file types" is the obvious test and it is too weak:
+        # chaos's ruleset DID intersect its lanes (it has .py and declared python)
+        # while its compiled half went unread. Any count threshold is also
+        # arbitrary and would fire on incidental python — the hook scripts and
+        # fixture generators every Go star carries. So the predicate is
+        # STRUCTURAL instead: a go.mod means Go is a lane this repo builds, a
+        # pyproject.toml means Python is, and a lane a repo builds is a lane its
+        # security gate must name. That is a fact about the tree, not a heuristic.
+        #
+        # WHY IT HAS TO LIVE HERE. `rules/**` is `_skip_if_exists`, so a fixed
+        # template ruleset can never reach a star that already has one — that is
+        # what made #4415 undrainable and #4949 recur inside a day when chaos and
+        # themis moved onto the Go template carrying their python rulesets.
+        # `.pre-commit-config.yaml` is the mirror image: copier OWNS it, create
+        # AND update, so a hook added here reaches every existing star on its next
+        # update. It is the one surface that can close this class.
+        #
+        # Inline and dependency-free, for the same reason the opengrep hook below
+        # is: stars on the per-family gates do not provision foundry-stocks, and
+        # adding that coupling would break them.
+        #
+        # Verified before landing, across all 45 cloned repos carrying a
+        # rules/sast: 43 pass, and the only two failures are cerberus and tron —
+        # a stale python ruleset with NO opengrep hook to read it, which #4949 set
+        # aside deliberately as an inert dead file rather than a security gap.
+        # Negative control: a tree with go.mod and a python-only ruleset exits 2;
+        # correcting the ruleset to [go] exits 0.
+        entry: >-
+          bash -c 'test -d rules/sast || exit 0;
+          decl=$(cat rules/sast/*.yml 2>/dev/null | grep -vE "^[[:space:]]*#" | grep -oE "languages:[[:space:]]*\[[^]]*\]" | sed -E "s/.*\[//;s/\]//" | tr "," "\n" | sed -E "s/[^a-z]//g" | grep -vE "^$" | sort -u);
+          missing="";
+          for pair in go.mod:go Cargo.toml:rust pyproject.toml:python; do
+          f=${pair%%:*}; lang=${pair##*:};
+          test -f "$f" || continue;
+          printf "%s\n" "$decl" | grep -qx "$lang" || missing="$missing $lang($f)";
+          done;
+          if test -f package.json; then
+          printf "%s\n" "$decl" | grep -qxE "typescript|javascript" || missing="$missing typescript-or-javascript(package.json)";
+          fi;
+          test -z "$missing" && exit 0;
+          echo "sast-ruleset-lanes: rules/sast declares [$(printf "%s" "$decl" | tr "\n" " ")] but this repo also builds:$missing" >&2;
+          echo "A ruleset that never names a lane never examines it, and opengrep still exits 0 whenever some OTHER language matched - the partial-scan case the zero-file refusal cannot see (foundry-stocks#4949)." >&2;
+          exit 2'
         language: system
         stages: [pre-push]
         pass_filenames: false

@@ -1,0 +1,48 @@
+# The GitHub-MIRROR gate (bun) — the family-correct twin of the door's own
+# pull-CI lane. (It mirrored a `.forgejo/workflows/` caller stub until that
+# runner retired.) The python .github gate the furnace
+# scaffold surface used to pour here was structurally red on a bun tree
+# (hephaestus#126); frontends now carry this template-owned one instead
+# (the frontend genesis kit pours no CI, so nothing clobbers it).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Bun is the package manager + script runner. Pinned to match
+      # packageManager in package.json.
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # `bun run gate` is the SAME script the local pre-commit hook + the Forgejo
+      # ci.yml run — format:check / lint / typecheck / test / build in one place,
+      # so local, PR, and deploy gates cannot drift.
+      - name: Gate — format / lint / typecheck / test / build
+        run: bun run gate
+
+      # Security scanners. bun audit BLOCKS on a HIGH+ advisory (no prod-only
+      # scope, unlike `pnpm audit --prod` — also scans dev deps).
+      - name: Dependency vuln scan (bun audit)
+        run: bun audit --audit-level=high
+
+      - name: SAST (opengrep, scoped taint rules)
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash
+          export PATH="$HOME/.opengrep/cli/latest:$PATH"
+          export LANG=C.UTF-8 LC_ALL=C.UTF-8
+          opengrep scan --config rules/sast --error .
