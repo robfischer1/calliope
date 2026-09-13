@@ -8,7 +8,9 @@
 ## Validate the spike (SC-002 / FR-003)
 
 ```sh
-cd apps/calliope/spikes/wasm-compile-spike
+# the spike was removed 2026-09-13 once its result was recorded; check out the commit that added it:
+git worktree add --detach /tmp/wasm-spike 6e74329
+cd /tmp/wasm-spike/apps/calliope/spikes/wasm-compile-spike
 # compile with the sidecar's exact flag shape (linux target runs here):
 bun build --compile --target=bun-linux-x64 spike.ts --outfile dist/spike
 ./dist/spike          # expected: prints the wasm function's computed result + PASS
