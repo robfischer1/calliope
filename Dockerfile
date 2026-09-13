@@ -42,10 +42,12 @@ FROM registry.notusmi.com/rob/stellar_core:bun-mcp@sha256:b1eb482685e9898365730b
 WORKDIR /app
 COPY --from=builder --chown=bun:bun /deploy/server.js ./server.js
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8204
-USER bun
+# Numeric, so the host and the kubelet can resolve it without the image's
+# /etc/passwd: the base's bun user, measured uid=1000 gid=1000 on the running pod.
+USER 1000:1000
 EXPOSE 8204
 # Liveness — the base has bun (no curl); a GET /mcp answers 405 (POST-only),
 # which still proves the HTTP server is up; only a connect failure fails.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD bun -e "fetch('http://127.0.0.1:'+(process.env.PORT||8204)+'/mcp').then(function(r){process.exit(r.status?0:1)}).catch(function(){process.exit(1)})"
+    CMD ["bun", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8204)+'/mcp').then(function(r){process.exit(r.status?0:1)}).catch(function(){process.exit(1)})"]
 CMD ["bun", "server.js"]
