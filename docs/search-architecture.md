@@ -47,7 +47,9 @@ forward pass per edited block** (FTS5 row replace + one re-embed).
 
 ## The spike result — wasm survives the compile
 
-**Verified 2026-08-13** (`apps/calliope/spikes/wasm-compile-spike/`): a `.wasm`
+**Verified 2026-08-13** (spike at `apps/calliope/spikes/wasm-compile-spike/`, removed
+2026-09-13 once recorded here — recover it with
+`git show 6e74329:apps/calliope/spikes/wasm-compile-spike/`): a `.wasm`
 asset imported `with { type: "file" }` embeds under the sidecar's exact build
 (`bun build --compile --target=bun-{linux,windows}-x64`, bun 1.3.14), reads back
 inside the single-file binary, instantiates, and executes — linux binary run to
