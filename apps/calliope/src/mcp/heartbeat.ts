@@ -3,8 +3,8 @@
  * `stellar_core.AsyncHeartbeatPublisher`.
  *
  * A background interval publishes this star's `{star, live, ready, metrics, ts}`
- * health to the `calliope._ops.heartbeat` topic on the Pontus broker (Redpanda,
- * `pontus:29092` on the pantheon net) every interval, so Nyx, operators — and
+ * health to the `calliope._ops.heartbeat` topic on the Redpanda broker
+ * (`redpanda:29092` on the pantheon net) every interval, so Nyx, operators — and
  * Hades's re-dial consumer — can read calliope's standing off the event backbone
  * rather than only by dialing it. The `_ops` topics are schemaless (no schema
  * registry): the payload is plain JSON.
@@ -55,8 +55,8 @@ export const HEARTBEAT_TOPIC = `${STAR}._ops.heartbeat`;
  * sparse enough to be negligible load. Matches the Python `DEFAULT_INTERVAL_S`.
  */
 export const DEFAULT_INTERVAL_MS = 30_000;
-/** Pontus's internal listener on the pantheon net (the Python stars' default). */
-const DEFAULT_BOOTSTRAP = "pontus:29092";
+/** Redpanda's internal listener on the pantheon net (the Python stars' default). */
+const DEFAULT_BOOTSTRAP = "redpanda:29092";
 
 /** The heartbeat wire payload (schemaless JSON on the `_ops` topic). */
 export interface HeartbeatPayload {
@@ -124,7 +124,7 @@ export function heartbeatPayload(
 /**
  * Resolve the broker bootstrap: `KAFKA_BOOTSTRAP` — the canonical unprefixed
  * fleet key the services catalog injects — else the pantheon-net default
- * (`pontus:29092`). Pure — the env is injected.
+ * (`redpanda:29092`). Pure — the env is injected.
  *
  * `PONTUS_BOOTSTRAP` was a second definition of the same fleet fact that
  * OUTRANKED the canonical key (one-definition F3). Nothing ever set it — not the
