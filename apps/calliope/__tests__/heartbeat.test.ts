@@ -103,26 +103,26 @@ describe("resolveBootstrap", () => {
     // PONTUS_BOOTSTRAP must never beat (or stand in for) the fleet's value.
     expect(
       resolveBootstrap({
-        PONTUS_BOOTSTRAP: "pontus-x:29092",
+        PONTUS_BOOTSTRAP: "redpanda-x:29092",
         KAFKA_BOOTSTRAP: "other:9092",
       }),
     ).toBe("other:9092");
-    expect(resolveBootstrap({ PONTUS_BOOTSTRAP: "pontus-x:29092" })).toBe(
-      "pontus:29092",
+    expect(resolveBootstrap({ PONTUS_BOOTSTRAP: "redpanda-x:29092" })).toBe(
+      "redpanda:29092",
     );
   });
 
-  it("defaults to the pantheon-net Pontus listener when unset", () => {
-    expect(resolveBootstrap({})).toBe("pontus:29092");
+  it("defaults to the pantheon-net Redpanda listener when unset", () => {
+    expect(resolveBootstrap({})).toBe("redpanda:29092");
   });
 
   it("treats a blank value as unset", () => {
-    expect(resolveBootstrap({ KAFKA_BOOTSTRAP: "   " })).toBe("pontus:29092");
+    expect(resolveBootstrap({ KAFKA_BOOTSTRAP: "   " })).toBe("redpanda:29092");
   });
 
   it("trims surrounding whitespace", () => {
-    expect(resolveBootstrap({ KAFKA_BOOTSTRAP: "  pontus:29092  " })).toBe(
-      "pontus:29092",
+    expect(resolveBootstrap({ KAFKA_BOOTSTRAP: "  redpanda:29092  " })).toBe(
+      "redpanda:29092",
     );
   });
 });

@@ -181,12 +181,12 @@ describe("ConsciousnessPublisher", () => {
 describe("consciousnessEmitEnabled", () => {
   it("is ON when the fleet hands the process a broker, OFF only explicitly", () => {
     expect(consciousnessEmitEnabled({})).toBe(false);
-    expect(consciousnessEmitEnabled({ KAFKA_BOOTSTRAP: "pontus:29092" })).toBe(
-      true,
-    );
+    expect(
+      consciousnessEmitEnabled({ KAFKA_BOOTSTRAP: "redpanda:29092" }),
+    ).toBe(true);
     expect(
       consciousnessEmitEnabled({
-        KAFKA_BOOTSTRAP: "pontus:29092",
+        KAFKA_BOOTSTRAP: "redpanda:29092",
         CALLIOPE_CONSCIOUSNESS_EMIT: "0",
       }),
     ).toBe(false);
