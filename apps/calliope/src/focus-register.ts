@@ -25,8 +25,8 @@ import { isBodyPointer } from "./types.js";
 export const TELEMETRY_TOPIC = "aglaia.writing.deltas.v1";
 /** One register per star; the group id makes redeploys resume cleanly. */
 export const CONSUMER_GROUP = "calliope-focus-register";
-/** Pontus's internal listener on the pantheon net (heartbeat's default). */
-const DEFAULT_BOOTSTRAP = "pontus:29092";
+/** Redpanda's internal listener on the pantheon net (heartbeat's default). */
+const DEFAULT_BOOTSTRAP = "redpanda:29092";
 
 /** What the register holds: the pointer + when this star received it. */
 export interface FocusEntry {
