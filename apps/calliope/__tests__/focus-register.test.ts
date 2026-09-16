@@ -287,6 +287,22 @@ describe("the pin store — stack, dedupe, unpin", () => {
     );
     expect(reg.pins().map((p) => p.pinId)).toEqual(["p1"]);
   });
+
+  it("pins ONLY on pointer-pin — another type carrying a pinId is not a pin", () => {
+    // The pin branch is gated on the TYPE first. An event of some other
+    // kind that happens to carry a well-formed pinId and pointer must not
+    // stack a pin: `pointer-pin` is the deliberate gesture, and nothing
+    // else may forge it.
+    const reg = new FocusRegister();
+    for (const type of ["doc-change", "session-end", "cursor-warp"]) {
+      handleTelemetryMessage(
+        reg,
+        msg({ type, pinId: "forged", pointer: pointer() }),
+        now,
+      );
+    }
+    expect(reg.pins()).toEqual([]);
+  });
 });
 
 describe("look with pins + the unpin verb", () => {
