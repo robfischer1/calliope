@@ -19,13 +19,13 @@
     },
     "apps/calliope": {
       "name": "@forge/calliope",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "bin": {
         "calliope-mcp": "./src/mcp/main.ts",
         "calliope-mcp-http": "./src/mcp/http.ts",
       },
       "dependencies": {
-        "@forge/stellar-core-ts": "0.7.0",
+        "@forge/stellar-core-ts": "0.10.0",
         "@modelcontextprotocol/sdk": "^1.29.0",
         "@noble/hashes": "^2.4.0",
         "kafkajs": "^2.2.4",
@@ -201,7 +201,7 @@
 
     "@forge/calliope": ["@forge/calliope@workspace:apps/calliope"],
 
-    "@forge/stellar-core-ts": ["@forge/stellar-core-ts@0.7.0", "https://nexus.notusmi.com/repository/npm-hosted/@forge/stellar-core-ts/-/stellar-core-ts-0.7.0.tgz", { "dependencies": { "@opentelemetry/api": "^1.9.1", "@opentelemetry/exporter-trace-otlp-http": "^0.222.0", "@opentelemetry/resources": "^2.11.0", "@opentelemetry/sdk-trace-base": "^2.11.0", "@opentelemetry/semantic-conventions": "^1.43.0", "@peculiar/x509": "^1.14.3", "kafkajs": "^2.2.4", "spiffe": "0.5.1" } }, "sha512-dDhw3d9XpgGn5ZKruDh1KBtTsigsGYTChzIZ+v5/0xvJ7eo48tzMkGLt8ZK9vYZNgu28v2vNEkRmlCAhPoUaZw=="],
+    "@forge/stellar-core-ts": ["@forge/stellar-core-ts@0.10.0", "https://nexus.notusmi.com/repository/npm-hosted/@forge/stellar-core-ts/-/stellar-core-ts-0.10.0.tgz", { "dependencies": { "@opentelemetry/api": "^1.9.1", "@opentelemetry/exporter-trace-otlp-http": "^0.222.0", "@opentelemetry/resources": "^2.11.0", "@opentelemetry/sdk-trace-base": "^2.11.0", "@opentelemetry/semantic-conventions": "^1.43.0", "@peculiar/x509": "^1.14.3", "kafkajs": "^2.2.4", "spiffe": "0.5.1" } }, "sha512-nJNYdxRxn7mlecVLl7lAF/6Zf+W62mCZSbR/gD2/WImXXTlk2pd1Q3c5G8HE2qp9rSEwfBSvvDSn7myTJK5CSQ=="],
 
     "@grpc/grpc-js": ["@grpc/grpc-js@1.14.4", "", { "dependencies": { "@grpc/proto-loader": "^0.8.0", "@js-sdsl/ordered-map": "^4.4.2" } }, "sha512-k9Dj3DV/itK9D06Y8f190Qgop7/Ui+D0njFV3LHMPwPT75DpXLQohE9Wmz0QElrJnzsjB7KPWiKJbOl7IPDArQ=="],
 
