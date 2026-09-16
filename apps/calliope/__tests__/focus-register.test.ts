@@ -21,6 +21,22 @@ const pointer = (over?: Partial<BodyPointer>): BodyPointer => ({
   ...over,
 });
 
+/**
+ * One wire message: a COMPLETE A15 envelope, as charon's contract producer
+ * builds it. The envelope's required fields (`v`, `ts`, `nodeId`,
+ * `eventId`) are not optional on this topic — the fold reads through the
+ * contract's generated decode, so a fixture missing them is not a message
+ * the topic can carry.
+ */
+const msg = (over: Record<string, unknown>): string =>
+  JSON.stringify({
+    v: 1,
+    ts: "2026-08-13T00:00:00.000Z",
+    nodeId: "n1",
+    eventId: "e1",
+    ...over,
+  });
+
 describe("the BodyPointer mirror — pinned against theia 058", () => {
   it("accepts the well-formed shape and tolerates unknown kinds", () => {
     expect(isBodyPointer(pointer())).toBe(true);
@@ -54,45 +70,101 @@ describe("handleTelemetryMessage — the pure fold", () => {
     const reg = new FocusRegister();
     handleTelemetryMessage(
       reg,
-      JSON.stringify({ type: "selection-change", pointer: pointer() }),
+      msg({ type: "selection-change", pointer: pointer() }),
       now,
     );
     expect(reg.current()?.pointer.section).toBe("s1");
     expect(reg.current()?.receivedAt).toBe("2026-08-13T12:00:00.000Z");
   });
 
-  it("folds batches (arrays) in order — the last pointer wins", () => {
+  it("is last-write-wins across messages — one event per message", () => {
+    // charon produces one record per event, so the ordering that matters is
+    // message to message, not inside a message.
+    const reg = new FocusRegister();
+    for (const section of ["a", "b"]) {
+      handleTelemetryMessage(
+        reg,
+        msg({ type: "selection-change", pointer: pointer({ section }) }),
+        now,
+      );
+    }
+    expect(reg.current()?.pointer.section).toBe("b");
+  });
+
+  it("ignores a JSON ARRAY — no producer on this topic writes one", () => {
     const reg = new FocusRegister();
     handleTelemetryMessage(
       reg,
-      JSON.stringify([
-        { type: "selection-change", pointer: pointer({ section: "a" }) },
-        { type: "doc-change", added: 3, removed: 0 },
-        { type: "selection-change", pointer: pointer({ section: "b" }) },
-      ]),
+      JSON.stringify([{ type: "selection-change", pointer: pointer() }]),
       now,
     );
-    expect(reg.current()?.pointer.section).toBe("b");
+    expect(reg.current()).toBeNull();
   });
 
   it("ignores other events, pointerless selections, guard failures, malformed JSON", () => {
     const reg = new FocusRegister();
-    handleTelemetryMessage(reg, JSON.stringify({ type: "doc-change" }), now);
+    handleTelemetryMessage(reg, msg({ type: "doc-change" }), now);
     handleTelemetryMessage(
       reg,
-      JSON.stringify({ type: "selection-change", from: 1, to: 5 }),
+      msg({ type: "selection-change", from: 1, to: 5 }),
       now,
     );
     handleTelemetryMessage(
       reg,
-      JSON.stringify({
-        type: "selection-change",
-        pointer: { kind: "star-card" },
-      }),
+      msg({ type: "selection-change", pointer: { kind: "star-card" } }),
       now,
     );
     handleTelemetryMessage(reg, "{not json", now);
     handleTelemetryMessage(reg, undefined, now);
+    handleTelemetryMessage(reg, "", now);
+    expect(reg.current()).toBeNull();
+  });
+
+  it("TOLERATES a type it has never heard of — never throws, never folds", () => {
+    // `type` is an open string by design (the checkpoints.kind precedent):
+    // a theia variant shipped after this star must reach the topic and pass
+    // through here untouched. A stricter decode would be a regression.
+    const reg = new FocusRegister();
+    reg.set(pointer({ section: "held" }), "t0");
+    for (const type of ["cursor-warp", "doc-change", "session-start"]) {
+      expect(() => {
+        handleTelemetryMessage(reg, msg({ type, pointer: pointer() }), now);
+      }).not.toThrow();
+    }
+    // The unknown types changed nothing — the held focus is untouched.
+    expect(reg.current()?.pointer.section).toBe("held");
+  });
+
+  it("TOLERATES a pointer kind it does not know", () => {
+    const reg = new FocusRegister();
+    handleTelemetryMessage(
+      reg,
+      msg({
+        type: "selection-change",
+        // A complete pointer, but a variant this register cannot read.
+        pointer: { ...pointer(), kind: "star-card" },
+      }),
+      now,
+    );
+    expect(reg.current()).toBeNull();
+  });
+
+  it("skips a record the contract refuses rather than throwing", () => {
+    // A consumer that threw here would wedge the partition instead of
+    // committing past one bad record.
+    const reg = new FocusRegister();
+    for (const missing of ["v", "ts", "nodeId", "eventId"]) {
+      const wire = Object.fromEntries(
+        Object.entries(
+          JSON.parse(
+            msg({ type: "selection-change", pointer: pointer() }),
+          ) as Record<string, unknown>,
+        ).filter(([k]) => k !== missing),
+      );
+      expect(() => {
+        handleTelemetryMessage(reg, JSON.stringify(wire), now);
+      }).not.toThrow();
+    }
     expect(reg.current()).toBeNull();
   });
 });
@@ -191,7 +263,7 @@ describe("the pin store — stack, dedupe, unpin", () => {
     const reg = new FocusRegister();
     handleTelemetryMessage(
       reg,
-      JSON.stringify({
+      msg({
         type: "pointer-pin",
         pinId: "p1",
         pointer: pointer({ section: "a" }),
@@ -200,12 +272,17 @@ describe("the pin store — stack, dedupe, unpin", () => {
     );
     handleTelemetryMessage(
       reg,
-      JSON.stringify({ type: "pointer-pin", pointer: pointer() }), // no pinId
+      msg({ type: "pointer-pin", pointer: pointer() }), // no pinId
       now,
     );
     handleTelemetryMessage(
       reg,
-      JSON.stringify({ type: "pointer-pin", pinId: "px", pointer: { k: 1 } }),
+      msg({ type: "pointer-pin", pinId: "", pointer: pointer() }), // blank
+      now,
+    );
+    handleTelemetryMessage(
+      reg,
+      msg({ type: "pointer-pin", pinId: "px", pointer: { k: 1 } }),
       now,
     );
     expect(reg.pins().map((p) => p.pinId)).toEqual(["p1"]);
@@ -250,24 +327,16 @@ describe("pointer-live-clear (030 / Look At This F7)", () => {
     const reg = new FocusRegister();
     reg.set(pointer({ section: "ambient" }), "t0");
     reg.pin("p1", pointer({ section: "pinned" }), "t1");
-    handleTelemetryMessage(
-      reg,
-      JSON.stringify({ type: "pointer-live-clear" }),
-      now,
-    );
+    handleTelemetryMessage(reg, msg({ type: "pointer-live-clear" }), now);
     expect(reg.current()).toBeNull();
     expect(reg.pins().map((p) => p.pinId)).toEqual(["p1"]);
     // idempotent on empty
-    handleTelemetryMessage(
-      reg,
-      JSON.stringify({ type: "pointer-live-clear" }),
-      now,
-    );
+    handleTelemetryMessage(reg, msg({ type: "pointer-live-clear" }), now);
     expect(reg.current()).toBeNull();
     // opting back in resumes normally
     handleTelemetryMessage(
       reg,
-      JSON.stringify({ type: "selection-change", pointer: pointer() }),
+      msg({ type: "selection-change", pointer: pointer() }),
       now,
     );
     expect(reg.current()?.pointer.section).toBe("s1");

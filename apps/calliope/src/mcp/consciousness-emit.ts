@@ -174,8 +174,16 @@ export function noteEvent(p: NoteProjection, now: Date): ConsciousnessEvent {
 
 /** The compaction key — `source_table:source_id`, the contract's own
  *  `consciousness` key rule (topics.ts). Thin wrapper so callers in this
- *  file (and its tests) keep the pre-kafkatopics one-argument shape. */
-export function wireKey(event: ConsciousnessEvent): string {
+ *  file (and its tests) keep the pre-kafkatopics one-argument shape.
+ *
+ *  `string | null` since stellar-core-ts 0.9.0, where a key rule became
+ *  allowed to answer NO key (`KEY_RULE_NONE`, for the unkeyed
+ *  `aglaia.writing.deltas.v1`). `consciousness` is compacted and keys on
+ *  every event, so this one never actually answers null — but the wrapper
+ *  FORWARDS the contract's own return type rather than narrowing it: a
+ *  narrowing here would be this file asserting something about the key
+ *  table that only topics.ts gets to say. */
+export function wireKey(event: ConsciousnessEvent): string | null {
   return contractWireKey(CONSCIOUSNESS_TOPIC, event);
 }
 
