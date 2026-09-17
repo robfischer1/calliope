@@ -26,9 +26,10 @@
  * and the partition moves on — a register must never wedge its star over a
  * stray producer.
  *
- * Degrades like `mcp/heartbeat.ts`: a broker that never connects logs to
- * stderr and the star serves on — the register just stays at its last known
- * value (or empty). Reading NEVER mutates.
+ * Degrades like the core's heartbeat publisher (`stellar-core-ts` `ops.ts`,
+ * which this star's own `mcp/heartbeat.ts` became): a broker that never
+ * connects logs to stderr and the star serves on — the register just stays at
+ * its last known value (or empty). Reading NEVER mutates.
  */
 
 import { Kafka, logLevel } from "kafkajs";

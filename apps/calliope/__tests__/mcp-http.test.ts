@@ -1,7 +1,11 @@
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createCalliopeHttpServer, resolvePort } from "../src/mcp/http.js";
+import {
+  createCalliopeHttpServer,
+  heartbeatOptions,
+  resolvePort,
+} from "../src/mcp/http.js";
 
 /**
  * Drive the calliope-mcp HTTP star over a real socket, fixture-backed — the
@@ -188,6 +192,50 @@ describe("resolvePort", () => {
     expect(resolvePort({ PORT: "9000", CALLIOPE_MCP_PORT: "9100" })).toBe(9000);
     expect(resolvePort({})).toBe(8204);
     expect(resolvePort({ PORT: "not-a-port" })).toBe(8204);
+  });
+});
+
+describe("heartbeatOptions — what this star hands the core's publisher", () => {
+  it("beats under this star's own name", async () => {
+    // The TOPIC is derived from this name (`calliope._ops.heartbeat`), and the
+    // consciousness plane stamps the same constant. Two spellings of "who am
+    // I" would be attributed to two stars, undetectably.
+    const { SOURCE_STAR } = await import("../src/mcp/consciousness-emit.js");
+    expect(heartbeatOptions().star).toBe(SOURCE_STAR);
+    expect(heartbeatOptions().star).toBe("calliope");
+  });
+
+  it("reports ready, with the consciousness producer's own counters", async () => {
+    const { consciousnessMetrics } =
+      await import("../src/mcp/consciousness-emit.js");
+    const reading = heartbeatOptions().standing?.();
+    expect(reading?.ready).toBe(true);
+    expect(reading?.metrics).toEqual(consciousnessMetrics());
+    // Not an empty reading: `metrics` is what nyx renders on the star's card.
+    expect(Object.keys(reading?.metrics ?? {})).toContain(
+      "calliope_consciousness_published_total",
+    );
+  });
+
+  it("reads the standing per beat, not once at boot", async () => {
+    // A counter that moves between beats must be reported as it stands. A
+    // reading captured at boot would freeze the star's gauges for the life of
+    // the process, and a frozen gauge reads as a working one.
+    const { ConsciousnessPublisher, resetConsciousnessMetrics } =
+      await import("../src/mcp/consciousness-emit.js");
+    const { FakeTransport } =
+      await import("@forge/stellar-core-ts/kafkatopics");
+    const { standing } = heartbeatOptions();
+
+    resetConsciousnessMetrics();
+    const before = standing?.();
+    expect(before?.metrics.calliope_consciousness_publisher_wired).toBe(0);
+
+    const publisher = new ConsciousnessPublisher(new FakeTransport());
+    expect(publisher).toBeDefined();
+
+    const after = standing?.();
+    expect(after?.metrics.calliope_consciousness_publisher_wired).toBe(1);
   });
 });
 
