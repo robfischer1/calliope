@@ -62,8 +62,11 @@ few smaller additions that never got their own spec-kit dir:
   block-granular (`plan-blocks.ts` + `mcp/plan-ingest.ts`), so athena's
   `orchestrate_plan` never loads a whole `plan_text` into context.
 
-There's also an op-contract heartbeat publisher (`mcp/heartbeat.ts`, no
-C-number) publishing this star's liveness to Pontus.
+This star also publishes an op-contract heartbeat to Pontus (no C-number).
+It was `mcp/heartbeat.ts` until 2026-09-17; the publisher is the core's now
+(`startHeartbeat`, `@forge/stellar-core-ts` 0.12.0) and `mcp/http.ts` is the
+one call site — it supplies the star name and the per-beat standing, and
+nothing else.
 
 - **039–047 — GIT FOR IDEAS (2026-08-16, the current model).** The whole
   storage story above is superseded: blobs (039) + the tree in chaos

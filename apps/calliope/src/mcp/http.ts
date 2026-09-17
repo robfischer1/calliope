@@ -41,12 +41,14 @@ import { createServer } from "./server.js";
 import type { ChaosFacet } from "../chaos-client.js";
 import type { TagStore } from "../tag-store.js";
 import {
+  startHeartbeat,
   startTelemetry,
   telemetryConfigFromEnv,
   withSpan,
 } from "@forge/stellar-core-ts";
-import { startHeartbeat } from "./heartbeat.js";
+import type { HeartbeatOptions } from "@forge/stellar-core-ts";
 import {
+  SOURCE_STAR,
   consciousnessMetrics,
   makeConsciousnessPublisher,
   type NotePublisher,
@@ -58,6 +60,42 @@ import { makeErosProvider } from "../eros-provider.js";
 const MCP_PATH = "/mcp";
 /** Calliope's assigned constellation star port (clotho 8200, urania 8202, …). */
 const DEFAULT_PORT = 8204;
+
+/**
+ * How this star beats: its name, and what it can say about itself each beat.
+ *
+ * The PUBLISHER is the core's since `@forge/stellar-core-ts` 0.12.0 — calliope
+ * had hand-rolled the whole thing (`src/mcp/heartbeat.ts`, deleted), and its
+ * own module doc called it "the bun-side mirror of the Python stars'
+ * `stellar_core.AsyncHeartbeatPublisher`". The loop, the 30s cadence, the
+ * process-scoped `boot_id`, the `STELLAR_REVISION` read, the broker and the
+ * graceful degradation all live there now. What is left here is the only half
+ * that was ever this star's: who it is, and how it is doing.
+ *
+ * `SOURCE_STAR` rather than a second `"calliope"` literal — it is this star's
+ * `star.toml` name, which the consciousness producer already stamps on every
+ * event. A heartbeat beating under one name while the consciousness plane
+ * carried another would be attributed to two stars, and nothing downstream
+ * could tell.
+ *
+ * `ready: true` unconditionally, which is exactly what this star has always
+ * published: the HTTP listener is up by the time the beat starts, and there is
+ * no probe behind it that could answer otherwise. A real readiness latch — the
+ * store's health, the broker's — is the deferred half of the heartbeat
+ * contract, in this star and in the core.
+ *
+ * Split out of `main()` and exported because `main()` is the bin entry and no
+ * test drives it: stated inline there, every one of these decisions would be
+ * stated untested.
+ */
+export function heartbeatOptions(): HeartbeatOptions {
+  return {
+    star: SOURCE_STAR,
+    // Read PER BEAT, so a counter that moves between beats is reported as it
+    // stands rather than as it was at boot.
+    standing: () => ({ ready: true, metrics: consciousnessMetrics() }),
+  };
+}
 
 /** Resolve the listen port: PORT, else CALLIOPE_MCP_PORT, else the default. */
 export function resolvePort(env: NodeJS.ProcessEnv = process.env): number {
@@ -268,7 +306,7 @@ async function main(): Promise<void> {
   );
 
   // Publish liveness to Pontus (the op-contract heartbeat) now that we serve.
-  const heartbeat = startHeartbeat({ metrics: consciousnessMetrics });
+  const heartbeat = startHeartbeat(heartbeatOptions());
 
   const shutdown = (): void => {
     void heartbeat.stop();
