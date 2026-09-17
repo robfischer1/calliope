@@ -21,6 +21,7 @@ import {
 } from "../src/mcp/tools.js";
 import { main } from "../src/mcp/cleanup-tags.js";
 import { FixtureTagStore } from "../src/tag-store.js";
+import { installOfflineGuard } from "./setup/offline.js";
 
 const SCOPE = "notes";
 
@@ -54,6 +55,13 @@ vi.stubEnv("CALLIOPE_THEMIS_URL", DEAD_URL);
 afterAll(() => {
   vi.unstubAllEnvs();
 });
+
+// GUARD 1 — no fetch leaves loopback, whatever address a bypassed fake uses.
+// Independent of the pin above: a mutant can rewrite an operator in
+// cleanup-tags.ts, it cannot un-replace globalThis.fetch. See
+// ./setup/offline.ts, including why it is imported here rather than wired into
+// vitest.config.ts's setupFiles, which is where it belongs.
+installOfflineGuard();
 
 async function mintNote(
   dial: FixtureChaosDial,

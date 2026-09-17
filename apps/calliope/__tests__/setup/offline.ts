@@ -1,14 +1,32 @@
 /**
- * The repo-wide offline guard: no suite in this package reaches the fleet.
+ * The offline guard: a suite that calls it reaches nothing but loopback.
  *
- * Loaded through `setupFiles`, so EVERY test file inherits it — the ones
- * written today and the ones written next year. That inheritance is the whole
- * point, and it is the lesson of infra#9758's audit rather than a preference:
- * eight Python stars (terpsichore, narcissus, themis, urania, chaos, iris,
- * mnemosyne, thalassa) were immune to the whole bug class because each carries
- * an autouse `no_network` fixture in `tests/conftest.py`, and stellar-core was
- * exposed because it had no conftest at all. A guard a future test inherits
- * beats a guard a future test must remember.
+ * # Why this is a one-line import and not `setupFiles`
+ *
+ * It was `setupFiles` for one revision, which is what this guard WANTS to be:
+ * the lesson of infra#9758's audit is that eight Python stars (terpsichore,
+ * narcissus, themis, urania, chaos, iris, mnemosyne, thalassa) are immune to
+ * the whole bug class because each carries an autouse `no_network` fixture in
+ * `tests/conftest.py`, while stellar-core was exposed because it had no
+ * conftest at all. A guard a future test inherits beats a guard a future test
+ * must remember.
+ *
+ * The mutation lane refuses that wiring today, and the refusal is correct
+ * behaviour meeting a gate limitation. `ts:mutation` scopes Stryker to THE
+ * WHOLE DIFF — `*.ts *.tsx :!*.test.ts :!*.spec.ts :!*__tests__/* :!node_modules/`
+ * (foundry-tools `TSMutationSpecs`) — and `vitest.config.ts` is a `.ts` outside
+ * `__tests__/`, so touching it hands Stryker `--mutate vitest.config.ts:8-13`.
+ * Stryker instruments the vitest CONFIG, finds no test related to it, and exits
+ * `No tests were executed` — measured on calliope run
+ * `mutation-calliope-e76bd37-62767`. A config file is not mutable code, but the
+ * pathspec cannot tell.
+ *
+ * Renaming the config to dodge the pathspec, or declaring `critical_modules` to
+ * narrow the scope, would both be routing around the gate rather than fixing
+ * it — and the second NARROWS mutation coverage for the whole package to fix a
+ * test-only problem. So this exports an installer instead. Wiring it back into
+ * `setupFiles` is a one-line change the day `TSMutationSpecs` excludes config
+ * files, and then every suite inherits it with no other edit.
  *
  * # What it is guarding against
  *
@@ -96,13 +114,19 @@ const offlineFetch: typeof globalThis.fetch = (input, init) => {
   return realFetch(input, init);
 };
 
-// Per-test, not once: a suite that installs its OWN fetch stub (hades-capture,
-// live-capture) restores whatever it found, and re-arming each time keeps the
-// guard in place for the next test whatever order they ran in.
-beforeEach(() => {
-  globalThis.fetch = offlineFetch;
-});
+/**
+ * Arm the guard for the calling suite. Call once at module scope.
+ *
+ * Per-test, not once: a suite that installs its OWN fetch stub (hades-capture,
+ * live-capture) restores whatever it found, and re-arming each time keeps the
+ * guard in place for the next test whatever order they ran in.
+ */
+export function installOfflineGuard(): void {
+  beforeEach(() => {
+    globalThis.fetch = offlineFetch;
+  });
 
-afterEach(() => {
-  globalThis.fetch = realFetch;
-});
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+}
