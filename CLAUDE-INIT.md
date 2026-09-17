@@ -350,6 +350,27 @@ workflows, not here.
   it isn't here anymore.
 - **`eslint.config.mjs` ignores `**/*.config.*`** including itself and
   `vitest.config.ts` — don't expect lint to catch issues in those files.
+- **vitest `^5` is a FLOOR that local mutation testing depends on; do not
+  lower it.** `@stryker-mutator/vitest-runner@10` filters each mutant run
+  with a `testNamePattern` it builds by joining suite and test names with
+  `" > "`. vitest `<=3`'s own matcher (`getTaskFullName`) joins them with a
+  single space, so under vitest 3 every test nested in a `describe()` failed
+  the pattern and was SKIPPED: the runner executed zero tests per mutant,
+  every mutant "survived", and Stryker printed a score anyway. Measured on
+  the same tree: `bunx stryker run` went from 0 killed / `Ran 0.00 tests per
+  mutant` on vitest 3.2.7 to 1,526 killed / 766 survived / 0 errors on
+  vitest 5.0.1. The runner's peer range is `vitest >= 2.0.0`, so an install
+  on the broken combination warns about nothing — the manifest floor is the
+  only thing standing between you and a fictional score. CI was never
+  affected (the `ts:mutation` atom scopes the diff itself and ignores
+  `stryker.config.json`), which is why this survived unnoticed; see
+  calliope#9782.
+- **`stryker.config.json` sets `thresholds.break: 10` on purpose.** A local
+  run that measures nothing scores 0.00 and now EXITS NONZERO instead of
+  printing a plausible number. A silent zero is indistinguishable from a
+  real verdict, which is the failure above; the floor is far below the
+  41.18% the config's own `mutate` scope actually measures, so it fires on
+  breakage rather than on a bad day.
 - `AGENTS.md`/`CLAUDE.md` DO exist in this worktree (furnace-poured,
   gitignored) — see the top-of-file note. A fresh clone won't have them
   until `furnace pour` runs.

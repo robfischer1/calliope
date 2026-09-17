@@ -5,5 +5,6 @@
   "reporters": ["clear-text", "json"],
   "plugins": ["@stryker-mutator/vitest-runner"],
   "ignoreStatic": true,
+  "thresholds": { "break": 10 },
   "mutate": ["src/mcp/*.ts", "!src/mcp/migrate-tree.ts"]
 }
