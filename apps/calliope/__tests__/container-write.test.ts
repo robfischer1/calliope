@@ -123,7 +123,7 @@ describe("the container write (041 F4)", () => {
       writeContainer(facet, doc, [
         { op: "add", text: "refused prose", position: "a1" },
       ]),
-    ).rejects.toThrowError(ChaosClientError);
+    ).rejects.toThrow(ChaosClientError);
     dial.refuseWith = null;
 
     // Blob-first: the mint happened (orphan), the tree did not change.

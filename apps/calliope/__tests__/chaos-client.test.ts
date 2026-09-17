@@ -76,9 +76,9 @@ describe("ensureNotesRoot", () => {
   it("a refused mint surfaces as admit_refused", async () => {
     const dial = new FixtureChaosDial();
     dial.refuseWith = [{ rule: "nope" }];
-    await expect(
-      ensureNotesRoot(dial, SCOPE, () => undefined),
-    ).rejects.toThrowError(/mint refused/);
+    await expect(ensureNotesRoot(dial, SCOPE, () => undefined)).rejects.toThrow(
+      /mint refused/,
+    );
   });
 });
 
@@ -138,7 +138,7 @@ describe("decodeRpcBody — both framings streamable-HTTP allows", () => {
   it("an event-stream carrying no data: field fails loudly", () => {
     expect(() =>
       decodeRpcBody("event: message\n\n", "text/event-stream", VERB),
-    ).toThrowError(/carried no data/);
+    ).toThrow(/carried no data/);
   });
 });
 
