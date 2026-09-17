@@ -10,7 +10,7 @@
  * takes the standing inline rows off every archived note, explicit rows
  * untouched, probe mode writing nothing.
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { FixtureChaosDial, opAdd, opCreate } from "../src/chaos-client.js";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import {
@@ -23,6 +23,37 @@ import { main } from "../src/mcp/cleanup-tags.js";
 import { FixtureTagStore } from "../src/tag-store.js";
 
 const SCOPE = "notes";
+
+// GUARD 2 — a chaos and themis that name nothing, for the `main()` cases below.
+//
+// `main` picks its dial with a CONDITION: `deps.dial ?? new LiveChaosDial()`.
+// Passing a FixtureChaosDial therefore leaves this file offline only because of
+// a value it happens to pass, and Stryker's LogicalOperator mutator rewrites
+// that `??` to `&&` — a truthy fixture then makes the expression evaluate to a
+// REAL LiveChaosDial. `src/mcp/*.ts` is in this package's mutate glob, so the
+// mutant is generated whenever cleanup-tags.ts is touched.
+//
+// LiveChaosDial's constructor reads process.env, NOT the `env` object main()
+// was handed, so the `{ DATABASE_URL: "postgres://unused" }` below cannot
+// reach it. Unset, it falls back to `https://chaos:8207` and
+// `http://themis:8200`, which RESOLVE in the gate and mutation lanes because
+// those run in the cluster — and the sweep's first act is a find_by_value over
+// the live notes graph (infra#9758, the class; stellar-core-ts#23, the fix).
+//
+// `http://`, not `https://`, is load-bearing: LiveChaosDial.tls() reaches
+// X509Source.create() on the real Workload API socket for ANY https chaos URL,
+// before a byte is fetched, and the repo-wide fetch guard in
+// __tests__/setup/offline.ts cannot see that. A plaintext scheme makes tls()
+// return undefined, so this guard closes the socket leg AND the HTTP leg; the
+// setup file is the independent backstop for the second of those. No single
+// mutant defeats both.
+const DEAD_URL = "http://127.0.0.1:1";
+vi.stubEnv("CALLIOPE_CHAOS_URL", DEAD_URL);
+vi.stubEnv("CHAOS_URL", DEAD_URL);
+vi.stubEnv("CALLIOPE_THEMIS_URL", DEAD_URL);
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
 
 async function mintNote(
   dial: FixtureChaosDial,
