@@ -35,7 +35,10 @@ COPY . /app
 # Bundle the streamable-HTTP entry + deps into ONE bun-target file (no
 # node_modules shipped — smaller image + CVE surface). The monorepo roots the
 # entry at apps/calliope/src/mcp/http.ts.
-RUN bun build apps/calliope/src/mcp/http.ts --target=bun --outfile /deploy/server.js --minify
+# Through the script, not `bun build` inline: the core's Kafka client needs a
+# resolve-time swap (its WebAssembly is read off disk relative to the module,
+# which a one-file bundle cannot carry) and the CLI takes no plugins.
+RUN bun apps/calliope/scripts/bundle.ts /deploy
 
 # -- Stage 2: runtime ---------------------------------------------------------
 FROM registry.notusmi.com/rob/stellar_core:bun-mcp@sha256:b1eb482685e9898365730bcde99cb467cf3521bfc698a11dfebac013b09ec42c

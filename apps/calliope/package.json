@@ -30,10 +30,10 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@forge/stellar-core-ts": "0.12.1",
+    "@forge/stellar-core-ts": "0.14.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@noble/hashes": "^2.4.0",
-    "kafkajs": "^2.2.4",
+    "@platformatic/kafka": "^2.11.0",
     "onnxruntime-web": "^1.27.0",
     "pg": "^8.22.0",
     "zod": "^4.0.0"
