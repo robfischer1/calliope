@@ -37,7 +37,7 @@
  * says on every beat whether a producer exists at all — the silence this
  * replaces was a feature flag nobody set.
  *
- * THE WIRE, wonka-048. This producer used to build its own kafkajs producer
+ * THE WIRE, wonka-048. This producer used to build its own Kafka producer
  * and hand-roll the wire encoding (a sentinel-substitution splice over
  * `JSON.stringify`, so `source_id` reached the wire as a raw integer literal
  * rather than a JS `number` that would round it above 2^53 — see git history
@@ -60,7 +60,7 @@
 
 import { blake2b } from "@noble/hashes/blake2.js";
 import {
-  createKafkaJsTransport,
+  createKafkaTransport,
   produce,
   record,
   TOPIC_CONSCIOUSNESS,
@@ -303,9 +303,9 @@ export function consciousnessEmitEnabled(
   return resolvedBootstrap(env) !== undefined;
 }
 
-/** The kafkajs client id this producer's transport connects under — its own
- *  named constant (not an inline literal in {@link makeConsciousnessTransport})
- *  so its value is directly testable without reaching into kafkajs's own
+/** The client id this producer's transport connects under — its own named
+ *  constant (not an inline literal in {@link makeConsciousnessTransport})
+ *  so its value is directly testable without reaching into the client's
  *  internals. */
 export const CONSCIOUSNESS_CLIENT_ID = "calliope-consciousness";
 
@@ -313,7 +313,7 @@ export const CONSCIOUSNESS_CLIENT_ID = "calliope-consciousness";
  *  (`topics-apply`), never a producer side effect — a compacted topic
  *  auto-created with the broker's defaults would not compact. */
 export function makeConsciousnessTransport(bootstrap: string): Transport {
-  return createKafkaJsTransport(bootstrap, CONSCIOUSNESS_CLIENT_ID);
+  return createKafkaTransport(bootstrap, CONSCIOUSNESS_CLIENT_ID);
 }
 
 /** The boot-time factory: a publisher when enabled, else `undefined` — and a

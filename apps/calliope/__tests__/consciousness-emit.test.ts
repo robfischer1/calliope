@@ -11,7 +11,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   decode,
-  KafkaJsTransport,
+  KafkaTransport,
   type Transport,
 } from "@forge/stellar-core-ts/kafkatopics";
 import {
@@ -389,10 +389,10 @@ describe("makeConsciousnessPublisher", () => {
 });
 
 describe("makeConsciousnessTransport", () => {
-  it("is a real KafkaJsTransport, built with the producer's own client id", () => {
+  it("is a real KafkaTransport, built with the producer's own client id", () => {
     expect(CONSCIOUSNESS_CLIENT_ID).toBe("calliope-consciousness");
     expect(makeConsciousnessTransport("redpanda:29092")).toBeInstanceOf(
-      KafkaJsTransport,
+      KafkaTransport,
     );
   });
 });

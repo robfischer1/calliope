@@ -32,8 +32,11 @@
  * its last known value (or empty). Reading NEVER mutates.
  */
 
-import { Kafka, logLevel } from "kafkajs";
-import type { Consumer } from "kafkajs";
+import {
+  Consumer,
+  MessagesStreamModes,
+  stringDeserializers,
+} from "@platformatic/kafka";
 import {
   TOPIC_AGLAIA_WRITING_DELTAS,
   decodeWritingDeltaEvent,
@@ -45,8 +48,20 @@ import { isBodyPointer } from "./types.js";
 /** The A15 writing-telemetry topic (the producer side lives in charon).
  *  The contract's own constant — never a literal. */
 export const TELEMETRY_TOPIC = TOPIC_AGLAIA_WRITING_DELTAS;
-/** One register per star; the group id makes redeploys resume cleanly. */
+/** One register per star: the group id is what makes two replicas of
+ *  this star share the topic's partitions rather than each fold every
+ *  record. It does NOT decide where a redeploy starts — see
+ *  {@link FOCUS_STREAM_MODE}. */
 export const CONSUMER_GROUP = "calliope-focus-register";
+/** The client id the broker sees this consumer under. */
+export const CONSUMER_CLIENT_ID = "calliope-focus";
+/** From LATEST, on every boot. A register wants NOW, not history —
+ *  replaying stale focus after a redeploy would put an old pointer in
+ *  front of every session until the next selection, which is worse than
+ *  an empty slot. The kafkajs consumer this replaced resumed from the
+ *  group's committed offset (`fromBeginning: false`), which matched this
+ *  intent only until the first commit. */
+export const FOCUS_STREAM_MODE = MessagesStreamModes.LATEST;
 /** Redpanda's internal listener on the pantheon net (heartbeat's default). */
 const DEFAULT_BOOTSTRAP = "redpanda:29092";
 
@@ -159,9 +174,87 @@ export function handleTelemetryMessage(
   }
 }
 
-/** A running consumer; `stop()` disconnects it. */
+/** A running consumer; `stop()` closes it. */
 export interface FocusConsumerHandle {
   stop: () => Promise<void>;
+}
+
+/** One record as the register reads it: the value, deserialized to a
+ *  string, or `undefined` for a null value (a tombstone, which the fold
+ *  skips). */
+export interface FocusMessage {
+  readonly value: string | undefined;
+}
+
+/** The stream a consumer answers: the records, and a `close` that ends it
+ *  — which has to happen BEFORE the consumer closes, or the client refuses
+ *  to leave the group while a stream is open. */
+export interface FocusStream extends AsyncIterable<FocusMessage> {
+  close(): Promise<void>;
+}
+
+/** The half of a consumer this module drives — structural, not the
+ *  client's own `Consumer` type, so a test injects a double and
+ *  {@link openFocusConsumer} is the only line that names the client. */
+export interface ConsumerLike {
+  consume(options: {
+    readonly topics: string[];
+    readonly mode: typeof FOCUS_STREAM_MODE;
+  }): Promise<FocusStream>;
+  close(): Promise<void>;
+}
+
+/** The session timing this module DECLARES — kafkajs's defaults, which
+ *  are what the fleet has run on. The client's own (60s session, 102s
+ *  rebalance) would double the gap a redeploy leaves in live focus: a
+ *  member that is killed rather than stopped holds the group until its
+ *  session expires, and the replacement's join is refused (code 23,
+ *  INCONSISTENT_GROUP_PROTOCOL, measured 2026-09-17 against a local
+ *  broker) until then. */
+export const FOCUS_SESSION_TIMEOUT_MS = 30_000;
+export const FOCUS_REBALANCE_TIMEOUT_MS = 60_000;
+
+/** The consumer options this module DECLARES, split out so a test asserts
+ *  the wire settings are stated here rather than inherited from the
+ *  client. String deserializers: the fold takes the value as text and
+ *  hands it to the contract's decoder. The client logs through `debug`
+ *  only, so there is no log level to silence — stdout stays the star's
+ *  MCP transport's. */
+export function focusConsumerOptions(
+  bootstrap: string,
+): ConstructorParameters<typeof Consumer<string, string, string, string>>[0] {
+  return {
+    clientId: CONSUMER_CLIENT_ID,
+    groupId: CONSUMER_GROUP,
+    bootstrapBrokers: [bootstrap],
+    deserializers: stringDeserializers,
+    sessionTimeout: FOCUS_SESSION_TIMEOUT_MS,
+    rebalanceTimeout: FOCUS_REBALANCE_TIMEOUT_MS,
+  };
+}
+
+/** Open this module's own consumer against `bootstrap`. Nothing is
+ *  dialled until `consume`. */
+export function openFocusConsumer(bootstrap: string): ConsumerLike {
+  return new Consumer<string, string, string, string>(
+    focusConsumerOptions(bootstrap),
+  );
+}
+
+/** How long a failed or ended subscription waits before the next attempt.
+ *  Long enough not to hammer a broker that is down; short enough that a
+ *  redeploy's refused join (see {@link FOCUS_SESSION_TIMEOUT_MS}) costs at
+ *  most one extra interval of live focus. */
+export const FOCUS_RETRY_DELAY_MS = 15_000;
+
+/** stderr, not stdout: a bun star's stdout is its MCP transport. */
+function stderrLog(line: string): void {
+  process.stderr.write(`${line}\n`);
+}
+
+/** An error's message, for a log line that must never itself throw. */
+function reason(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** Resolve the broker bootstrap exactly as the heartbeat does. */
@@ -173,60 +266,113 @@ export function resolveBootstrap(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
- * Start the register's consumer. From LATEST (a register wants now, not
- * history — replaying stale focus would be worse than empty). A broker
- * fault logs once per attempt and never throws into the caller; the star
- * serves regardless.
+ * Start the register's consumer. From LATEST ({@link FOCUS_STREAM_MODE}),
+ * and FOR THE LIFE OF THE PROCESS: a subscription that cannot be opened, or
+ * a stream that ends or dies, is logged and retried after
+ * {@link FOCUS_RETRY_DELAY_MS}, with a fresh consumer each time. The kafkajs
+ * consumer this replaced tried once and, on a fault, served without live
+ * focus until the next redeploy — which is exactly the window a redeploy
+ * itself opens (the outgoing pod holds the group until its session
+ * expires), so the one-shot could lose the register on every rollout.
+ *
+ * Nothing here throws into the caller; the star serves regardless, the
+ * register staying at its last value (or empty). `stop()` ends the stream,
+ * closes the consumer and cancels any pending retry — a stream that ends
+ * because it was stopped is not reported as a fault.
  */
 export function startFocusConsumer(
   register: FocusRegister,
-  opts: { bootstrap?: string } = {},
+  opts: {
+    bootstrap?: string;
+    /** Open a consumer — one per attempt. Default: {@link openFocusConsumer}
+     *  against `bootstrap`. A test's factory hands back doubles. */
+    openConsumer?: () => ConsumerLike;
+    /** Where the consumer's own diagnostics go. Default: one line to stderr. */
+    log?: (line: string) => void;
+    retryDelayMs?: number;
+  } = {},
 ): FocusConsumerHandle {
   const bootstrap = opts.bootstrap ?? resolveBootstrap();
-  const kafka = new Kafka({
-    clientId: "calliope-focus",
-    brokers: [bootstrap],
-    logLevel: logLevel.NOTHING,
-  });
-  const consumer: Consumer = kafka.consumer({ groupId: CONSUMER_GROUP });
-  let stopped = false;
+  const openConsumer =
+    opts.openConsumer ?? ((): ConsumerLike => openFocusConsumer(bootstrap));
+  const log = opts.log ?? stderrLog;
+  const retryDelayMs = opts.retryDelayMs ?? FOCUS_RETRY_DELAY_MS;
+
+  // A function, not a bare flag: `stop()` flips it from another closure,
+  // which TypeScript's narrowing cannot see — a `let` read after the loop
+  // condition types as `false` forever, and the lint rightly calls every
+  // later check on it unnecessary. A call is never narrowed.
+  let stopRequested = false;
+  const stopped = (): boolean => stopRequested;
+  let consumer: ConsumerLike | undefined;
+  let stream: FocusStream | undefined;
+  let wake: (() => void) | undefined;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Sleep `retryDelayMs`, or less if `stop()` arrives first. */
+  const pause = (): Promise<void> =>
+    new Promise((resolve) => {
+      wake = resolve;
+      retryTimer = setTimeout(resolve, retryDelayMs);
+    });
+
+  /** Release whatever the current attempt opened. Never throws. */
+  const release = async (): Promise<void> => {
+    const s = stream;
+    const c = consumer;
+    stream = undefined;
+    consumer = undefined;
+    try {
+      await s?.close();
+    } catch {
+      // best-effort teardown — the consumer's close follows regardless.
+    }
+    try {
+      await c?.close();
+    } catch {
+      // best-effort teardown — shutdown proceeds regardless.
+    }
+  };
 
   const run = async (): Promise<void> => {
-    try {
-      await consumer.connect();
-      await consumer.subscribe({
-        topic: TELEMETRY_TOPIC,
-        fromBeginning: false,
-      });
-      await consumer.run({
-        eachMessage: ({ message }) => {
-          handleTelemetryMessage(register, message.value?.toString("utf8"));
-          return Promise.resolve();
-        },
-      });
-      process.stderr.write(
-        `calliope-focus: consuming ${TELEMETRY_TOPIC} (bootstrap=${bootstrap})\n`,
-      );
-    } catch (err) {
-      if (!stopped) {
-        process.stderr.write(
-          `calliope-focus: consumer unavailable (serving without live focus): ${
-            err instanceof Error ? err.message : String(err)
-          }\n`,
+    while (!stopped()) {
+      try {
+        consumer = openConsumer();
+        stream = await consumer.consume({
+          topics: [TELEMETRY_TOPIC],
+          mode: FOCUS_STREAM_MODE,
+        });
+        log(
+          `calliope-focus: consuming ${TELEMETRY_TOPIC} (bootstrap=${bootstrap})`,
         );
+        for await (const message of stream) {
+          handleTelemetryMessage(register, message.value);
+        }
+        if (!stopped()) {
+          log(
+            `calliope-focus: stream ended (reconnecting in ${String(retryDelayMs)}ms)`,
+          );
+        }
+      } catch (err) {
+        if (!stopped()) {
+          log(
+            `calliope-focus: consumer unavailable (serving without live focus; retrying in ${String(retryDelayMs)}ms): ${reason(err)}`,
+          );
+        }
       }
+      await release();
+      if (stopped()) return;
+      await pause();
     }
   };
   void run();
 
   return {
     stop: async (): Promise<void> => {
-      stopped = true;
-      try {
-        await consumer.disconnect();
-      } catch {
-        // best-effort teardown — shutdown proceeds regardless.
-      }
+      stopRequested = true;
+      if (retryTimer !== undefined) clearTimeout(retryTimer);
+      wake?.();
+      await release();
     },
   };
 }
