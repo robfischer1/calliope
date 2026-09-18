@@ -31,9 +31,20 @@
 # gating a foundry-tools change against itself (`CA_MODULE=/path/to/checkout`).
 ca_module := env("CA_MODULE", "git.notusmi.com/rob/foundry-tools@main")
 
+# `--source=.` IS THE WHOLE POINT, NOT A NICETY. The module declares its
+# Source with `+defaultPath="."`, and for a module loaded from git that
+# default is the MODULE'S OWN checkout — GitRef.tree of foundry-tools at the
+# ref, shallow — not the tree the hook runs in. MEASURED 2026-09-18 (dagger
+# v0.21.9): without it, `just gate` in a TypeScript star ran the Go lanes,
+# reported "no package.json at the repository root", and the witness could
+# not run because the star's merge base was "not in this history" — foundry-
+# tools' history. Every star's stage read green against the wrong tree.
+# `--source=.` hands the function this checkout, with the module's ignore
+# patterns applied and `.git` as the working tree carries it.
+
 # The commit stage, on the engine — what hooks/pre-commit runs.
 check:
-    dagger call -m "{{ca_module}}" check exit
+    dagger call -m "{{ca_module}}" --source=. check exit
 
 # The push stage, on the engine — what hooks/pre-push runs.
 gate:
@@ -41,6 +52,6 @@ gate:
     set -eu
     base=$(git merge-base origin/main HEAD 2>/dev/null || true)
     if [ -n "$base" ]; then
-        exec dagger call -m "{{ca_module}}" push --base="$base" exit
+        exec dagger call -m "{{ca_module}}" --source=. push --base="$base" exit
     fi
-    exec dagger call -m "{{ca_module}}" push exit
+    exec dagger call -m "{{ca_module}}" --source=. push exit
