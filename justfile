@@ -17,25 +17,14 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 star := file_name(justfile_directory())
 
+# The two stages a commit and a push must pass (CA F15): `just check` at
+# commit, `just gate` at push. Both recipes live in stages.just, rendered by
+# the spec-kit override template; the hooks under hooks/ call them.
+import 'stages.just'
+
 # List available recipes
 default:
     @just --list
-
-# Fast loop: lint, typecheck, test. Run this constantly.
-#
-# Skips the build that `gate` runs — turbo caches it, but it is still the slow
-# leg and rarely what a source edit breaks first.
-check: lint typecheck test
-
-# Everything frontend-ci.yml runs. Run before pushing.
-#
-# `bun run gate` is package.json's own gate — format:check, then turbo lint /
-# typecheck / test / build. Calling it (rather than re-listing its parts) keeps
-# this file from drifting out of step with the script CI actually invokes.
-gate: install
-    bun run gate
-    just vuln
-    just sast
 
 # Restore node_modules from the lockfile, exactly as CI does.
 # --frozen-lockfile FAILS on a drifted lock instead of silently updating it.
