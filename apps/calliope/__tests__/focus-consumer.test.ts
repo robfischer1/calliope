@@ -10,7 +10,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stringDeserializers } from "@platformatic/kafka";
 import {
-  CONSUMER_CLIENT_ID,
   CONSUMER_GROUP,
   FOCUS_REBALANCE_TIMEOUT_MS,
   FOCUS_RETRY_DELAY_MS,
@@ -166,14 +165,13 @@ afterEach(() => {
 describe("the consumer this module declares", () => {
   it("names the client and the group, points at the one bootstrap, deserializes strings, and states the session timing", () => {
     expect(focusConsumerOptions("redpanda:29092")).toEqual({
-      clientId: CONSUMER_CLIENT_ID,
-      groupId: CONSUMER_GROUP,
+      clientId: "calliope-focus",
+      groupId: "calliope-focus-register",
       bootstrapBrokers: ["redpanda:29092"],
       deserializers: stringDeserializers,
-      sessionTimeout: FOCUS_SESSION_TIMEOUT_MS,
-      rebalanceTimeout: FOCUS_REBALANCE_TIMEOUT_MS,
+      sessionTimeout: 30_000,
+      rebalanceTimeout: 60_000,
     });
-    expect(CONSUMER_CLIENT_ID).toBe("calliope-focus");
     expect(CONSUMER_GROUP).toBe("calliope-focus-register");
   });
 
@@ -343,6 +341,10 @@ describe("startFocusConsumer", () => {
     expect(
       lines.filter((l) => l.includes("unavailable") || l.includes("ended")),
     ).toEqual([]);
+    // Nothing armed after the stop: no retry was scheduled for a loop that
+    // is over, and nothing closes twice.
+    expect(vi.getTimerCount()).toBe(0);
+    expect(consumer.closeCalls).toBe(1);
   });
 
   it("stop() during the retry delay cancels the retry — no consumer is opened after it", async () => {
@@ -359,11 +361,14 @@ describe("startFocusConsumer", () => {
     });
     await settle();
     expect(f.opened).toBe(1);
+    expect(vi.getTimerCount()).toBe(1); // the retry, armed
     await handle.stop();
+    expect(vi.getTimerCount()).toBe(0); // disarmed by the stop, not left to fire
     await vi.advanceTimersByTimeAsync(5000);
     await settle();
     expect(f.opened).toBe(1);
     expect(never.consumeCalls).toHaveLength(0);
+    expect(refused.closeCalls).toBe(1); // released once by the loop, not again by the stop
   });
 
   it("a fault raised after stop() is not reported either — the star is going down anyway", async () => {
@@ -383,12 +388,19 @@ describe("startFocusConsumer", () => {
     await handle.stop();
     await settle();
     expect(lines.filter((l) => l.includes("unavailable"))).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("survives a stream and a consumer that cannot be closed", async () => {
     const consumer = fakeConsumer();
-    consumer.feed.close = () => Promise.reject(new Error("stream is gone"));
-    consumer.close = () => Promise.reject(new Error("socket is gone"));
+    consumer.feed.close = function (this: typeof consumer.feed) {
+      this.closeCalls++;
+      return Promise.reject(new Error("stream is gone"));
+    };
+    consumer.close = function (this: typeof consumer) {
+      this.closeCalls++;
+      return Promise.reject(new Error("socket is gone"));
+    };
     const handle = startFocusConsumer(new FocusRegister(), {
       openConsumer: factory(consumer).open,
       bootstrap: "b:9092",
@@ -396,6 +408,34 @@ describe("startFocusConsumer", () => {
     });
     await settle();
     await expect(handle.stop()).resolves.toBeUndefined();
+    expect(consumer.feed.closeCalls).toBe(1);
+    expect(consumer.closeCalls).toBe(1);
+  });
+
+  it("writes its diagnostics to stderr, one line each, when given no log", async () => {
+    // stdout is the MCP transport; the default sink must be stderr and must
+    // terminate the line, or the next diagnostic runs into it.
+    const written: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        written.push(String(chunk));
+        return true;
+      });
+    try {
+      const consumer = fakeConsumer();
+      const handle = startFocusConsumer(new FocusRegister(), {
+        openConsumer: factory(consumer).open,
+        bootstrap: "b:9092",
+      });
+      await settle();
+      expect(written).toEqual([
+        `calliope-focus: consuming ${TELEMETRY_TOPIC} (bootstrap=b:9092)\n`,
+      ]);
+      await handle.stop();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("resolves the bootstrap from the environment when given none", async () => {

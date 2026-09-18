@@ -53,8 +53,6 @@ export const TELEMETRY_TOPIC = TOPIC_AGLAIA_WRITING_DELTAS;
  *  record. It does NOT decide where a redeploy starts — see
  *  {@link FOCUS_STREAM_MODE}. */
 export const CONSUMER_GROUP = "calliope-focus-register";
-/** The client id the broker sees this consumer under. */
-export const CONSUMER_CLIENT_ID = "calliope-focus";
 /** From LATEST, on every boot. A register wants NOW, not history —
  *  replaying stale focus after a redeploy would put an old pointer in
  *  front of every session until the next selection, which is worse than
@@ -224,7 +222,7 @@ export function focusConsumerOptions(
   bootstrap: string,
 ): ConstructorParameters<typeof Consumer<string, string, string, string>>[0] {
   return {
-    clientId: CONSUMER_CLIENT_ID,
+    clientId: "calliope-focus",
     groupId: CONSUMER_GROUP,
     bootstrapBrokers: [bootstrap],
     deserializers: stringDeserializers,
@@ -239,6 +237,26 @@ export function openFocusConsumer(bootstrap: string): ConsumerLike {
   return new Consumer<string, string, string, string>(
     focusConsumerOptions(bootstrap),
   );
+}
+
+/** Anything with a best-effort close: a stream, a consumer. */
+interface Closable {
+  close(): Promise<void>;
+}
+
+/** Close what is open, swallowing a REFUSAL: a wedged stream or consumer
+ *  must not stall a shutdown or the next attempt. Only the rejection is
+ *  swallowed — `close` is called outside the try, so a seam that throws
+ *  synchronously (a `close` that is not a function) is a broken double or
+ *  a broken client, and that escapes rather than passing as "closed". */
+async function closeQuietly(target: Closable | undefined): Promise<void> {
+  if (target === undefined) return;
+  const closing = target.close();
+  try {
+    await closing;
+  } catch {
+    // best-effort teardown — the caller proceeds regardless.
+  }
 }
 
 /** How long a failed or ended subscription waits before the next attempt.
@@ -304,8 +322,11 @@ export function startFocusConsumer(
   // later check on it unnecessary. A call is never narrowed.
   let stopRequested = false;
   const stopped = (): boolean => stopRequested;
-  let consumer: ConsumerLike | undefined;
-  let stream: FocusStream | undefined;
+  // What the current attempt holds open; a release closes the stream
+  // first, because the client refuses to leave the group while a stream is
+  // open.
+  let consumer: Closable | undefined;
+  let stream: Closable | undefined;
   let wake: (() => void) | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -322,30 +343,24 @@ export function startFocusConsumer(
     const c = consumer;
     stream = undefined;
     consumer = undefined;
-    try {
-      await s?.close();
-    } catch {
-      // best-effort teardown — the consumer's close follows regardless.
-    }
-    try {
-      await c?.close();
-    } catch {
-      // best-effort teardown — shutdown proceeds regardless.
-    }
+    await closeQuietly(s);
+    await closeQuietly(c);
   };
 
   const run = async (): Promise<void> => {
     while (!stopped()) {
       try {
-        consumer = openConsumer();
-        stream = await consumer.consume({
+        const opened = openConsumer();
+        consumer = opened;
+        const records = await opened.consume({
           topics: [TELEMETRY_TOPIC],
           mode: FOCUS_STREAM_MODE,
         });
+        stream = records;
         log(
           `calliope-focus: consuming ${TELEMETRY_TOPIC} (bootstrap=${bootstrap})`,
         );
-        for await (const message of stream) {
+        for await (const message of records) {
           handleTelemetryMessage(register, message.value);
         }
         if (!stopped()) {
@@ -370,7 +385,9 @@ export function startFocusConsumer(
   return {
     stop: async (): Promise<void> => {
       stopRequested = true;
-      if (retryTimer !== undefined) clearTimeout(retryTimer);
+      // Unconditional: clearTimeout(undefined) is a no-op, and a pending
+      // retry left armed after stop is a timer nothing will ever answer.
+      clearTimeout(retryTimer);
       wake?.();
       await release();
     },
