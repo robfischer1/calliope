@@ -32,9 +32,14 @@ default:
 install:
     bun install --frozen-lockfile
 
-[doc('Lint all packages')]
-lint:
-    turbo run lint
+# Format + lint — the commit stage, on the engine: the same call the commit hook
+# makes (`just check`, stages.just). NOTHING LINTS LOCALLY ANY MORE (CA F18;
+# Rob, 2026-09-19: "I don't want any of this running locally anymore"): no
+# pre-commit, no lint-staged, no eslint or prettier on the laptop — the fleet's
+# ruleset is foundry-tools', the engine caches every toolchain, and a red here
+# is the same red the door would give. It sees every file in the tree, staged
+# or not, because the engine is handed the tree and not git's index.
+lint: check
 
 [doc('Typecheck all packages')]
 typecheck:

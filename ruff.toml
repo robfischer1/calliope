@@ -33,7 +33,7 @@
 target-version = "py311"
 line-length = 100
 
-# furnace owns these; the pre-commit config excludes them too.
+# furnace owns these; the engine's stages never read them either.
 extend-exclude = [".claude", ".specify", ".furnace", "vendor", "node_modules"]
 
 [lint]
