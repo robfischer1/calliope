@@ -1,0 +1,10 @@
+{
+  "name": "calliope",
+  "engineVersion": "v0.21.9",
+  "toolchains": [
+    {
+      "name": "foundry-tools",
+      "source": "git.notusmi.com/rob/foundry-tools"
+    }
+  ]
+}
