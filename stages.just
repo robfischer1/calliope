@@ -26,6 +26,16 @@
 # them. Its base is the merge base with origin/main, and only the atoms that
 # grade a CHANGE read it; a repo with no origin/main yet (a fresh birth) is
 # gated without one.
+#
+# THE ORIGIN RIDES WITH THE BASE, so a push from a linked worktree has the
+# base's history (CA F16; Rob, 2026-09-19: "let dagger grab the tree"). A
+# worktree's .git is a pointer into the primary that means nothing inside the
+# engine, and the diff-scoped atoms stood down on it — go:mutation answered 0
+# with "no usable PR base sha" on the hook while the door's Job found 244
+# missed mutants on the same sha (terpsichore 1c28f38, foundry-tools#10253).
+# Named the origin, the ENGINE fetches the base commit's repository from the
+# door and commits the snapshot on top, so the hook grades the same change set
+# the door does (foundry-tools run.gitReadyOn).
 
 # The module that carries the stages. CA_MODULE overrides it for a session
 # gating a foundry-tools change against itself (`CA_MODULE=/path/to/checkout`).
@@ -52,6 +62,6 @@ gate:
     set -eu
     base=$(git merge-base origin/main HEAD 2>/dev/null || true)
     if [ -n "$base" ]; then
-        exec dagger call -m "{{ca_module}}" --source=. push --base="$base" exit
+        exec dagger call -m "{{ca_module}}" --source=. push --base="$base" --origin="$(git remote get-url origin)" exit
     fi
     exec dagger call -m "{{ca_module}}" --source=. push exit
