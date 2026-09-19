@@ -22,3 +22,6 @@ CLAUDE.md
 
 # furnace-provisioned (regenerable via `furnace pour`; do not commit)
 .furnace/base/
+
+# The Gate's release artifact, staged by `just image` and the build lane; never tracked.
+/release/
