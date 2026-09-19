@@ -66,8 +66,12 @@ sast:
 dev *ARGS:
     turbo run dev {{ARGS}}
 
-# Build the container exactly as CI does — catches Dockerfile drift `check` cannot
+# Build the container as the build lane does: the Gate's release (the bundle,
+# built on the image's own base) staged at release/ — the Dockerfile copies it
+# in; nothing bundles inside the image — then the Dockerfile. Catches
+# Dockerfile drift `check` cannot.
 image:
+    dagger call -m "git.notusmi.com/rob/foundry-tools@main" --source=. release export --path release
     DOCKER_BUILDKIT=1 docker build --pull -t {{star}}:dev .
 
 [doc('Remove node_modules, .turbo and dist trees')]
