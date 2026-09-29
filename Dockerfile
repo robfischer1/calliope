@@ -18,7 +18,7 @@
 # THE BASE is oven/bun slim plus stellar-boot (foundry/base-images/bun); its
 # ENTRYPOINT is stellar-boot, which execs this CMD — dormant until
 # CALYPSO_IDENTITY_ID is set. Renovate moves the digest.
-FROM registry.notusmi.com/foundry/base-images/bun:stable@sha256:abe5450d449178b56a49871f25d428e46188d4d9f1d8d9a92830439dd90f2aff
+FROM registry.notusmi.com/foundry/base-images/bun:stable@sha256:2d7a644c575a4f8315b7d6177171a29c39a968c6fddff8bfc9181e9247d36fc9
 WORKDIR /app
 # Numeric, so the host and the kubelet can resolve it without the image's
 # /etc/passwd: the base's bun user, measured uid=1000 gid=1000 on the running pod.
