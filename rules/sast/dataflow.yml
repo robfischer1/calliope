@@ -1,7 +1,8 @@
-# Curated SAST ruleset for Forge front-end / Node stars (#1471) - opengrep / semgrep.
+# Curated SAST ruleset for Forge front-end stars (#1471) - opengrep / semgrep.
 #
 # TypeScript/JavaScript TAINT mode, by design. Scoped to data-FLOW issues - an
-# untrusted SOURCE reaching a dangerous SINK - the semantic layer above eslint.
+# untrusted SOURCE reaching a dangerous SINK - which is the semantic layer above
+# eslint's AST lint (the TS analogue of ruff `S` for the Python template).
 #
 # Sources are external/untrusted inputs (request bodies, search/route params,
 # headers, argv), NOT static config. ASCII-only on purpose: opengrep reads rule
