@@ -1,7 +1,11 @@
-# THE TWO STAGES A COMMIT AND A PUSH MUST PASS (CA master-plan F15), as the
-# recipes the tracked hooks call: hooks/pre-commit is `just check`, hooks/pre-push
-# is `just gate`. The hook never changes; what a commit must pass is a recipe —
-# the same recipe a session runs by hand.
+# THE TWO STAGES (CA master-plan F15). hooks/pre-commit runs `just check`, the
+# commit stage, on the engine. THE PUSH STAGE RUNS NOTHING, since 2026-10-02
+# (Rob, "Option 1": the lanes are the gate). A push of a branch makes the door
+# ask that head's lanes on the cluster — the gate, and mutation and the build
+# where they apply — as the pull it will become (ourea branch_lanes.go), and
+# the pull that opens on it reuses them. So hooks/pre-push and `just gate`
+# only say where the answer is. The recipe keeps its name because the blades
+# and sessions call it; it no longer reaches the engine.
 #
 # RENDERED BY THE SPEC-KIT OVERRIDE TEMPLATE (foundry-stocks, speckit/), tracked,
 # re-laid at every session start: one home for the call across the fleet, so a
@@ -19,23 +23,9 @@
 #
 # THE COMMIT STAGE is the basic checks every tree gets, beside the language
 # checks for what this tree contains — format, lint, unit tests — planned before
-# anything runs and settled on the worst of them. THE PUSH STAGE is the slow
-# checks in sequence, cheapest first — deep lint, the known-vulnerability scan,
-# the release build the image will carry, the race + live-database suite —
-# stopping at the first that finds something, with the mutation gate beside
-# them. Its base is the merge base with origin/main, and only the atoms that
-# grade a CHANGE read it; a repo with no origin/main yet (a fresh birth) is
-# gated without one.
-#
-# THE ORIGIN RIDES WITH THE BASE, so a push from a linked worktree has the
-# base's history (CA F16; Rob, 2026-09-19: "let dagger grab the tree"). A
-# worktree's .git is a pointer into the primary that means nothing inside the
-# engine, and the diff-scoped atoms stood down on it — go:mutation answered 0
-# with "no usable PR base sha" on the hook while the door's Job found 244
-# missed mutants on the same sha (terpsichore 1c28f38, foundry-tools#10253).
-# Named the origin, the ENGINE fetches the base commit's repository from the
-# door and commits the snapshot on top, so the hook grades the same change set
-# the door does (foundry-tools run.gitReadyOn).
+# anything runs and settled on the worst of them. The slow checks and mutation
+# that the push stage used to run here are the branch's lanes now, run by the
+# door against the merge base with the default branch.
 
 # The module that carries the stages. CA_MODULE overrides it for a session
 # gating a foundry-tools change against itself (`CA_MODULE=/path/to/checkout`).
@@ -45,23 +35,63 @@ ca_module := env("CA_MODULE", "git.notusmi.com/rob/foundry-tools@main")
 # Source with `+defaultPath="."`, and for a module loaded from git that
 # default is the MODULE'S OWN checkout — GitRef.tree of foundry-tools at the
 # ref, shallow — not the tree the hook runs in. MEASURED 2026-09-18 (dagger
-# v0.21.9): without it, `just gate` in a TypeScript star ran the Go lanes,
+# v0.21.9): without it, the push stage in a TypeScript star ran the Go lanes,
 # reported "no package.json at the repository root", and the witness could
 # not run because the star's merge base was "not in this history" — foundry-
 # tools' history. Every star's stage read green against the wrong tree.
 # `--source=.` hands the function this checkout, with the module's ignore
 # patterns applied and `.git` as the working tree carries it.
 
+# A STAGE THAT OUTLIVES ITS ENGINE FAILS INSTEAD OF HANGING. The dagger client
+# waits on the engine, and when the engine pod goes — a roll, an OOM kill, a
+# node eviction — the wait has no end: the run neither finishes nor errors,
+# and the hook holds the terminal until someone notices. MEASURED across the
+# 2026-09-18 wedge (21:28-21:45Z) and the 2026-09-19 OOM kill (20:56:33Z):
+# both left client-side stages sitting at "1 steps running" with no engine
+# behind them.
+#
+# The budget is an order above what the stage takes — seconds of narrowed
+# atoms — so a stage that reaches it is not slow, it is orphaned.
+# INT first so the client can tear its session down and say what it was
+# doing; KILL after 30s for the case where it cannot. Exit 124 is timeout's
+# own and the message says which budget was spent; every other code is the
+# lane's, passed through unchanged — a findings exit must not come back as a
+# generic 1 because a guard ate it.
+
 # The commit stage, on the engine — what hooks/pre-commit runs.
 check:
-    dagger call -m "{{ca_module}}" --source=. check exit
-
-# The push stage, on the engine — what hooks/pre-push runs.
-gate:
     #!/bin/sh
     set -eu
-    base=$(git merge-base origin/main HEAD 2>/dev/null || true)
-    if [ -n "$base" ]; then
-        exec dagger call -m "{{ca_module}}" --source=. push --base="$base" --origin="$(git remote get-url origin)" exit
+    if ! command -v timeout >/dev/null 2>&1; then
+        exec dagger call -m "{{ca_module}}" --source=. check exit
     fi
-    exec dagger call -m "{{ca_module}}" --source=. push exit
+    set +e
+    timeout --signal=INT --kill-after=30s 15m dagger call -m "{{ca_module}}" --source=. check exit
+    code=$?
+    set -e
+    if [ "$code" -eq 124 ]; then
+        echo "check: the commit stage ran 15 minutes without finishing — the engine it was talking to is gone or wedged, not slow; look at the engine, then commit again" >&2
+    fi
+    exit "$code"
+
+# THE PUSH STAGE IS THE BRANCH'S LANES, AND THE LOCK IS GONE (2026-10-02).
+#
+# This recipe used to run the slow checks and mutation through the dagger client
+# straight at the shared engine, under a per-host flock on
+# ${TMPDIR:-/tmp}/ca-push-stage.lock with a 45-minute limit. The lock existed
+# because a hook's run was in none of the door's accounting: six push stages
+# inside a minute OOMKilled dagger-engine-n2bw6 on 2026-09-19. It held, and it
+# cost: MEASURED 2026-10-02 16:28Z, five pushes from different sessions on one
+# host were queued on it, the oldest for 44 minutes, and an unmetered
+# push-stage mutation run killed node dev01 twice that day — while the pull's
+# own lanes then ran the same checks again, because nothing accepted the
+# hook's result.
+#
+# WHAT REPLACED IT: the door. A pushed branch's lanes are Jobs the door asks
+# and daedalus meters against the engine's budget, visible in the runner's
+# dashboards, settled into the CI record, and reused by the pull — one run,
+# not two, and no host lock because nothing here reaches the engine. A push
+# fails only when the door refuses it; a red lane refuses the landing, which
+# is where a refusal can act.
+gate:
+    @echo "gate: this branch's lanes are its gate: the door runs them on the cluster for the head you pushed (metered by daedalus); git_pr open parks on them, and git_ci_logs / repo_ci_logs read them" >&2
