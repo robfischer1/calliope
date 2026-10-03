@@ -18,7 +18,8 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { withHeartbeat } from "@forge/stellar-core-ts";
+import { witnessToolCalls, withHeartbeat } from "@forge/stellar-core-ts";
+import type { RequestLog } from "@forge/stellar-core-ts";
 import { isAuthoredBy, validateWriteProvenance } from "../types.js";
 import type { AuthoredBy, BodyClient } from "../types.js";
 import type { RevisionStore } from "../revision-store.js";
@@ -112,6 +113,10 @@ export interface ServerOptions {
    *  publish through after a committed note write. Absent = no publish (and
    *  the boot says so). */
   consciousness?: NotePublisher;
+  /** The witness: when present, every `tools/call` this server dispatches
+   *  leaves one request record. Installed on the dispatcher before any tool
+   *  registers, so a verb added later is covered by construction. */
+  witness?: RequestLog;
 }
 
 /** Build a configured MCP server bound to `client`, ready to `connect()`. */
@@ -123,6 +128,10 @@ export function createServer(
     name: "calliope-mcp",
     version: "0.1.0",
   });
+  // BEFORE the first tool registers: McpServer installs its one `tools/call`
+  // handler when the first tool lands, and the witness wraps that registration.
+  if (options?.witness !== undefined)
+    witnessToolCalls(server.server, options.witness);
 
   // Stream of Consciousness pass 4: publish the note AFTER its write landed.
   // Best-effort by construction — the publisher counts its own failures and
