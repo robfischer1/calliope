@@ -42,7 +42,7 @@
  * `src/mcp/*.ts` is in this package's Stryker `mutate` glob, so that mutant is
  * generated on every pull that touches the file. `LiveChaosDial`'s constructor
  * reads `process.env` — NOT the `env` object `main()` was handed — and falls
- * back to `https://chaos:8207` and `http://themis:8200`, which resolve in the
+ * back to `https://chaos:8207` and `https://themis:8201`, which resolve in the
  * gate and mutation lanes because those run IN the cluster. The sweep's first
  * act is `find_by_value("notes", "isArchived", "true")`, enumerating the real
  * archived corpus off the live graph.
@@ -59,7 +59,7 @@
  *
  * It stops the HTTP leg. It does NOT stop `LiveChaosDial.tls()` reaching
  * `X509Source.create()` on the real Workload API socket, which happens for any
- * `https:` chaos URL before a byte is fetched. The per-file guard — pinning
+ * `https:` chaos or themis URL before a byte is fetched. The per-file guard — pinning
  * `CALLIOPE_CHAOS_URL`/`CALLIOPE_THEMIS_URL` to a dead `http://` address — is
  * what closes that, and it closes the HTTP leg too. Neither is defeated by a
  * source mutant, which is the property #23 asked for; they are not symmetric,
