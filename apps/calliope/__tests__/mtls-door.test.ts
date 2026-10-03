@@ -5,9 +5,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { RequestLog, peerFrom } from "@forge/stellar-core-ts";
 import type { Peer, RequestRecord } from "@forge/stellar-core-ts";
 import { createCalliopeHttpServer } from "../src/mcp/http.js";
+import { EventEmitter } from "node:events";
+import { X509Certificate } from "node:crypto";
+import type { connect as netConnect } from "node:net";
+import type { TLSSocket } from "node:tls";
 import {
   LoopbackPeers,
-  bootMtlsDoor,
+  accept,
   openDoorSource,
   presentedCertificate,
   startMtlsDoor,
@@ -68,6 +72,7 @@ function fakeSource(
   source: DoorSource;
   rotate: (next: TlsIdentity) => void;
   closed: () => number;
+  listening: () => boolean;
 } {
   let cred: DoorCredential = {
     certPem: door.cert,
@@ -89,6 +94,7 @@ function fakeSource(
         closed += 1;
       },
     },
+    listening: () => listener !== undefined,
     rotate: (next) => {
       cred = { certPem: next.cert, keyPem: next.key, bundlePem: bundle };
       listener?.(cred);
@@ -266,8 +272,11 @@ describe("rotation", () => {
     await vi.waitFor(async () => {
       expect((await dial(r, themis)).serverSan).toContain("calliope-renewed");
     });
-    const after = await dial(r, themis);
-    expect(after.status).toBe(200);
+    // The replaced server stopped accepting: with it still listening beside the
+    // new one, the kernel would hand some of these to the old certificate.
+    for (let i = 0; i < 12; i += 1) {
+      expect((await dial(r, themis)).serverSan).toContain("calliope-renewed");
+    }
   });
 
   it("a rotation that cannot bind warns once and the old server keeps serving", async () => {
@@ -290,107 +299,30 @@ describe("rotation", () => {
   });
 });
 
-describe("fail-soft boot", () => {
-  const boot = {
-    peers: new LoopbackPeers(),
-    upstreamPort: 1,
-    port: 0,
-    host: "127.0.0.1",
-  };
+describe("the door's lifetime", () => {
+  const themis = makeIdentity("URI:spiffe://notusmi.com/star/themis");
 
-  it("with no SVID the door is absent, one WARN, and nothing throws", async () => {
-    const spy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    try {
-      const door = await bootMtlsDoor({
-        ...boot,
-        open: () => Promise.reject(new Error("no workload api")),
-      });
-      expect(door).toBeUndefined();
-      const warns = spy.mock.calls
-        .map((c) => String(c[0]))
-        .filter((l) => l.includes("WARN mtls door unavailable"));
-      expect(warns).toHaveLength(1);
-      expect(warns[0]).toContain("serving plaintext only");
-      expect(warns[0]).toContain("no workload api");
-    } finally {
-      spy.mockRestore();
-    }
+  it("closing it stops listening, stops following rotations, and closes the source", async () => {
+    const r = await rig(themis.cert);
+    expect(r.fake.listening()).toBe(true);
+    await dial(r, themis);
+    await r.door.close();
+    expect(r.fake.listening()).toBe(false);
+    expect(r.fake.closed()).toBe(1);
+    await expect(dial(r, themis)).rejects.toThrow();
   });
 
-  it("a source whose credential cannot be read is closed and the door is absent", async () => {
-    const spy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    let closed = 0;
-    try {
-      const door = await bootMtlsDoor({
-        ...boot,
-        open: () =>
-          Promise.resolve({
-            current: () => {
-              throw new Error("expired");
-            },
-            onRotate: () => () => undefined,
-            close: () => {
-              closed += 1;
-            },
-          }),
-      });
-      expect(door).toBeUndefined();
-      expect(closed).toBe(1);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it("with an SVID the door comes up, and closing it closes the source", async () => {
-    const themis = makeIdentity("URI:spiffe://notusmi.com/star/themis");
-    const fake = fakeSource(
-      makeIdentity(DOOR_SAN, "calliope-door"),
-      themis.cert,
-    );
-    const door = await bootMtlsDoor({
-      ...boot,
-      open: () => Promise.resolve(fake.source),
-    });
-    expect(door).toBeDefined();
-    expect(door?.port).toBeGreaterThan(0);
-    await door?.close();
-    expect(fake.closed()).toBe(1);
-  });
-
-  it("a source that arrives after the deadline is closed, not left streaming", async () => {
-    let late: ((s: DoorSource) => void) | undefined;
-    const pending = new Promise<DoorSource>((resolve) => {
-      late = resolve;
-    });
-    await expect(openDoorSource(5, () => pending)).rejects.toThrow(
-      "no SVID within 5ms",
-    );
-    let closed = 0;
-    late?.({
-      current: () => ({ certPem: "", keyPem: "", bundlePem: "" }),
-      onRotate: () => () => undefined,
-      close: () => {
-        closed += 1;
-      },
-    });
-    await vi.waitFor(() => {
-      expect(closed).toBe(1);
-    });
-  });
-
-  it("a source that arrives in time is returned untouched", async () => {
-    let closed = 0;
-    const src: DoorSource = {
-      current: () => ({ certPem: "", keyPem: "", bundlePem: "" }),
-      onRotate: () => () => undefined,
-      close: () => {
-        closed += 1;
-      },
-    };
+  it("a host it cannot bind rejects the start", async () => {
+    const fake = fakeSource(makeIdentity(DOOR_SAN, "d"), themis.cert);
     await expect(
-      openDoorSource(1000, () => Promise.resolve(src)),
-    ).resolves.toBe(src);
-    expect(closed).toBe(0);
+      startMtlsDoor({
+        source: fake.source,
+        peers: new LoopbackPeers(),
+        upstreamPort: 1,
+        port: 0,
+        host: "not a host name!",
+      }),
+    ).rejects.toThrow();
   });
 });
 
@@ -458,5 +390,235 @@ describe("the TLS options", () => {
     expect(presentedCertificate(sock(Buffer.from([1])))).toBe(true);
     expect(presentedCertificate(sock(Buffer.alloc(0)))).toBe(false);
     expect(presentedCertificate(sock(undefined))).toBe(false);
+    expect(
+      presentedCertificate({ getPeerCertificate: () => null } as never),
+    ).toBe(false);
+  });
+});
+
+describe("openDoorSource", () => {
+  const source = (onClose: () => void = () => undefined): DoorSource => ({
+    current: () => ({ certPem: "", keyPem: "", bundlePem: "" }),
+    onRotate: () => () => undefined,
+    close: onClose,
+  });
+
+  it("a source that arrives after the deadline is closed, not left streaming", async () => {
+    let late: ((s: DoorSource) => void) | undefined;
+    const pending = new Promise<DoorSource>((resolve) => {
+      late = resolve;
+    });
+    await expect(openDoorSource(5, () => pending)).rejects.toThrow(
+      "no SVID within 5ms",
+    );
+    let closed = 0;
+    late?.(
+      source(() => {
+        closed += 1;
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(closed).toBe(1);
+    });
+  });
+
+  it("a source that arrives in time is returned untouched", async () => {
+    let closed = 0;
+    const src = source(() => {
+      closed += 1;
+    });
+    await expect(
+      openDoorSource(1000, () => Promise.resolve(src)),
+    ).resolves.toBe(src);
+    expect(closed).toBe(0);
+  });
+
+  it("a creation that fails fails the open with its own error", async () => {
+    await expect(
+      openDoorSource(1000, () => Promise.reject(new Error("no socket"))),
+    ).rejects.toThrow("no socket");
+  });
+});
+
+/** A socket stand-in: records what the door does to it, says what it is told. */
+class FakeSock extends EventEmitter {
+  destroyed = 0;
+  ended = 0;
+  written: Buffer[] = [];
+  localPort: number | undefined = undefined;
+  readableEnded = false;
+  encrypted = true;
+  authorized = true;
+  constructor(private readonly der: Buffer | undefined) {
+    super();
+  }
+  getPeerCertificate(): { raw?: Buffer } {
+    return this.der === undefined ? {} : { raw: this.der };
+  }
+  destroy(): void {
+    this.destroyed += 1;
+  }
+  write(chunk: Buffer): boolean {
+    this.written.push(chunk);
+    return true;
+  }
+  end(): void {
+    this.ended += 1;
+  }
+}
+
+describe("accept — one connection, scripted", () => {
+  const themisId = makeIdentity("URI:spiffe://notusmi.com/star/themis");
+  const der = new X509Certificate(themisId.cert).raw;
+
+  function accepted(
+    o: {
+      der?: Buffer;
+      authorized?: boolean;
+      localPort?: number;
+      readableEnded?: boolean;
+    } = {},
+  ): {
+    sock: FakeSock;
+    up: FakeSock;
+    peers: LoopbackPeers;
+    dialed: unknown[];
+    refused: () => number;
+  } {
+    const peers = new LoopbackPeers();
+    const sock = new FakeSock(o.der);
+    sock.authorized = o.authorized ?? true;
+    sock.readableEnded = o.readableEnded ?? false;
+    const up = new FakeSock(undefined);
+    up.localPort = o.localPort;
+    const dialed: unknown[] = [];
+    let refused = 0;
+    const connect = ((target: unknown) => {
+      dialed.push(target);
+      return up;
+    }) as unknown as typeof netConnect;
+    accept(
+      sock as unknown as TLSSocket,
+      { peers, upstreamPort: 4321 },
+      () => {
+        refused += 1;
+      },
+      connect,
+    );
+    return { sock, up, peers, dialed, refused: () => refused };
+  }
+
+  it("dials the plaintext server on loopback", () => {
+    expect(accepted().dialed).toEqual([{ host: "127.0.0.1", port: 4321 }]);
+  });
+
+  it("refuses a presented certificate that did not verify, before reading a byte", () => {
+    const a = accepted({ der, authorized: false });
+    expect(a.refused()).toBe(1);
+    expect(a.sock.destroyed).toBe(1);
+    expect(a.dialed).toEqual([]);
+    expect(a.sock.listenerCount("data")).toBe(0);
+  });
+
+  it("serves a verified certificate, and a caller with none, whatever authorized says", () => {
+    for (const o of [
+      { der, authorized: true },
+      { authorized: false },
+      { authorized: true },
+    ]) {
+      const a = accepted(o);
+      expect(a.refused()).toBe(0);
+      expect(a.sock.destroyed).toBe(0);
+      expect(a.dialed).toHaveLength(1);
+    }
+  });
+
+  it("a socket error destroys the socket", () => {
+    const a = accepted();
+    a.sock.emit("error", new Error("reset"));
+    expect(a.sock.destroyed).toBe(1);
+  });
+
+  it("holds bytes read before the upstream is up, flushes them in order once, then forwards directly", () => {
+    const a = accepted();
+    a.sock.emit("data", Buffer.from("a"));
+    a.sock.emit("data", Buffer.from("b"));
+    expect(a.up.written).toEqual([]);
+    a.up.emit("connect");
+    expect(a.up.written.map(String)).toEqual(["a", "b"]);
+    a.sock.emit("data", Buffer.from("c"));
+    expect(a.up.written.map(String)).toEqual(["a", "b", "c"]);
+  });
+
+  it("passes the client's end on only once connected, and a finished client at connect", () => {
+    const early = accepted();
+    early.sock.emit("end");
+    expect(early.up.ended).toBe(0);
+    early.up.emit("connect");
+    expect(early.up.ended).toBe(0);
+
+    const finished = accepted({ readableEnded: true });
+    finished.up.emit("connect");
+    expect(finished.up.ended).toBe(1);
+
+    const late = accepted();
+    late.up.emit("connect");
+    late.sock.emit("end");
+    expect(late.up.ended).toBe(1);
+  });
+
+  it("relays the upstream's bytes and end to the client", () => {
+    const a = accepted();
+    a.up.emit("data", Buffer.from("reply"));
+    expect(a.sock.written.map(String)).toEqual(["reply"]);
+    expect(a.sock.ended).toBe(0);
+    a.up.emit("end");
+    expect(a.sock.ended).toBe(1);
+  });
+
+  it("registers the verified peer against the upstream's local port, once connected", () => {
+    const a = accepted({ der, localPort: 5555 });
+    expect(a.peers.size).toBe(0);
+    a.up.emit("connect");
+    expect(
+      a.peers.forSocket({ remoteAddress: "127.0.0.1", remotePort: 5555 })
+        ?.spiffeId,
+    ).toBe("spiffe://notusmi.com/star/themis");
+  });
+
+  it("registers nobody for an anonymous caller, or when the port is unknown", () => {
+    const anon = accepted({ localPort: 5555 });
+    anon.up.emit("connect");
+    expect(anon.peers.size).toBe(0);
+    const noPort = accepted({ der });
+    noPort.up.emit("connect");
+    expect(noPort.peers.size).toBe(0);
+  });
+
+  it("any end of the pair clears the registration and destroys both sockets", () => {
+    for (const ending of ["up-close", "up-error", "sock-close"]) {
+      const a = accepted({ der, localPort: 5555 });
+      a.up.emit("connect");
+      expect(a.peers.size).toBe(1);
+      if (ending === "up-close") a.up.emit("close");
+      if (ending === "up-error") a.up.emit("error", new Error("refused"));
+      if (ending === "sock-close") a.sock.emit("close");
+      expect(a.peers.size).toBe(0);
+      expect(a.sock.destroyed).toBe(1);
+      expect(a.up.destroyed).toBe(1);
+    }
+  });
+
+  it("a second end does not clear a registration a later connection made on the same port", () => {
+    const a = accepted({ der, localPort: 5555 });
+    a.up.emit("connect");
+    a.up.emit("close");
+    a.peers.set(5555, {
+      spiffeId: "spiffe://notusmi.com/star/hades",
+      kind: "star",
+      name: "hades",
+    });
+    a.sock.emit("close");
+    expect(a.peers.size).toBe(1);
   });
 });

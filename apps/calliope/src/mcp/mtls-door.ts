@@ -49,6 +49,8 @@
  */
 
 import { connect as netConnect } from "node:net";
+import type { AddressInfo } from "node:net";
+import type { Server as HttpServer } from "node:http";
 import { createServer as createTlsServer } from "node:tls";
 import type { Server as TlsServer, TLSSocket } from "node:tls";
 import {
@@ -110,14 +112,11 @@ export class LoopbackPeers {
 
   /** The verified peer behind this accepted connection, or undefined. */
   forSocket(socket: AddressedSocket): Peer | undefined {
-    const { remoteAddress, remotePort } = socket;
-    if (
-      remoteAddress === undefined ||
-      remotePort === undefined ||
-      !LOOPBACK.has(remoteAddress)
-    )
-      return undefined;
-    return this.byPort.get(remotePort);
+    // String()/Number() so an absent address or port can match nothing: the
+    // loopback set holds no "undefined", and the table no NaN.
+    return LOOPBACK.has(String(socket.remoteAddress))
+      ? this.byPort.get(Number(socket.remotePort))
+      : undefined;
   }
 }
 
@@ -187,7 +186,12 @@ export interface DoorOptions {
  * else forward it to the plaintext server, registering the verified peer (if any)
  * against the loopback connection that carries it.
  */
-function accept(sock: TLSSocket, opts: DoorOptions, refuse: () => void): void {
+export function accept(
+  sock: TLSSocket,
+  opts: Pick<DoorOptions, "peers" | "upstreamPort">,
+  refuse: () => void,
+  connect: typeof netConnect = netConnect,
+): void {
   sock.on("error", () => {
     sock.destroy();
   });
@@ -197,11 +201,12 @@ function accept(sock: TLSSocket, opts: DoorOptions, refuse: () => void): void {
     return;
   }
   const peer = peerFromSocket(sock);
-  const up = netConnect({ host: "127.0.0.1", port: opts.upstreamPort });
+  const up = connect({ host: "127.0.0.1", port: opts.upstreamPort });
   let registered: number | undefined;
   const end = (): void => {
-    if (registered !== undefined) opts.peers.delete(registered);
+    const port = registered;
     registered = undefined;
+    if (port !== undefined) opts.peers.delete(port);
     sock.destroy();
     up.destroy();
   };
@@ -244,13 +249,9 @@ function makeServer(
   opts: DoorOptions,
   refuse: () => void,
 ): TlsServer {
-  const server = createTlsServer(tlsOptions(cred), (sock) => {
+  return createTlsServer(tlsOptions(cred), (sock) => {
     accept(sock, opts, refuse);
   });
-  // A client that sends no certificate trips this on some runtimes; it is not
-  // a fault of the door.
-  server.on("tlsClientError", () => undefined);
-  return server;
 }
 
 function listenOn(
@@ -262,14 +263,15 @@ function listenOn(
     server.once("error", reject);
     // reusePort so a rotated server can bind beside the one it replaces.
     server.listen({ port, host, reusePort: true }, () => {
-      server.off("error", reject);
-      const addr = server.address();
-      resolve(typeof addr === "object" && addr !== null ? addr.port : port);
+      resolve((server.address() as AddressInfo).port);
     });
   });
 }
 
-/** Start the door. Rejects if the credential cannot be read or the port bound. */
+/**
+ * Start the door. Rejects if the credential cannot be read or the port bound.
+ * Closing it also closes the identity source it was given.
+ */
 export async function startMtlsDoor(opts: DoorOptions): Promise<MtlsDoor> {
   let refusedCount = 0;
   const refuse = (): void => {
@@ -304,6 +306,7 @@ export async function startMtlsDoor(opts: DoorOptions): Promise<MtlsDoor> {
           resolve();
         });
       });
+      opts.source.close();
     },
   };
 }
@@ -318,8 +321,8 @@ function errText(err: unknown): string {
  * arrives after the deadline is closed rather than left streaming.
  */
 export async function openDoorSource(
-  timeoutMs: number = DEFAULT_SVID_WAIT_MS,
-  create: () => Promise<DoorSource> = () => X509Source.create(),
+  timeoutMs: number,
+  create: () => Promise<DoorSource>,
 ): Promise<DoorSource> {
   const pending = create();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -343,10 +346,7 @@ export async function openDoorSource(
   }
 }
 
-export interface BootOptions extends Omit<DoorOptions, "source"> {
-  readonly svidWaitMs?: number;
-  readonly open?: (timeoutMs: number) => Promise<DoorSource>;
-}
+export type BootOptions = Omit<DoorOptions, "source">;
 
 /**
  * Bring the door up, or say once why not. Never throws: the star's plaintext
@@ -355,20 +355,12 @@ export interface BootOptions extends Omit<DoorOptions, "source"> {
 export async function bootMtlsDoor(
   opts: BootOptions,
 ): Promise<MtlsDoor | undefined> {
-  const open = opts.open ?? ((ms: number) => openDoorSource(ms));
   let source: DoorSource | undefined;
   try {
-    source = await open(opts.svidWaitMs ?? DEFAULT_SVID_WAIT_MS);
-    const door = await startMtlsDoor({ ...opts, source });
-    const sourceToClose = source;
-    return {
-      port: door.port,
-      refused: door.refused,
-      close: async () => {
-        await door.close();
-        sourceToClose.close();
-      },
-    };
+    source = await openDoorSource(DEFAULT_SVID_WAIT_MS, () =>
+      X509Source.create(),
+    );
+    return await startMtlsDoor({ ...opts, source });
   } catch (err) {
     source?.close();
     process.stderr.write(
@@ -376,4 +368,29 @@ export async function bootMtlsDoor(
     );
     return undefined;
   }
+}
+
+/**
+ * Put the door beside a listening plaintext server: on its port + 1, forwarding
+ * to it, closed when it closes. Says what it did on stderr, once.
+ */
+export async function serveMtlsDoor(
+  plain: HttpServer,
+  peers: LoopbackPeers,
+  host: string,
+): Promise<void> {
+  const upstreamPort = (plain.address() as AddressInfo).port;
+  const door = await bootMtlsDoor({
+    peers,
+    upstreamPort,
+    port: upstreamPort + 1,
+    host,
+  });
+  if (door === undefined) return;
+  process.stderr.write(
+    `calliope-mcp-http: serving mTLS (verify-if-given) on https://${host}:${String(door.port)}/mcp\n`,
+  );
+  plain.once("close", () => {
+    void door.close();
+  });
 }

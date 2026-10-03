@@ -62,7 +62,7 @@ import { FocusRegister, startFocusConsumer } from "../focus-register.js";
 import { makeErosProvider } from "../eros-provider.js";
 import { makeWitness } from "./witness.js";
 import type { Witness } from "./witness.js";
-import { LoopbackPeers, bootMtlsDoor, withDoorPeers } from "./mtls-door.js";
+import { LoopbackPeers, serveMtlsDoor, withDoorPeers } from "./mtls-door.js";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
 const MCP_PATH = "/mcp";
@@ -339,17 +339,7 @@ async function main(): Promise<void> {
 
   // The mTLS door on port + 1, presenting this star's SVID. Fail-soft: with no
   // SPIRE socket it warns once and the star serves plaintext only.
-  const mtlsDoor = await bootMtlsDoor({
-    peers,
-    upstreamPort: port,
-    port: port + 1,
-    host,
-  });
-  if (mtlsDoor !== undefined) {
-    process.stderr.write(
-      `calliope-mcp-http: serving mTLS (verify-if-given) on https://${host}:${String(mtlsDoor.port)}${MCP_PATH}\n`,
-    );
-  }
+  await serveMtlsDoor(httpServer, peers, host);
 
   // Publish liveness to Pontus (the op-contract heartbeat) now that we serve.
   const heartbeat = startHeartbeat(heartbeatOptions());
@@ -357,7 +347,6 @@ async function main(): Promise<void> {
   const shutdown = (): void => {
     void heartbeat.stop();
     void focusConsumer.stop();
-    void mtlsDoor?.close();
     // Flush what the batch processor is holding; a SIGTERM'd pod otherwise
     // drops its last window of spans, which is exactly the window that
     // explains why it was terminated.
