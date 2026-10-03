@@ -28,7 +28,11 @@
  */
 
 import { createServer as createHttpServer } from "node:http";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type {
+  IncomingMessage,
+  RequestListener,
+  ServerResponse,
+} from "node:http";
 import { argv } from "node:process";
 import { pathToFileURL } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -44,9 +48,10 @@ import {
   startHeartbeat,
   startTelemetry,
   telemetryConfigFromEnv,
+  withPeerContext,
   withSpan,
 } from "@forge/stellar-core-ts";
-import type { HeartbeatOptions } from "@forge/stellar-core-ts";
+import type { HeartbeatOptions, RequestLog } from "@forge/stellar-core-ts";
 import {
   SOURCE_STAR,
   consciousnessMetrics,
@@ -55,6 +60,8 @@ import {
 } from "./consciousness-emit.js";
 import { FocusRegister, startFocusConsumer } from "../focus-register.js";
 import { makeErosProvider } from "../eros-provider.js";
+import { makeWitness } from "./witness.js";
+import type { Witness } from "./witness.js";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
 const MCP_PATH = "/mcp";
@@ -138,6 +145,7 @@ async function handleMcp(
   focus?: FocusRegister,
   containers?: ContainerFacet,
   consciousness?: NotePublisher,
+  witness?: RequestLog,
 ): Promise<void> {
   // Findability F4: the pg arm — eros-routed when CALLIOPE_EROS_URL is set;
   // absent, the search verb answers honest darkness (F2's contract).
@@ -154,6 +162,7 @@ async function handleMcp(
     // container verbs ARE the write path; they ship from here.
     ...(containers !== undefined ? { containers } : {}),
     ...(consciousness !== undefined ? { consciousness } : {}),
+    witness,
   });
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session id, no server-initiated streams to keep alive.
@@ -181,6 +190,7 @@ export function createCalliopeHttpServer(
   focus: FocusRegister = new FocusRegister(),
   containers?: ContainerFacet,
   consciousness?: NotePublisher,
+  witness?: Witness,
 ): ReturnType<typeof createHttpServer> {
   // One backend for the server's lifetime: the store (or fixture memory)
   // is shared across every stateless request. A caller that needs async
@@ -202,7 +212,7 @@ export function createCalliopeHttpServer(
     tagStore ??= backend.tags;
     containerFacet ??= backend.containers;
   }
-  return createHttpServer((req, res) => {
+  const serve: RequestListener = (req, res) => {
     const url = req.url ?? "";
     const path = url.split("?", 1)[0];
 
@@ -243,6 +253,7 @@ export function createCalliopeHttpServer(
         focus,
         containerFacet,
         consciousness,
+        witness?.log,
       ),
     ).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
@@ -260,7 +271,16 @@ export function createCalliopeHttpServer(
         res.end();
       }
     });
+  };
+  // The peer stamp wraps the whole listener, so the verified mTLS peer (none
+  // today — this star serves plaintext) is on the async context before any
+  // handler runs; the witness reads it where the verb is dispatched.
+  const httpServer = createHttpServer(withPeerContext(serve));
+  // The sink's producer lives and dies with the door that feeds it.
+  httpServer.once("close", () => {
+    void witness?.close();
   });
+  return httpServer;
 }
 
 async function main(): Promise<void> {
@@ -284,6 +304,9 @@ async function main(): Promise<void> {
   // Pontus telemetry consumer, read by every stateless request's `look`.
   const focusRegister = new FocusRegister();
   const focusConsumer = startFocusConsumer(focusRegister);
+  // The witness: one record per inbound tools/call, to the log stream and to
+  // calliope._ops.calls when KAFKA_BOOTSTRAP names a broker.
+  const witness = makeWitness();
 
   const httpServer = createCalliopeHttpServer(
     kind,
@@ -295,6 +318,7 @@ async function main(): Promise<void> {
     focusRegister,
     backend.containers,
     consciousness,
+    witness,
   );
 
   await new Promise<void>((resolve) => {
