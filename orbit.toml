@@ -16,6 +16,12 @@ version = "1"
 digest = "sha256:b7e890e0bb6d268a7084c692beb571d3248837b78d1dc9e2bd846a0c7953ca35"
 
 [[produces]]
+to = "mnemosyne"
+contract = "calliope-mnemosyne"
+version = "0"
+digest = "sha256:6c19e69dd3526dbcf560856a875b93518abb3ef318b57d5bdb0af2ee4ce964cf"
+
+[[produces]]
 to = "proteus"
 contract = "calliope-proteus"
 version = "1"
