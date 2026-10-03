@@ -3,7 +3,7 @@
  *
  * The prose tenant's east-west dials onto the constellation's graph plane:
  *
- *  - **themis** (`CALLIOPE_THEMIS_URL`, default `http://themis:8200/mcp`) —
+ *  - **themis** (`CALLIOPE_THEMIS_URL`, default `https://themis:8201/mcp`) —
  *    the gated write. `admit(ops, scope)` runs permit → capture; a refused
  *    batch surfaces its violations verbatim. The op grammar mirrors athena's
  *    `court.py` (the proven litigant): `{op:"createNode", kind, label}` ·
@@ -32,7 +32,12 @@ import {
   type TlsFetchOptions,
 } from "@forge/stellar-core-ts";
 
-const DEFAULT_THEMIS_URL = "http://themis:8200";
+// ⚑ https AND 8201, for the same reason as chaos below: over plaintext 8200
+// themis typed every calliope admit `unidentified` (30 of 30 in the
+// 2026-10-03 window, matched second-for-second to calliope's write path), and
+// an enforcing themis refuses an unidentified caller. 8200 stays a live
+// plaintext door, so an `http://` CALLIOPE_THEMIS_URL is the rollback.
+export const DEFAULT_THEMIS_URL = "https://themis:8201";
 // ⚑ https AND 8207, both load-bearing. The SCHEME is not cosmetic: it is what
 // makes this client present calliope's SVID, and chaos types an unauthenticated
 // caller `unidentified` no matter how correct the rest of the call is. chaos
@@ -395,6 +400,16 @@ async function rpc(
   return structured;
 }
 
+/**
+ * The star a dial presents calliope's SVID to, or undefined for a plaintext
+ * dial. The SCHEME decides: an `http://` URL (the documented rollback) must
+ * stay a plain fetch rather than present a certificate to a door that
+ * terminates no TLS.
+ */
+export function meshPeer(endpoint: string, star: string): string | undefined {
+  return endpoint.startsWith("https:") ? star : undefined;
+}
+
 /** The live dials — themis for writes, chaos for identity reads. */
 export class LiveChaosDial implements ChaosDial {
   private readonly themis: string;
@@ -435,18 +450,6 @@ export class LiveChaosDial implements ChaosDial {
   }
 
   /**
-   * TLS material for a chaos call, or undefined when the dial is plaintext.
-   *
-   * The SCHEME decides. An `http://` chaos URL — the documented rollback — must
-   * take the plain path, so this returns undefined rather than presenting a
-   * certificate to a door that terminates no TLS.
-   *
-   * `authorizeStar("chaos")` pins WHO may answer: a peer presenting any other
-   * SPIFFE id fails the handshake. Without it, anything holding a valid fleet
-   * SVID could answer as chaos — which is why the mesh reads the SAN rather
-   * than trusting the hostname.
-   */
-  /**
    * One chaos `tools/call`, over the mesh door when the dial is https.
    *
    * Every chaos read goes through here so the TLS decision is made in ONE
@@ -458,18 +461,40 @@ export class LiveChaosDial implements ChaosDial {
     verb: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    return rpc(this.chaos, this.id, verb, args, await this.tls());
+    return rpc(
+      this.chaos,
+      this.id,
+      verb,
+      args,
+      await this.tls(this.chaos, "chaos"),
+    );
   }
 
-  private async tls(): Promise<TlsFetchOptions | undefined> {
-    if (!this.chaos.startsWith("https:")) return undefined;
+  /**
+   * TLS material for a call to star at endpoint, or undefined when the dial is
+   * plaintext (meshPeer). `authorizeStar(peer)` pins WHO may answer: a peer
+   * presenting any other SPIFFE id fails the handshake — the mesh reads the
+   * SAN rather than trusting the hostname.
+   */
+  private async tls(
+    endpoint: string,
+    star: string,
+  ): Promise<TlsFetchOptions | undefined> {
+    const peer = meshPeer(endpoint, star);
+    if (peer === undefined) return undefined;
     this.identity ??= X509Source.create();
-    return tlsFetchOptions(await this.identity, authorizeStar("chaos"));
+    return tlsFetchOptions(await this.identity, authorizeStar(peer));
   }
 
   async admit(ops: ChaosOp[], scope: string): Promise<AdmitResult> {
     this.id += 1;
-    const raw = (await rpc(this.themis, this.id, "admit", { ops, scope })) as {
+    const raw = (await rpc(
+      this.themis,
+      this.id,
+      "admit",
+      { ops, scope },
+      await this.tls(this.themis, "themis"),
+    )) as {
       admitted?: boolean;
       ok?: boolean;
       minted?: unknown[];

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ANCHORS_ROLE,
+  DEFAULT_THEMIS_URL,
   FixtureChaosDial,
   decodeRpcBody,
   shapeFromTextBlocks,
@@ -8,6 +9,7 @@ import {
   NOTE_ROOT_LABEL,
   ensureNotesRoot,
   isNodeToken,
+  meshPeer,
   opAdd,
   opCreate,
 } from "../src/chaos-client.js";
@@ -170,5 +172,20 @@ describe("shapeFromTextBlocks — a door that sends no structuredContent", () =>
     expect(shapeFromTextBlocks(undefined)).toBeUndefined();
     expect(shapeFromTextBlocks([])).toBeUndefined();
     expect(shapeFromTextBlocks([{ type: "image", data: "…" }])).toBeUndefined();
+  });
+});
+
+describe("meshPeer — the scheme decides whether a dial presents the SVID", () => {
+  it("an https dial names the star its SVID is pinned to", () => {
+    expect(meshPeer("https://themis:8201/mcp", "themis")).toBe("themis");
+    expect(meshPeer("https://chaos:8207/mcp", "chaos")).toBe("chaos");
+  });
+
+  it("an http dial is plain — no certificate to a door without TLS", () => {
+    expect(meshPeer("http://themis:8200/mcp", "themis")).toBeUndefined();
+  });
+
+  it("themis is dialled at its mTLS door by default", () => {
+    expect(DEFAULT_THEMIS_URL).toBe("https://themis:8201");
   });
 });
