@@ -32,3 +32,9 @@ from = "chaos"
 contract = "chaos-calliope"
 version = "1"
 digest = "sha256:e0b889d106a30dfc6c48cb1e1d56f44bb2097c6e6631cf6318786a08981e688f"
+
+[[consumes]]
+from = "themis"
+contract = "themis-calliope"
+version = "0"
+digest = "sha256:d412ca9863a56e2c73cd589ad966b50e657d633a8019c07dcff2adde3e1791a5"
