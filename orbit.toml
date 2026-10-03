@@ -1,0 +1,15 @@
+# orbit.toml — calliope's seams, by reference. Laid from the data/orbits die
+# (foundry-tools orbitcompose over foundry-dies/orbits). Generated — do not
+# hand-edit: a local edit is drift, and the next lay overwrites it.
+#
+# Each edge names a contract, foundry-dies/orbits/<contract>.toml, by name,
+# version and sha256 of its bytes. The verbs live in the contract.
+# [[produces]] is who breaks if calliope changes what it SERVES; [[consumes]] is
+# what calliope breaks if it changes how it CALLS. To change a seam, edit the
+# contract in a foundry-dies pull (orbits/README.md says how), then re-lay.
+
+[[consumes]]
+from = "chaos"
+contract = "chaos-calliope"
+version = "0"
+digest = "sha256:16cc840180b73ec2d5b8af1ad94a25d1965d63cd3de2b505f956dd05dc4df8e1"
