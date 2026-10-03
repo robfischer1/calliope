@@ -9,6 +9,18 @@
 # contract in a foundry-dies pull (orbits/README.md says how), then re-lay
 # from the repo root: furnace die --for . --dest DIR && gavel order . --from DIR
 
+[[produces]]
+to = "athena"
+contract = "calliope-athena"
+version = "0"
+digest = "sha256:0d002e0b312580f2991867ee1bbe530e20975777c5c16188c86f4bc3c03b8585"
+
+[[produces]]
+to = "proteus"
+contract = "calliope-proteus"
+version = "0"
+digest = "sha256:1d6c250284a0019dd2690b1315f32f6e17f0128527ac608a4307b61aa70ec40e"
+
 [[consumes]]
 from = "chaos"
 contract = "chaos-calliope"
