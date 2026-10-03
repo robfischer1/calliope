@@ -62,6 +62,7 @@ import { FocusRegister, startFocusConsumer } from "../focus-register.js";
 import { makeErosProvider } from "../eros-provider.js";
 import { makeWitness } from "./witness.js";
 import type { Witness } from "./witness.js";
+import { LoopbackPeers, bootMtlsDoor, withDoorPeers } from "./mtls-door.js";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
 const MCP_PATH = "/mcp";
@@ -191,6 +192,9 @@ export function createCalliopeHttpServer(
   containers?: ContainerFacet,
   consciousness?: NotePublisher,
   witness?: Witness,
+  // The mTLS door's table of verified peers riding its loopback connections;
+  // absent, the peer is read from the socket's own TLS state (none, plaintext).
+  peers?: LoopbackPeers,
 ): ReturnType<typeof createHttpServer> {
   // One backend for the server's lifetime: the store (or fixture memory)
   // is shared across every stateless request. A caller that needs async
@@ -272,10 +276,12 @@ export function createCalliopeHttpServer(
       }
     });
   };
-  // The peer stamp wraps the whole listener, so the verified mTLS peer (none
-  // today — this star serves plaintext) is on the async context before any
-  // handler runs; the witness reads it where the verb is dispatched.
-  const httpServer = createHttpServer(withPeerContext(serve));
+  // The peer stamp wraps the whole listener, so the verified mTLS peer (the
+  // door's, on port + 1; none on this plaintext port) is on the async context
+  // before any handler runs; the witness reads it where the verb is dispatched.
+  const httpServer = createHttpServer(
+    peers === undefined ? withPeerContext(serve) : withDoorPeers(serve, peers),
+  );
   // The sink's producer lives and dies with the door that feeds it.
   httpServer.once("close", () => {
     void witness?.close();
@@ -307,6 +313,7 @@ async function main(): Promise<void> {
   // The witness: one record per inbound tools/call, to the log stream and to
   // calliope._ops.calls when KAFKA_BOOTSTRAP names a broker.
   const witness = makeWitness();
+  const peers = new LoopbackPeers();
 
   const httpServer = createCalliopeHttpServer(
     kind,
@@ -319,6 +326,7 @@ async function main(): Promise<void> {
     backend.containers,
     consciousness,
     witness,
+    peers,
   );
 
   await new Promise<void>((resolve) => {
@@ -329,12 +337,27 @@ async function main(): Promise<void> {
     `calliope-mcp-http: serving (backend=${kind}) on http://${host}:${String(port)}${MCP_PATH}\n`,
   );
 
+  // The mTLS door on port + 1, presenting this star's SVID. Fail-soft: with no
+  // SPIRE socket it warns once and the star serves plaintext only.
+  const mtlsDoor = await bootMtlsDoor({
+    peers,
+    upstreamPort: port,
+    port: port + 1,
+    host,
+  });
+  if (mtlsDoor !== undefined) {
+    process.stderr.write(
+      `calliope-mcp-http: serving mTLS (verify-if-given) on https://${host}:${String(mtlsDoor.port)}${MCP_PATH}\n`,
+    );
+  }
+
   // Publish liveness to Pontus (the op-contract heartbeat) now that we serve.
   const heartbeat = startHeartbeat(heartbeatOptions());
 
   const shutdown = (): void => {
     void heartbeat.stop();
     void focusConsumer.stop();
+    void mtlsDoor?.close();
     // Flush what the batch processor is holding; a SIGTERM'd pod otherwise
     // drops its last window of spans, which is exactly the window that
     // explains why it was terminated.

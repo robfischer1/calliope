@@ -8,9 +8,11 @@
  * peer stamp (http.ts wraps the listener with it), the dispatcher interceptor
  * (server.ts installs it) and the sink (built here from `KAFKA_BOOTSTRAP`).
  *
- * It records and refuses nothing. Calliope has no mTLS listener, so every
- * caller reads `unidentified` with path `unknown` — correct, and expected until
- * the star grows one; the stamp is already in the path and will name them then.
+ * It records and refuses nothing. Calliope's mTLS door (port + 1, `mtls-door.ts`)
+ * verifies a presented client certificate against the SPIFFE bundle, so a call
+ * on it names its caller (`caller_identity`, `path` gateway or direct); a call
+ * on the plaintext port, or on the door with no certificate, reads
+ * `unidentified` with path `unknown` — the Go doors' "verify if given".
  */
 
 import { RequestLog, witnessSink } from "@forge/stellar-core-ts";
