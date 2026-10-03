@@ -28,7 +28,11 @@
  */
 
 import { createServer as createHttpServer } from "node:http";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type {
+  IncomingMessage,
+  RequestListener,
+  ServerResponse,
+} from "node:http";
 import { argv } from "node:process";
 import { pathToFileURL } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -44,12 +48,10 @@ import {
   startHeartbeat,
   startTelemetry,
   telemetryConfigFromEnv,
+  withPeerContext,
   withSpan,
 } from "@forge/stellar-core-ts";
-import { withPeerContext } from "@forge/stellar-core-ts";
 import type { HeartbeatOptions, RequestLog } from "@forge/stellar-core-ts";
-import { makeWitness } from "./witness.js";
-import type { Witness } from "./witness.js";
 import {
   SOURCE_STAR,
   consciousnessMetrics,
@@ -58,6 +60,8 @@ import {
 } from "./consciousness-emit.js";
 import { FocusRegister, startFocusConsumer } from "../focus-register.js";
 import { makeErosProvider } from "../eros-provider.js";
+import { makeWitness } from "./witness.js";
+import type { Witness } from "./witness.js";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
 const MCP_PATH = "/mcp";
@@ -158,7 +162,7 @@ async function handleMcp(
     // container verbs ARE the write path; they ship from here.
     ...(containers !== undefined ? { containers } : {}),
     ...(consciousness !== undefined ? { consciousness } : {}),
-    ...(witness !== undefined ? { witness } : {}),
+    witness,
   });
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session id, no server-initiated streams to keep alive.
@@ -208,71 +212,70 @@ export function createCalliopeHttpServer(
     tagStore ??= backend.tags;
     containerFacet ??= backend.containers;
   }
+  const serve: RequestListener = (req, res) => {
+    const url = req.url ?? "";
+    const path = url.split("?", 1)[0];
+
+    if (path !== MCP_PATH) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "not found", path }));
+      return;
+    }
+    if (req.method !== "POST") {
+      // Stateless: only POST is served (no SSE GET / session DELETE).
+      res.writeHead(405, {
+        "Content-Type": "application/json",
+        Allow: "POST",
+      });
+      res.end(JSON.stringify({ error: "method not allowed" }));
+      return;
+    }
+
+    // THE SPAN IS THE POINT. stellar-core-ts wires the provider, the exporter
+    // and the W3C propagators, but it installs no instrumentation — a star
+    // that never opens a span is correctly configured and completely silent,
+    // which is the state this one was in. One span per served request is the
+    // minimum that makes calliope visible in Tempo and in hemera's
+    // per-service spanmetrics.
+    //
+    // Named for the transport, not the tool: the JSON-RPC method is in the
+    // body, which is consumed downstream by the transport itself, and reading
+    // it here to name the span would mean buffering the request twice.
+    withSpan(`POST ${MCP_PATH}`, () =>
+      handleMcp(
+        req,
+        res,
+        client,
+        docStore,
+        revStore,
+        chaosFacet,
+        tagStore,
+        focus,
+        containerFacet,
+        consciousness,
+        witness?.log,
+      ),
+    ).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`calliope-mcp-http: request error: ${message}\n`);
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32603, message: "Internal server error" },
+            id: null,
+          }),
+        );
+      } else {
+        res.end();
+      }
+    });
+  };
   // The peer stamp wraps the whole listener, so the verified mTLS peer (none
   // today — this star serves plaintext) is on the async context before any
   // handler runs; the witness reads it where the verb is dispatched.
-  const httpServer = createHttpServer(
-    withPeerContext((req, res) => {
-      const url = req.url ?? "";
-      const path = url.split("?", 1)[0];
-
-      if (path !== MCP_PATH) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "not found", path }));
-        return;
-      }
-      if (req.method !== "POST") {
-        // Stateless: only POST is served (no SSE GET / session DELETE).
-        res.writeHead(405, {
-          "Content-Type": "application/json",
-          Allow: "POST",
-        });
-        res.end(JSON.stringify({ error: "method not allowed" }));
-        return;
-      }
-
-      // THE SPAN IS THE POINT. stellar-core-ts wires the provider, the exporter
-      // and the W3C propagators, but it installs no instrumentation — a star
-      // that never opens a span is correctly configured and completely silent,
-      // which is the state this one was in. One span per served request is the
-      // minimum that makes calliope visible in Tempo and in hemera's
-      // per-service spanmetrics.
-      //
-      // Named for the transport, not the tool: the JSON-RPC method is in the
-      // body, which is consumed downstream by the transport itself, and reading
-      // it here to name the span would mean buffering the request twice.
-      withSpan(`POST ${MCP_PATH}`, () =>
-        handleMcp(
-          req,
-          res,
-          client,
-          docStore,
-          revStore,
-          chaosFacet,
-          tagStore,
-          focus,
-          containerFacet,
-          consciousness,
-          witness?.log,
-        ),
-      ).catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`calliope-mcp-http: request error: ${message}\n`);
-        if (!res.headersSent) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: { code: -32603, message: "Internal server error" },
-              id: null,
-            }),
-          );
-        } else {
-          res.end();
-        }
-      });
-    }),
-  );
+  const httpServer = createHttpServer(withPeerContext(serve));
   // The sink's producer lives and dies with the door that feeds it.
   httpServer.once("close", () => {
     void witness?.close();

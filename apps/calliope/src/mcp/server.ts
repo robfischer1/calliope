@@ -116,7 +116,7 @@ export interface ServerOptions {
   /** The witness: when present, every `tools/call` this server dispatches
    *  leaves one request record. Installed on the dispatcher before any tool
    *  registers, so a verb added later is covered by construction. */
-  witness?: RequestLog;
+  witness?: RequestLog | undefined;
 }
 
 /** Build a configured MCP server bound to `client`, ready to `connect()`. */

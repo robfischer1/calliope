@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { RequestLog } from "@forge/stellar-core-ts";
 import type { RequestRecord } from "@forge/stellar-core-ts";
 import { createCalliopeHttpServer } from "../src/mcp/http.js";
+import { createServer } from "../src/mcp/server.js";
 import { VERB_PREFIX, makeWitness } from "../src/mcp/witness.js";
+import { bareClient } from "./helpers/bare-client.js";
 import type { Witness } from "../src/mcp/witness.js";
 import { makeIdentity } from "./helpers/tls-identity.js";
 import type { TlsIdentity } from "./helpers/tls-identity.js";
@@ -279,7 +281,33 @@ describe("the peer stamp, through a real TLS handshake and the real transport", 
   });
 });
 
+describe("createServer", () => {
+  it("builds with no options at all — the witness is optional and absence is not a fault", () => {
+    expect(() => createServer(bareClient({}))).not.toThrow();
+  });
+});
+
 describe("makeWitness", () => {
+  it("close delegates to the sink it built, and the star's name and broker reach it", async () => {
+    let closed = 0;
+    const seen: unknown[] = [];
+    const w = makeWitness({ KAFKA_BOOTSTRAP: "broker:9092" }, (opts) => {
+      seen.push(opts);
+      return {
+        sink: () => undefined,
+        reach: "topic",
+        close: () => {
+          closed += 1;
+          return Promise.resolve();
+        },
+      };
+    });
+    expect(seen).toEqual([{ star: "calliope", bootstrap: "broker:9092" }]);
+    expect(w.log.enabled).toBe(true);
+    await w.close();
+    expect(closed).toBe(1);
+  });
+
   it("with no broker, records to the log stream and says so once", async () => {
     const spy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     try {

@@ -37,8 +37,11 @@ export interface Witness {
  * stream, and to `<star>._ops.calls` when `KAFKA_BOOTSTRAP` names a broker.
  * No broker leaves it on the log stream, warned once. Never throws.
  */
-export function makeWitness(env: NodeJS.ProcessEnv = process.env): Witness {
-  const sink: WitnessSink = witnessSink({
+export function makeWitness(
+  env: NodeJS.ProcessEnv = process.env,
+  build: typeof witnessSink = witnessSink,
+): Witness {
+  const sink: WitnessSink = build({
     star: SOURCE_STAR,
     bootstrap: env.KAFKA_BOOTSTRAP,
   });
