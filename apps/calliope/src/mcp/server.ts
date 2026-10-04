@@ -52,6 +52,7 @@ import {
 import type { ChaosFacet } from "../chaos-client.js";
 import { ChaosClientError } from "../chaos-client.js";
 import { type ContainerFacet, writeContainer } from "../container-write.js";
+import { isPatchError, patchContainer } from "../container-patch.js";
 import type { AuthorKind, NotePublisher } from "./consciousness-emit.js";
 import { projectNote } from "./note-projection.js";
 import { containerHistory, readContainer } from "../container-read.js";
@@ -1367,6 +1368,109 @@ export function createServer(
                 text: result.noop
                   ? "noop: every op netted out"
                   : `applied ${String(result.applied.length)} op(s)`,
+              },
+            ],
+            structuredContent: structured({ ...result, ...tagOutcome }),
+          };
+        } catch (err) {
+          if (err instanceof ChaosClientError) {
+            return {
+              content: [{ type: "text", text: `${err.code}: ${err.message}` }],
+              structuredContent: structured({
+                error: err.code,
+                violations: err.violations,
+              }),
+              isError: true,
+            };
+          }
+          throw err;
+        }
+      },
+    );
+  }
+
+  if (options?.containers !== undefined) {
+    const facet = options.containers;
+    server.registerTool(
+      "patch_container",
+      {
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+        },
+        title: "Patch a container (literal find/replace, one transaction)",
+        description:
+          "Edit a container's prose without sending it: literal find/replace " +
+          "applied server-side, landed as ONE write_container save (one graph " +
+          "transaction). slot names one block; omit it to patch every block. " +
+          "Replacements run in order, each on the text the earlier ones left; " +
+          "expected_count is the occurrences of find summed over the targeted " +
+          "blocks, and ANY miss refuses the whole batch before a byte is " +
+          "written (count_mismatch, with every tally). Matching is literal and " +
+          "case-sensitive; occurrences are non-overlapping, left to right. " +
+          "Returns {container, noop, tx?, counts: [{expected, found}], " +
+          "slots_changed, tags?}; other misses are structured (empty_container " +
+          "/ bad_slot / dangling_slot / empty_find / admit_refused).",
+        inputSchema: {
+          container: z
+            .string()
+            .regex(/^[0-9a-f]{64}$/)
+            .describe("The container node's 64-hex token."),
+          slot: z
+            .string()
+            .regex(/^[0-9a-f]{64}$/)
+            .optional()
+            .describe("One block's slot token; omit to patch every block."),
+          replacements: z
+            .array(
+              z.object({
+                find: z.string().min(1).describe("Literal text to find."),
+                replace: z.string().describe("Literal replacement text."),
+                expected_count: z
+                  .number()
+                  .int()
+                  .min(0)
+                  .describe("Occurrences required across the targets."),
+              }),
+            )
+            .min(1)
+            .describe("The replacements, applied in order."),
+          tenant: z
+            .enum(["notes", "documents", "comments", "governance", "issues"])
+            .optional()
+            .describe("The tenant graph (default: notes)."),
+        },
+      },
+      async ({ container, slot, replacements, tenant }) => {
+        const graph = tenant ?? "notes";
+        try {
+          const result = await patchContainer(
+            facet,
+            { container, slot, replacements },
+            graph,
+          );
+          if (isPatchError(result)) {
+            return {
+              content: [
+                { type: "text", text: `${result.error}: ${result.detail}` },
+              ],
+              structuredContent: structured(result),
+              isError: true,
+            };
+          }
+          let tagOutcome = {};
+          if (!result.noop && graph === "notes") {
+            tagOutcome = await afterContainerWrite(facet, container);
+            await publishNote(facet, container);
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: result.noop
+                  ? "noop: the replacements changed nothing"
+                  : `patched ${String(result.slots_changed.length)} block(s) in tx ${String(result.tx)}`,
               },
             ],
             structuredContent: structured({ ...result, ...tagOutcome }),
