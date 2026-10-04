@@ -18,14 +18,14 @@ digest = "sha256:b7e890e0bb6d268a7084c692beb571d3248837b78d1dc9e2bd846a0c7953ca3
 [[produces]]
 to = "mnemosyne"
 contract = "calliope-mnemosyne"
-version = "1"
-digest = "sha256:0c015be0cc60277f77c2c9eaff9960e1ae7b8721d6486995361d59ac1a167091"
+version = "2"
+digest = "sha256:f27c8d30536a3f49dd341b144e7cb41d7d091a4c2e3cfdea7e24b1a38cfe9c9e"
 
 [[produces]]
 to = "ourea"
 contract = "calliope-ourea"
-version = "1"
-digest = "sha256:2295cfe169c7da79ace88e8a46e8a16fa45458a1de6bad376d1f481f4662355e"
+version = "2"
+digest = "sha256:d9f1db821706275f567a43a629c4e72c22ac9842ec50270295c2a08e473bd056"
 
 [[produces]]
 to = "proteus"
