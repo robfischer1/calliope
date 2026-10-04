@@ -107,6 +107,8 @@ describe("extractInlineTags — the scan.ts grammar, mirrored", () => {
     expect(maskCode("a ` b")).toBe("a ` b");
     // Text between spans is kept even when it repeats.
     expect(maskCode("a`b`a")).toBe("a   a");
+    // Text after a span never pairs like a run, even with an equal later part.
+    expect(maskCode("`x`q`q")).toBe("   q`q");
     // A span opened by a double run closes only on a double run.
     expect(extractInlineTags("`` #x ` ``")).toEqual([]);
   });
