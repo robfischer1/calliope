@@ -503,7 +503,9 @@ export async function reconcileNoteTags(
  * The body-write hook: for a Note-kind node (kind-gated via the node's
  * `hasType` edge — work-node prose never enters the tag path), extract the
  * body's inline tags and reconcile. Reads the CURRENT body from the client
- * so every write shape (coarse, append, edit, block ops) feeds one path.
+ * so every write shape (coarse, append, edit, block ops, container ops)
+ * feeds one path. Answers the delta, or undefined when the node is not a
+ * live note and the tag path never ran.
  */
 export async function maybeReconcileInlineTags(
   client: NoteBodies,
@@ -511,13 +513,13 @@ export async function maybeReconcileInlineTags(
   scope: string,
   store: TagStore,
   nodeId: string,
-): Promise<void> {
+): Promise<{ added: string[]; removed: string[] } | undefined> {
   const edges = await dial.edges(nodeId);
   const isNote = edges.some(
     (e) => e.predicate === "hasType" && e.value === NOTE_KIND,
   );
   if (!isNote) {
-    return;
+    return undefined;
   }
   // An ARCHIVED note carries no inline tags. The phdb-migration corpus
   // (2,479 notes on 2026-07-05: OneDrive files, Takeout zips, the iPhone
@@ -527,11 +529,11 @@ export async function maybeReconcileInlineTags(
   // `#ifdef`, `#div/0`, `#n/a`, `#inbox/<gmail label id>` … into the
   // picker's chip row. The predicate means what it says here too.
   if (isArchived(edges)) {
-    return;
+    return undefined;
   }
   const sections = await client.readBody(nodeId);
   const text = sections.map((s) => s.text).join("\n");
-  await reconcileNoteTags(dial, scope, store, nodeId, {
+  return reconcileNoteTags(dial, scope, store, nodeId, {
     inline: extractInlineTags(text),
   });
 }

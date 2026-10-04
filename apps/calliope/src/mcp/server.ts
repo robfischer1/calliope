@@ -217,6 +217,44 @@ export function createServer(
     }
   };
 
+  // The same reconcile behind a container save. The removed body verbs ran
+  // it after every write; write_container — aglaia's save since 081 F9 —
+  // never did, so a `#tag` typed or deleted in the editor never reached
+  // hasTag or the note_tags mirror. It reads the body back through the TREE
+  // (containerBodies), never the body client, whose pg form dials the
+  // dropped `sections` table. Notes tenant only: the other tenants' prose is
+  // not a note's. Non-fatal for the same reason as above, but the outcome
+  // rides the result so a caller can see the tag path ran.
+  const afterContainerWrite = async (
+    facet: ContainerFacet,
+    container: string,
+  ): Promise<{
+    tags?: { added: string[]; removed: string[] };
+    tags_error?: string;
+  }> => {
+    if (options?.chaos === undefined || options.tags === undefined) {
+      return {};
+    }
+    try {
+      const delta = await maybeReconcileInlineTags(
+        containerBodies(facet),
+        options.chaos.dial,
+        options.chaos.scope,
+        options.tags,
+        container,
+      );
+      return delta === undefined ? {} : { tags: delta };
+    } catch (err) {
+      // String(), not .message: an Error keeps its class name, anything
+      // else still renders.
+      const detail = String(err);
+      console.error(
+        `calliope-mcp: inline-tag reconcile failed for ${container}: ${detail}`,
+      );
+      return { tags_error: detail };
+    }
+  };
+
   if (options?.pathBodies === true) {
     server.registerTool(
       "read_body",
@@ -1316,7 +1354,10 @@ export function createServer(
             ops,
             tenant ?? "notes",
           );
+          let tagOutcome = {};
           if (!result.noop && (tenant ?? "notes") === "notes") {
+            // Tags before the publish, so the projection carries them.
+            tagOutcome = await afterContainerWrite(facet, container);
             await publishNote(facet, container);
           }
           return {
@@ -1328,7 +1369,7 @@ export function createServer(
                   : `applied ${String(result.applied.length)} op(s)`,
               },
             ],
-            structuredContent: structured(result),
+            structuredContent: structured({ ...result, ...tagOutcome }),
           };
         } catch (err) {
           if (err instanceof ChaosClientError) {
