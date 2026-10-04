@@ -1,7 +1,7 @@
 # justfile — frontend repo local gate.
 #
 # `check` is the fast edit loop. `gate` is the full mirror of
-# .forgejo/workflows/frontend-ci.yml — run it before you push and CI holds no
+# the Dagger ts lane (foundry-tools) — run it before you push and CI holds no
 # surprises. `just` with no argument lists everything.
 #
 # Thin over package.json: turbo already owns the task graph and its cache, so
@@ -66,16 +66,6 @@ vuln:
 # Static analysis, scoped taint rules
 sast:
     LANG=C.UTF-8 LC_ALL=C.UTF-8 opengrep scan --config rules/sast --error .
-
-# Build the container as the build lane does: the Gate's release (the bundle,
-# built on the image's own base) staged at release/ — the Dockerfile copies it
-# in; nothing bundles inside the image — then the Dockerfile. Catches
-# Dockerfile drift `check` cannot. --repo is the clone URL: the answers file
-# names no service_name (the frontend template asks repo_name, which is not
-# the star), so the release reads the star's record by the repository it is.
-image:
-    dagger call -m "git.notusmi.com/rob/foundry-tools@main" --source=. --repo="$(git remote get-url origin)" release export --path release
-    DOCKER_BUILDKIT=1 docker build --pull -t {{star}}:dev .
 
 [doc('Remove node_modules, .turbo and dist trees')]
 clean:
