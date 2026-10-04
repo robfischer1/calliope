@@ -1077,9 +1077,14 @@ export function createServer(
               "Explicit tags (e.g. folder-derived) — validated here, written " +
                 "as hasTag edges by C9.",
             ),
+          type: z
+            .string()
+            .regex(/^[A-Za-z][A-Za-z0-9_-]*$/)
+            .optional()
+            .describe("The hasType edge (default Note; the kind stays Note)."),
         },
       },
-      async ({ title, parent, tags }) => {
+      async ({ title, parent, tags, type }) => {
         const result = await createNote(
           dial,
           scope,
@@ -1087,6 +1092,7 @@ export function createServer(
             title,
             ...(parent !== undefined ? { parent } : {}),
             ...(tags !== undefined ? { tags } : {}),
+            ...(type !== undefined ? { type } : {}),
           },
           options.tags,
         );

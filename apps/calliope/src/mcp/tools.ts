@@ -305,13 +305,15 @@ export function isCreateNoteError(
 export const NOTE_KIND = "Note";
 
 /**
- * create_note(title, parent?, tags?) -> { node_id, created } — the C8 mint.
+ * create_note(title, parent?, tags?, type?) -> { node_id, created } — the
+ * C8 mint.
  *
  * Reuse-first (the F2 identity contract: `createNode` never dedups, so the
  * name is looked up before any mint — `(Note, title)` IS the idempotency key);
  * on a miss, the two-admit mint (createNode → `minted[0]`, then the edge
- * batch: `hasName`, `hasType:"Note"`, `parent`) on the notes scope. A
- * parentless note parents to the ensured "Notes" root — orphan-safety
+ * batch: `hasName`, `hasType` (input.type, default "Note"), `parent`) on
+ * the notes scope. A parentless note parents to the ensured "Notes" root —
+ * orphan-safety
  * regardless of caller. `tags` is validated and otherwise inert (C9 wires the
  * `hasTag` write). No section rows mint — the body is the node's (empty)
  * section set, readable immediately; first write attaches sections.
@@ -319,10 +321,16 @@ export const NOTE_KIND = "Note";
 export async function createNote(
   dial: ChaosDial,
   scope: string,
-  input: { title: string; parent?: string; tags?: string[] },
+  input: { title: string; parent?: string; tags?: string[]; type?: string },
   tagStore?: TagStore,
 ): Promise<CreateNoteResult | CreateNoteError> {
   const title = input.title.trim();
+  // The hasType edge only: the node's kind stays Note, because `(Note,
+  // title)` is the reuse key below — a different kind would mint a twin on
+  // the next call. A non-Note type (a mnemosyne body is "Memory") falls out
+  // of everything keyed on hasType=Note: the inline-tag reconcile,
+  // set_properties, and the notes DocumentStore listing.
+  const hasType = input.type ?? NOTE_KIND;
   if (title.length === 0) {
     return { error: "bad_title", detail: "title must be non-empty" };
   }
@@ -372,7 +380,7 @@ export async function createNote(
 
   const edgeBatch = (token: string, parent: string) => [
     opAdd(token, "hasName", { toLiteral: title }),
-    opAdd(token, "hasType", { toLiteral: NOTE_KIND }),
+    opAdd(token, "hasType", { toLiteral: hasType }),
     opAdd(token, "parent", { toNode: parent }),
   ];
 
