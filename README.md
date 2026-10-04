@@ -107,6 +107,9 @@ The container surface (the ONE write path):
 
 - `write_container(container, ops, tenant?)` — the tree-native save: one
   graph transaction, blob-first, identical content nets out
+- `patch_container(container, slot?, replacements, tenant?)` — literal
+  `{find, replace, expected_count}` edits applied server-side as one save;
+  any count miss refuses the whole batch. Returns the tx and per-op counts
 - `read_container(container, as_of_tx?)` — ordered blocks (slot, position,
   blobId, text); dangling blobs surfaced, never fabricated
 - `container_history(container)` — the container's transactions (history

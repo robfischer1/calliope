@@ -52,6 +52,9 @@ export interface ContainerWriteResult {
   minted: Record<number, string>;
   /** op index → blob id (adds and updates). */
   blobIds: Record<number, string>;
+  /** The graph transaction the batch landed as — absent on a noop, or
+   *  when the gate answered none. */
+  tx?: number;
 }
 
 /**
@@ -147,5 +150,6 @@ export async function writeContainer(
     applied: surviving.map((s) => s.index),
     minted,
     blobIds,
+    ...(res.tx !== undefined ? { tx: res.tx } : {}),
   };
 }
