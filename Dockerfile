@@ -25,7 +25,7 @@ WORKDIR /app
 COPY --chown=1000:1000 release/server.js ./server.js
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8204
 USER 1000:1000
-EXPOSE 8204
+EXPOSE 8204 8205
 # Liveness — the base has bun and curl; a GET /mcp answers 405 (POST-only),
 # which still proves the HTTP server is up; only a connect failure fails.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
