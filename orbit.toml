@@ -22,12 +22,6 @@ version = "1"
 digest = "sha256:0c015be0cc60277f77c2c9eaff9960e1ae7b8721d6486995361d59ac1a167091"
 
 [[produces]]
-to = "ourea"
-contract = "calliope-ourea"
-version = "0"
-digest = "sha256:a6f562f35e3f0be35f1296a7417ed41fb185745ad55b5fbbe66ca18ee14de940"
-
-[[produces]]
 to = "proteus"
 contract = "calliope-proteus"
 version = "1"
