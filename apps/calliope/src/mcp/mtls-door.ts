@@ -202,12 +202,12 @@ export function accept(
   }
   const peer = peerFromSocket(sock);
   const up = connect({ host: "127.0.0.1", port: opts.upstreamPort });
-  // -1 is no port: deleting it from the table is a no-op, so `end` needs no
+  // NaN is no port: deleting it from the table is a no-op, so `end` needs no
   // branch to tell "never registered" from "already cleared".
-  let registered = -1;
+  let registered = NaN;
   const end = (): void => {
     opts.peers.delete(registered);
-    registered = -1;
+    registered = NaN;
     sock.destroy();
     up.destroy();
   };
