@@ -132,7 +132,7 @@ const TOKEN_RE = /^[0-9a-f]{64}$/;
 /** One edge's identity for set arithmetic: domain-tagged so a literal that
  *  happens to look like a token never equals a node edge. */
 function keyOf(isNode: boolean, value: string): string {
-  return `${isNode ? "n" : "l"}:${value}`;
+  return JSON.stringify([isNode, value]);
 }
 
 function spell(predicate: string, value: string): string {
@@ -340,16 +340,24 @@ export async function setProperties(
   const normalized = (input.tags ?? [])
     .filter((t) => t.trim() !== "")
     .map(normalizeTag);
+  // Junk is reported here and kept out downstream: the C9 reconcile's F11
+  // chokepoint never admits it, and a retraction only ever finds rows that
+  // reconcile wrote.
   const tagsSkipped = normalized.filter(isJunkTag);
-  const clean = normalized.filter((t) => !isJunkTag(t));
   let tagsAdded: string[] = [];
   let tagsRemoved: string[] = [];
-  if (tagStore !== undefined && clean.length > 0) {
+  if (tagStore !== undefined && normalized.length > 0) {
     if (retract) {
-      tagsRemoved = await retractTags(dial, scope, tagStore, nodeId, clean);
+      tagsRemoved = await retractTags(
+        dial,
+        scope,
+        tagStore,
+        nodeId,
+        normalized,
+      );
     } else {
       const r = await reconcileNoteTags(dial, scope, tagStore, nodeId, {
-        explicit: clean,
+        explicit: normalized,
       });
       tagsAdded = r.added;
     }
