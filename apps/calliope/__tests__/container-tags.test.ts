@@ -35,12 +35,14 @@ interface Rig {
   tags: FixtureTagStore;
 }
 
-async function rig(opts: { tags?: boolean } = {}): Promise<Rig> {
+async function rig(
+  opts: { tags?: boolean; chaos?: boolean } = {},
+): Promise<Rig> {
   const dial = new FixtureChaosDial();
   const blobs = new FixtureBlobStore();
   const tags = new FixtureTagStore();
   const server = createServer(new DroppedTableClient(), {
-    chaos: { dial, scope: "notes" },
+    ...(opts.chaos === false ? {} : { chaos: { dial, scope: "notes" } }),
     containers: { blobs, dial },
     ...(opts.tags === false ? {} : { tags }),
   });
@@ -246,5 +248,53 @@ describe("write_container runs the inline-tag reconcile", () => {
     expect(out.tags_error).toBe("Error: mirror down");
     const b = await block(mcp, n);
     expect(b.slot).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("without the chaos facet the save lands and the tag path stays out", async () => {
+    const { mcp, dial, tags } = await rig({ chaos: false });
+    const minted = await dial.admit([opCreate("Note", "no chaos")], "notes");
+    const n = minted.minted[0] ?? "";
+    await dial.admit([opAdd(n, "hasType", { toLiteral: "Note" })], "notes");
+    const out = await add(mcp, n, "#alpha");
+    expect(out.noop).toBe(false);
+    expect(out).not.toHaveProperty("tags");
+    expect(out).not.toHaveProperty("tags_error");
+    expect(await tags.byNode(n)).toEqual([]);
+  });
+
+  it("a skipped reconcile adds no tags key at all", async () => {
+    const { mcp, dial } = await rig();
+    const minted = await dial.admit([opCreate("Task", "work")], "notes");
+    const work = minted.minted[0] ?? "";
+    const out = await add(mcp, work, "#alpha");
+    expect(out).not.toHaveProperty("tags");
+  });
+
+  it("a gate refusal of the save is a structured error", async () => {
+    const { mcp, dial } = await rig();
+    const n = await note(mcp, "Refused");
+    dial.admit = () =>
+      Promise.resolve({ admitted: false, minted: [], violations: ["no"] });
+    const res = await mcp.callTool({
+      name: "write_container",
+      arguments: {
+        container: n,
+        ops: [{ op: "add", text: "#alpha", position: "a0" }],
+      },
+    });
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent).toEqual({
+      error: "admit_refused",
+      violations: ["no"],
+    });
+    expect(res.content).toEqual([
+      {
+        type: "text",
+        text:
+          "admit_refused: write_container: the gate refused the batch " +
+          "(minted blobs remain as orphans for the census; no tree change " +
+          "landed)",
+      },
+    ]);
   });
 });

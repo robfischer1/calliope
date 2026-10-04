@@ -175,4 +175,26 @@ describe("the container write (041 F4)", () => {
     const tree = await readTree(dial, doc);
     expect(tree.map((s) => s.position)).toEqual(["a0", "a1"]);
   });
+
+  it("carries the admit's tx, and none when the gate answers none", async () => {
+    const { facet, dial, doc } = await setup();
+    const first = await writeContainer(facet, doc, [
+      { op: "add", text: "with tx", position: "a0" },
+    ]);
+    expect(typeof first.tx).toBe("number");
+    const admit = dial.admit.bind(dial);
+    dial.admit = async (ops, scope) => {
+      const r = await admit(ops, scope);
+      return {
+        admitted: r.admitted,
+        minted: r.minted,
+        violations: r.violations,
+      };
+    };
+    const second = await writeContainer(facet, doc, [
+      { op: "add", text: "without tx", position: "a1" },
+    ]);
+    expect(second.noop).toBe(false);
+    expect(second).not.toHaveProperty("tx");
+  });
 });

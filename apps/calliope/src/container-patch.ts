@@ -76,10 +76,24 @@ export function countLiteral(text: string, find: string): number {
   return text.split(find).length - 1;
 }
 
-/** The planned texts: slot → new text for each block the batch changed. */
+/** A block the batch targets: one that has prose (and so a blob). */
+interface Target {
+  slot: string;
+  blobId: string;
+  text: string;
+}
+
+/** The planned texts: the new text for each block the batch changed. */
 export interface PatchPlan {
   counts: PatchCount[];
-  changed: { block: ContainerBlock; text: string }[];
+  changed: (Target & { from: string })[];
+}
+
+/** A block with prose, narrowed — a dangling block yields nothing. */
+function asTarget(b: ContainerBlock): Target[] {
+  return b.text === null || b.blobId === null
+    ? []
+    : [{ slot: b.slot, blobId: b.blobId, text: b.text }];
 }
 
 /**
@@ -103,33 +117,33 @@ export function planPatch(
   if (blocks.length === 0) {
     return { error: "empty_container", detail: "the container has no blocks" };
   }
-  let targets: ContainerBlock[];
+  let targets: Target[];
   if (slot === undefined) {
     // Every block that has prose. A dangling block has no text to match;
     // the census reports it, the patch steps around it.
-    targets = blocks.filter((b) => b.text !== null);
+    targets = blocks.flatMap(asTarget);
   } else {
     const hit = blocks.find((b) => b.slot === slot);
     if (hit === undefined) {
       return { error: "bad_slot", detail: `${slot} is not in the container` };
     }
-    if (hit.text === null) {
+    targets = asTarget(hit);
+    if (targets.length === 0) {
       return {
         error: "dangling_slot",
         detail: `${slot} names an absent blob; there is no text to patch`,
       };
     }
-    targets = [hit];
   }
 
-  const texts = targets.map((b) => b.text ?? "");
+  let working = targets.map((t) => ({ ...t, from: t.text }));
   const counts: PatchCount[] = [];
   for (const r of replacements) {
     let found = 0;
-    for (const [k, text] of texts.entries()) {
-      found += countLiteral(text, r.find);
-      texts[k] = text.split(r.find).join(r.replace);
-    }
+    working = working.map((t) => {
+      found += countLiteral(t.text, r.find);
+      return { ...t, text: t.text.split(r.find).join(r.replace) };
+    });
     counts.push({ expected: r.expected_count, found });
   }
   const misses = counts
@@ -147,10 +161,7 @@ export function planPatch(
       counts,
     };
   }
-  const changed = targets
-    .map((block, k) => ({ block, text: texts[k] ?? "" }))
-    .filter(({ block, text }) => text !== block.text);
-  return { counts, changed };
+  return { counts, changed: working.filter((t) => t.text !== t.from) };
 }
 
 /**
@@ -167,22 +178,20 @@ export async function patchContainer(
   const { blocks } = await readContainer(facet, input.container);
   const plan = planPatch(blocks, input.slot, input.replacements);
   if ("error" in plan) return plan;
-  const ops: ContainerOp[] = plan.changed.map(({ block, text }) => ({
+  // A plan that changed nothing still goes through the save: writeContainer
+  // answers an empty op list as a noop without opening a transaction.
+  const ops: ContainerOp[] = plan.changed.map((t) => ({
     op: "update",
-    slot: block.slot,
-    oldBlobId: block.blobId ?? "",
-    text,
+    slot: t.slot,
+    oldBlobId: t.blobId,
+    text: t.text,
   }));
-  const base = {
-    container: input.container,
-    counts: plan.counts,
-    slots_changed: plan.changed.map(({ block }) => block.slot),
-  };
-  if (ops.length === 0) return { ...base, noop: true };
   const res = await writeContainer(facet, input.container, ops, tenant);
   return {
-    ...base,
+    container: input.container,
     noop: res.noop,
     ...(res.tx !== undefined ? { tx: res.tx } : {}),
+    counts: plan.counts,
+    slots_changed: plan.changed.map((t) => t.slot),
   };
 }

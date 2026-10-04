@@ -18,7 +18,7 @@ import {
   patchContainer,
   planPatch,
 } from "../src/container-patch.js";
-import type { ContainerBlock } from "../src/container-read.js";
+import { type ContainerBlock, readContainer } from "../src/container-read.js";
 import { writeContainer } from "../src/container-write.js";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { createServer } from "../src/mcp/server.js";
@@ -62,11 +62,16 @@ describe("planPatch", () => {
     const plan = planPatch(blocks, undefined, [
       { find: "#a", replace: "`#a`", expected_count: 3 },
     ]);
-    if ("error" in plan) return;
+    if ("error" in plan) throw new Error(plan.detail);
     expect(plan.counts).toEqual([{ expected: 3, found: 3 }]);
-    expect(plan.changed.map((c) => [c.block.slot, c.text])).toEqual([
-      [S1, "one `#a`\ntwo `#a`"],
-      [S2, "three `#a`"],
+    expect(plan.changed).toEqual([
+      {
+        slot: S1,
+        blobId: `b-${S1}`,
+        from: "one #a\ntwo #a",
+        text: "one `#a`\ntwo `#a`",
+      },
+      { slot: S2, blobId: `b-${S2}`, from: "three #a", text: "three `#a`" },
     ]);
   });
 
@@ -75,7 +80,7 @@ describe("planPatch", () => {
       { find: "#a", replace: "#b", expected_count: 1 },
     ]);
     if ("error" in plan) throw new Error(plan.detail);
-    expect(plan.changed.map((c) => c.block.slot)).toEqual([S2]);
+    expect(plan.changed.map((c) => c.slot)).toEqual([S2]);
   });
 
   it("runs replacements in order, each on the text the earlier ones left", () => {
@@ -123,6 +128,36 @@ describe("planPatch", () => {
     ]);
     if ("error" in plan) throw new Error(plan.detail);
     expect(plan.changed).toEqual([]);
+  });
+
+  it("a block whose content fact names an absent blob is dangling, in both modes", () => {
+    const gone: ContainerBlock = {
+      slot: S3,
+      position: "a3",
+      blobId: "b-gone",
+      text: null,
+      dangling: true,
+    };
+    const r = [{ find: "#a", replace: "#b", expected_count: 3 }];
+    const all = planPatch([...blocks.slice(0, 2), gone], undefined, r);
+    if ("error" in all) throw new Error(all.detail);
+    expect(all.changed.map((c) => c.slot)).toEqual([S1, S2]);
+    expect(planPatch([gone], S3, r)).toMatchObject({ error: "dangling_slot" });
+  });
+
+  it("a block with text but no blob id is not a target", () => {
+    const odd: ContainerBlock = {
+      slot: S3,
+      position: "a3",
+      blobId: null,
+      text: "#a",
+      dangling: false,
+    };
+    const r = [{ find: "#a", replace: "#b", expected_count: 3 }];
+    const all = planPatch([...blocks.slice(0, 2), odd], undefined, r);
+    if ("error" in all) throw new Error(all.detail);
+    expect(all.changed.map((c) => c.slot)).toEqual([S1, S2]);
+    expect(planPatch([odd], S3, r)).toMatchObject({ error: "dangling_slot" });
   });
 
   it("refuses an empty find, an empty container, an unknown slot and a dangling slot", () => {
@@ -176,8 +211,34 @@ describe("patchContainer", () => {
     expect(dial.admits.length).toBe(before + 1);
     expect(res.noop).toBe(false);
     expect(typeof res.tx).toBe("number");
-    expect(res.slots_changed).toHaveLength(2);
+    const tree = await readContainer(facet, doc);
+    expect(res.slots_changed).toEqual(tree.blocks.map((b) => b.slot));
     expect(res.counts).toEqual([{ expected: 3, found: 3 }]);
+    // The default tenant is notes: the batch rode the notes scope.
+    expect(dial.admits.at(-1)?.scope).toBe("notes");
+    expect(tree.blocks.map((b) => b.text)).toEqual([
+      "alpha - [ ] one\nalpha - [ ] two",
+      "beta - [ ] three",
+    ]);
+  });
+
+  it("a gate that answers no tx yields a result without one", async () => {
+    const { dial, facet, doc } = await seeded();
+    const admit = dial.admit.bind(dial);
+    dial.admit = async (ops, scope) => {
+      const r = await admit(ops, scope);
+      return {
+        admitted: r.admitted,
+        minted: r.minted,
+        violations: r.violations,
+      };
+    };
+    const res = await patchContainer(facet, {
+      container: doc,
+      replacements: [{ find: "beta", replace: "gamma", expected_count: 1 }],
+    });
+    expect(res).not.toHaveProperty("tx");
+    expect(res).toMatchObject({ noop: false });
   });
 
   it("a count miss writes nothing — no blob, no admit", async () => {
@@ -373,5 +434,122 @@ describe("the patch_container verb", () => {
       arguments: { container: node, replacements: [] },
     });
     expect(empty.isError).toBe(true);
+  });
+
+  it("a named slot patches that block only", async () => {
+    const { mcp, node } = await rig();
+    await mcp.callTool({
+      name: "write_container",
+      arguments: {
+        container: node,
+        ops: [{ op: "add", text: "second #b block", position: "a1" }],
+      },
+    });
+    const read = await mcp.callTool({
+      name: "read_container",
+      arguments: { container: node },
+    });
+    const slots = (
+      read.structuredContent as { blocks: { slot: string }[] }
+    ).blocks.map((b) => b.slot);
+    const res = await mcp.callTool({
+      name: "patch_container",
+      arguments: {
+        container: node,
+        slot: slots[1],
+        replacements: [{ find: "#b", replace: "#c", expected_count: 1 }],
+      },
+    });
+    expect(res.isError).toBeFalsy();
+    expect(
+      (res.structuredContent as { slots_changed: string[] }).slots_changed,
+    ).toEqual([slots[1]]);
+  });
+
+  it("every tenant is accepted by name", async () => {
+    const { mcp, node } = await rig();
+    for (const tenant of ["notes", "documents", "comments", "governance"]) {
+      const res = await mcp.callTool({
+        name: "patch_container",
+        arguments: {
+          container: node,
+          tenant,
+          replacements: [{ find: "absent", replace: "x", expected_count: 0 }],
+        },
+      });
+      expect(res.isError, tenant).toBeFalsy();
+    }
+  });
+
+  it("refuses a container or slot token with junk around the 64 hex", async () => {
+    const { mcp, node } = await rig();
+    const r = [{ find: "a", replace: "b", expected_count: 0 }];
+    for (const args of [
+      { container: `x${node}`, replacements: r },
+      { container: `${node}x`, replacements: r },
+      { container: node, slot: `x${"1".repeat(64)}`, replacements: r },
+      { container: node, slot: `${"1".repeat(64)}x`, replacements: r },
+    ]) {
+      const res = await mcp.callTool({
+        name: "patch_container",
+        arguments: args,
+      });
+      expect(res.isError, JSON.stringify(args)).toBe(true);
+    }
+  });
+
+  it("publishes its description and schema", async () => {
+    const { mcp } = await rig();
+    const { tools } = await mcp.listTools();
+    const tool = tools.find((t) => t.name === "patch_container");
+    expect(tool?.title).toBe(
+      "Patch a container (literal find/replace, one transaction)",
+    );
+    expect(tool?.description).toBe(
+      "Edit a container's prose without sending it: literal find/replace " +
+        "applied server-side, landed as ONE write_container save (one graph " +
+        "transaction). slot names one block; omit it to patch every block. " +
+        "Replacements run in order, each on the text the earlier ones left; " +
+        "expected_count is the occurrences of find summed over the targeted " +
+        "blocks, and ANY miss refuses the whole batch before a byte is " +
+        "written (count_mismatch, with every tally). Matching is literal and " +
+        "case-sensitive; occurrences are non-overlapping, left to right. " +
+        "Returns {container, noop, tx?, counts: [{expected, found}], " +
+        "slots_changed, tags?}; other misses are structured (empty_container " +
+        "/ bad_slot / dangling_slot / empty_find / admit_refused).",
+    );
+    const props = tool?.inputSchema.properties as Record<
+      string,
+      {
+        description?: string;
+        enum?: string[];
+        items?: { properties: Record<string, { description?: string }> };
+      }
+    >;
+    expect(props.container?.description).toBe(
+      "The container node's 64-hex token.",
+    );
+    expect(props.slot?.description).toBe(
+      "One block's slot token; omit to patch every block.",
+    );
+    expect(props.replacements?.description).toBe(
+      "The replacements, applied in order.",
+    );
+    const item = props.replacements?.items?.properties;
+    expect(item?.find?.description).toBe("Literal text to find.");
+    expect(item?.replace?.description).toBe("Literal replacement text.");
+    expect(item?.expected_count?.description).toBe(
+      "Occurrences required across the targets.",
+    );
+    expect(props.tenant?.description).toBe(
+      "The tenant graph (default: notes).",
+    );
+    expect(props.tenant?.enum).toEqual([
+      "notes",
+      "documents",
+      "comments",
+      "governance",
+      "issues",
+    ]);
   });
 });

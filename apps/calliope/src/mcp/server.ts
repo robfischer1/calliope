@@ -226,6 +226,8 @@ export function createServer(
   // dropped `sections` table. Notes tenant only: the other tenants' prose is
   // not a note's. Non-fatal for the same reason as above, but the outcome
   // rides the result so a caller can see the tag path ran.
+  const tagChaos = options?.chaos;
+  const inlineTags = options?.tags;
   const afterContainerWrite = async (
     facet: ContainerFacet,
     container: string,
@@ -233,15 +235,15 @@ export function createServer(
     tags?: { added: string[]; removed: string[] };
     tags_error?: string;
   }> => {
-    if (options?.chaos === undefined || options.tags === undefined) {
+    if (tagChaos === undefined || inlineTags === undefined) {
       return {};
     }
     try {
       const delta = await maybeReconcileInlineTags(
         containerBodies(facet),
-        options.chaos.dial,
-        options.chaos.scope,
-        options.tags,
+        tagChaos.dial,
+        tagChaos.scope,
+        inlineTags,
         container,
       );
       return delta === undefined ? {} : { tags: delta };
