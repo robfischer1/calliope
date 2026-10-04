@@ -227,13 +227,9 @@ Dockerfile             multi-stage bun build on stellar_core:bun-mcp (digest-pin
                        ONE server.js — the runtime stage ships no node_modules AND
                        no source tree; HEALTHCHECK via bun fetch against /mcp
                        (expects 405, proving the server answers).
-.forgejo/workflows/build.yml   caller stub -> foundry-stocks' shared,
-                       language-agnostic build workflow (push to main).
-.forgejo/workflows/ci.yml      caller stub -> foundry-stocks' shared
-                       frontend-ci.yml (pull_request).
 ```
 
-**Retired, do not look for:** `compose.yaml` and `.forgejo/workflows/deploy.yml`
+**Retired, do not look for:** `compose.yaml` and the per-repo deploy workflow
 — both dropped when deploy moved to the shared services lane (2026-07,
 "services lane owns deploy now"). There is no local `infra/` either.
 
@@ -287,14 +283,11 @@ Local dev backend defaults to `urania`/`chaos` reads unless you set
 `FixtureBodyClient`/`FixtureDocumentStore`/`FixtureRevisionStore` — no live
 network or DB needed to run `bun run test`.
 
-CI is two Forgejo Actions caller stubs, NOT a local `deploy.yml` (that file
-is retired — deploy now lives in the shared services lane, out of this
-repo): `.forgejo/workflows/ci.yml` (on `pull_request`) delegates to
-foundry-stocks' `frontend-ci.yml` (bun install + `bun run gate` + audit +
-opengrep); `.forgejo/workflows/build.yml` (push to `main`, non-docs/non-infra
-paths) delegates to foundry-stocks' language-agnostic build workflow
-(`docker build .`). Publish/sign/scan/deploy mechanics live in those shared
-workflows, not here.
+CI is the door's lanes, NOT a local `deploy.yml` (retired — deploy now lives
+in the shared services lane, out of this repo): the gate lane on
+`pull_request` (bun install + `bun run gate` + audit + opengrep) and the build
+lane on push to `main` (`docker build .`). Publish/sign/scan/deploy mechanics
+live in the lanes, not here.
 
 ## Conventions and gotchas
 
