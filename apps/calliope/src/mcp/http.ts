@@ -197,6 +197,13 @@ export function createCalliopeHttpServer(
   // absent, the peer is read from the socket's own TLS state (none, plaintext).
   peers?: LoopbackPeers,
 ): ReturnType<typeof createHttpServer> {
+  // THE IDENTITY CORE LOADS WHEN THE SERVER IS BUILT, not at the first mTLS
+  // peer. Lazily, a core that cannot load (stellar-core-ts 0.17.0 read its
+  // wasm off disk, beside a one-file bundle that does not carry it) took the
+  // process down on whichever call typed a peer first, seconds into a pod
+  // that had already said "serving". Now boot fails before the star serves,
+  // where the build lane's boot smoke sees it.
+  reservedHeaders();
   // One backend for the server's lifetime: the store (or fixture memory)
   // is shared across every stateless request. A caller that needs async
   // initialization (the pg backend) builds + inits the client itself and
@@ -298,14 +305,6 @@ async function main(): Promise<void> {
   // the door from binding. Before initBackend because a span is only useful if
   // the provider exists when the first request lands.
   const telemetryShutdown = await startTelemetry(telemetryConfigFromEnv());
-
-  // THE IDENTITY CORE LOADS AT BOOT, not at the first mTLS peer. Lazily, a
-  // core that cannot load (stellar-core-ts 0.17.0 read its wasm off disk,
-  // beside a one-file bundle that does not carry it) took the process down
-  // on whichever call typed a peer first, minutes into a healthy-looking
-  // pod. Now it fails here, before the star serves, where the build lane's
-  // boot smoke sees it.
-  reservedHeaders();
 
   const kind = backendKind();
   const port = resolvePort();
