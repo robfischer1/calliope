@@ -13,7 +13,7 @@
 # CLI takes no plugins. The build lane stages the result at release/ in the
 # build context before this file runs: `COPY release/…` is what asks for it
 # (foundry-tools buildlane.CopiesRelease). release/ is never in the tree —
-# .gitignore refuses it — and `just image` stages it the same way.
+# .gitignore refuses it.
 #
 # THE BASE is oven/bun slim plus stellar-boot (foundry/base-images/bun); its
 # ENTRYPOINT is stellar-boot, which execs this CMD — dormant until

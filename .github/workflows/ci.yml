@@ -1,6 +1,5 @@
 # The GitHub-MIRROR gate (bun) — the family-correct twin of the door's own
-# pull-CI lane. (It mirrored a `.forgejo/workflows/` caller stub until that
-# runner retired.) The python .github gate the furnace
+# pull-CI lane. The python .github gate the furnace
 # scaffold surface used to pour here was structurally red on a bun tree
 # (hephaestus#126); frontends now carry this template-owned one instead
 # (the frontend genesis kit pours no CI, so nothing clobbers it).

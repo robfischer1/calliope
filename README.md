@@ -154,7 +154,7 @@ which facet stores the backend supplies), reused unforked:
 ## Deploy (nas01 star)
 
 **Deploy is no longer local to this repo.** The repo used to ship its own
-`compose.yaml` + `.forgejo/workflows/deploy.yml`; both are retired
+`compose.yaml` + a deploy workflow; both are retired
 ("services lane owns deploy now" / "state lives in the services lane") —
 there is no `infra/` and no local `deploy.yml` here anymore. What remains in
 this repo:
@@ -163,21 +163,16 @@ this repo:
 - `star.toml` — the conformance target the shared admission gate reads
   (image ref, entrypoint `apps/calliope/src/mcp/http.ts`, the governance
   policy bundle). **Derived by the Hephaestus foundry — do not hand-edit.**
-- `.forgejo/workflows/build.yml` — a caller stub (`push` to `main`,
-  non-docs/non-infra paths) delegating to the shared, language-agnostic
-  `foundry/foundry-stocks` reusable build workflow (`docker build .`, the
-  Dockerfile does the rest).
-- `.forgejo/workflows/ci.yml` — a caller stub (on `pull_request`) delegating
-  to the shared `frontend-ci.yml` reusable workflow (bun install + `bun run
-  gate` + audit + opengrep).
+- CI — the door's lanes: build on `push` to `main` (`docker build .`, the
+  Dockerfile does the rest) and gate on `pull_request` (bun install + `bun run
+  gate` + audit + opengrep). No workflow files live in this repo.
 
 The image itself: `oven/bun`-based multi-stage build on
 `stellar_core:bun-mcp` (digest-pinned, not a floating tag); the runtime stage
 ships only the `bun build --target=bun`-bundled `server.js` — **no source
 tree, no `node_modules`, no `bun install`** in the deployed image (see
-Dockerfile). Publish/sign/scan/deploy mechanics now live in the shared
-foundry-stocks workflows and the services-lane deploy pipeline, not in this
-repo — read `star.toml` + the two `.forgejo/workflows/*.yml` caller stubs for
+Dockerfile). Publish/sign/scan/deploy mechanics now live in the door's lanes
+and the services-lane deploy pipeline, not in this repo — read `star.toml` for
 what this repo actually controls, not this README, if those diverge.
 
 ## Project structure
