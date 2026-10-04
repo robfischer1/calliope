@@ -1,10 +1,12 @@
 # This file records the copier template + answers for this repo.
 # Managed by Copier — do not edit by hand. Run `copier update` to pull template
 # changes (3-way merged against your local edits).
-_commit: v0.41.0
+_commit: v0.42.6
 _src_path: https://forgejo.notusmi.com/rob/frontend-repo-template.git
+app: true
 app_name: calliope
 author_name: Rob Fischer
+critical_modules: ''
 db_kind: postgres
 description: The Notes & Prose Muse's MCP body service
 framework: mcp
@@ -18,3 +20,4 @@ sovereign_database: true
 variant: star
 verb_prefix: calliope
 year: 2026
+
