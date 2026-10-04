@@ -302,6 +302,8 @@ describe("cleanup-tags --heal (mirror follows the graph)", () => {
     });
     // The retraction a graph verb would make — the mirror never hears of it.
     await dial.admit([opRemove(lost, "hasTag", { toLiteral: "#we" })], SCOPE);
+    // The same literal under another predicate is not the tag edge.
+    await dial.admit([opAdd(lost, "hasName", { toLiteral: "#we" })], SCOPE);
 
     const probe = await healMirror(dial, store, ["We"], true);
     expect(probe).toEqual({
@@ -351,5 +353,7 @@ describe("cleanup-tags --heal (mirror follows the graph)", () => {
     ]);
     expect(healTags(["--probe", "--heal", "#a"])).toEqual(["#a"]);
     expect(healTags(["--probe"])).toEqual([]);
+    // No --heal at all names nothing, even with bare words present.
+    expect(healTags(["#a", "#b"])).toEqual([]);
   });
 });

@@ -86,68 +86,44 @@ const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
  * after a span still sits on a whitespace boundary.
  */
 export function maskCode(text: string): string {
-  const lines = text.split("\n");
   let fence: string | undefined;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    const marker = FENCE_RE.exec(line)?.[1];
-    if (fence !== undefined) {
-      const closes =
+  return text
+    .split("\n")
+    .map((line) => {
+      const marker = FENCE_RE.exec(line)?.[1];
+      if (fence === undefined) {
+        if (marker === undefined) return maskInlineCode(line);
+        fence = marker;
+        return "";
+      }
+      // A run holding the opener is the same character and at least as long
+      // (runs are homogeneous); the closer line carries nothing else.
+      if (
         marker !== undefined &&
-        marker.startsWith(fence.charAt(0)) &&
-        marker.length >= fence.length &&
-        line.slice(line.indexOf(marker) + marker.length).trim() === "";
-      lines[i] = "";
-      if (closes) fence = undefined;
-    } else if (marker !== undefined) {
-      fence = marker;
-      lines[i] = "";
-    } else {
-      lines[i] = maskInlineCode(line);
-    }
-  }
-  return lines.join("\n");
+        marker.includes(fence) &&
+        line.trim() === marker
+      ) {
+        fence = undefined;
+      }
+      return "";
+    })
+    .join("\n");
 }
 
-/** Blank every paired backtick span of one line (CommonMark §6.1). */
+/** Blank every paired backtick span of one line (CommonMark §6.1): split on
+ *  backtick runs (odd indices), pair each run with the next run of exactly
+ *  the same width; an unpaired run stays literal. */
 function maskInlineCode(line: string): string {
-  let out = "";
-  let i = 0;
-  while (i < line.length) {
-    if (line[i] !== "`") {
-      out += line.charAt(i);
-      i++;
-      continue;
-    }
-    let run = i;
-    while (line[run] === "`") run++;
-    const width = run - i;
-    const closer = findRun(line, run, width);
-    if (closer === -1) {
-      out += line.slice(i, run);
-      i = run;
-    } else {
-      out += " ".repeat(closer + width - i);
-      i = closer + width;
-    }
-  }
-  return out;
-}
-
-/** The index of the next backtick run of exactly `width`, or -1. */
-function findRun(line: string, from: number, width: number): number {
-  let i = from;
-  while (i < line.length) {
-    if (line[i] !== "`") {
-      i++;
-      continue;
-    }
-    let run = i;
-    while (line[run] === "`") run++;
-    if (run - i === width) return i;
-    i = run;
-  }
-  return -1;
+  const parts = line.split(/(`+)/);
+  let closeAt = -1;
+  return parts
+    .map((part, k) => {
+      if (k <= closeAt) return " ".repeat(part.length);
+      if (k % 2 === 0) return part;
+      closeAt = parts.findIndex((p, j) => j > k && p === part);
+      return closeAt === -1 ? part : " ".repeat(part.length);
+    })
+    .join("");
 }
 
 /** Extract the inline `#tags` of a body text, normalized + deduped. Code is

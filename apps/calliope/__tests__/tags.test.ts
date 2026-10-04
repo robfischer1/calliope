@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import type { Pool } from "pg";
+import { describe, expect, it, vi } from "vitest";
 import {
   computeTagDelta,
   extractInlineTags,
@@ -6,7 +7,7 @@ import {
   maskCode,
   normalizeTag,
 } from "../src/tags.js";
-import { FixtureTagStore } from "../src/tag-store.js";
+import { FixtureTagStore, PgTagStore } from "../src/tag-store.js";
 import { planTagCleanup } from "../src/mcp/cleanup-tags.js";
 
 describe("extractInlineTags — the scan.ts grammar, mirrored", () => {
@@ -102,6 +103,12 @@ describe("extractInlineTags — the scan.ts grammar, mirrored", () => {
     expect(maskCode("a `b` c")).toBe("a     c");
     expect(maskCode("x\n```\ncode\n```\ny")).toBe("x\n\n\n\ny");
     expect(maskCode("no code")).toBe("no code");
+    // An unpaired run survives verbatim.
+    expect(maskCode("a ` b")).toBe("a ` b");
+    // Text between spans is kept even when it repeats.
+    expect(maskCode("a`b`a")).toBe("a   a");
+    // A span opened by a double run closes only on a double run.
+    expect(extractInlineTags("`` #x ` ``")).toEqual([]);
   });
 
   it("normalizeTag canonicalizes with or without the hash", () => {
@@ -134,6 +141,29 @@ describe("computeTagDelta — the reconcile matrix", () => {
     const delta = computeTagDelta(standing, { inline: [] });
     expect(delta.toAdd).toEqual([]);
     expect(delta.toRemove).toEqual([]);
+  });
+});
+
+describe("TagStore.carriers", () => {
+  it("the fixture answers carriers sorted, whatever the insert order", async () => {
+    const store = new FixtureTagStore();
+    await store.upsert("n2", "#a", "inline");
+    await store.upsert("n1", "#a", "inline");
+    await store.upsert("n3", "#b", "inline");
+    expect(await store.carriers("#a")).toEqual(["n1", "n2"]);
+    expect(await store.carriers("#none")).toEqual([]);
+  });
+
+  it("PgTagStore asks the mirror for the tag's node ids", async () => {
+    const query = vi.fn(() =>
+      Promise.resolve({ rows: [{ node_id: "n1" }, { node_id: "n2" }] }),
+    );
+    const store = new PgTagStore({ query } as unknown as Pool);
+    expect(await store.carriers("#we")).toEqual(["n1", "n2"]);
+    expect(query).toHaveBeenCalledWith(
+      "SELECT node_id FROM note_tags WHERE tag = $1 ORDER BY node_id",
+      ["#we"],
+    );
   });
 });
 
