@@ -3,9 +3,6 @@
 // entry script is one line that cannot hide a branch. The mutation lane
 // scopes the whole diff, and a build script with no test is a script whose
 // wrong option (a dropped plugin, a wrong entry) ships to the image unseen.
-import { cpSync } from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
 import type { BundlerPlugin } from "@forge/stellar-core-ts/bundle";
 import { platformaticWasmBundled } from "@forge/stellar-core-ts/bundle";
 
@@ -44,28 +41,6 @@ export function outdirFrom(argv: readonly string[]): string | undefined {
   return raw === "" ? undefined : raw;
 }
 
-/** What the bundle leaves beside server.js, and what the image copies. */
-export const CORE_DIR = "identitycore-gen";
-
-/** Where the identity core's generated wasm lives in the installed package.
- *  Resolved the way the bundler resolves the core (the `bun` export
- *  condition), because the core reads it relative to its own module: in the
- *  bundle that is server.js, so the files must sit beside it. Without it the
- *  peer-typing witness (stellar-core-ts >= 0.17) cannot load its core — and
- *  calliope crashlooped on ENOENT /app/identitycore-gen/… (2026-10-04). */
-export function identityCoreSource(): string {
-  const entry = createRequire(import.meta.url).resolve(
-    "@forge/stellar-core-ts/identitycore",
-  );
-  return join(dirname(entry), CORE_DIR);
-}
-
-/** Copy the core's wasm next to the bundle. Throws when the source is
- *  missing, so a package that moved it fails the build, not the pod. */
-export function copyIdentityCore(outdir: string): void {
-  cpSync(identityCoreSource(), join(outdir, CORE_DIR), { recursive: true });
-}
-
 /** The one bundle this star builds: its entry, one minified bun-target
  *  file named server.js, and the core's wasm swap — `@platformatic/kafka`
  *  reads its WebAssembly off disk relative to its own module, which a
@@ -83,14 +58,11 @@ export function bundleOptions(outdir: string): BuildOptions {
 
 /** Run the bundle step. Answers the process exit code: 2 for a missing
  *  outdir, 1 for a failed build (its logs written to `stderr`), 0 with one
- *  line per output otherwise. A successful build is followed by `copyCore`
- *  (the identity core's wasm, beside the bundle); a throw from it fails the
- *  step. */
+ *  line per output otherwise. */
 export async function bundleCalliope(
   argv: readonly string[],
   build: BuildFn,
   stderr: ErrorSink,
-  copyCore: (outdir: string) => void,
 ): Promise<number> {
   const outdir = outdirFrom(argv);
   if (outdir === undefined) {
@@ -102,7 +74,6 @@ export async function bundleCalliope(
     for (const log of result.logs) stderr.write(`${String(log)}\n`);
     return 1;
   }
-  copyCore(outdir);
   for (const out of result.outputs) {
     stderr.write(`bundled ${out.path} (${String(out.size)} bytes)\n`);
   }
