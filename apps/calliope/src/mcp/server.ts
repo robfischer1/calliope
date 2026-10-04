@@ -48,6 +48,7 @@ import {
   listByTag,
   listTags,
   maybeReconcileInlineTags,
+  NOTE_KIND,
 } from "./tools.js";
 import type { ChaosFacet } from "../chaos-client.js";
 import { ChaosClientError } from "../chaos-client.js";
@@ -1080,8 +1081,8 @@ export function createServer(
           type: z
             .string()
             .regex(/^[A-Za-z][A-Za-z0-9_-]*$/)
-            .optional()
-            .describe("The hasType edge (default Note; the kind stays Note)."),
+            .default(NOTE_KIND)
+            .describe("The hasType edge; the node kind stays Note."),
         },
       },
       async ({ title, parent, tags, type }) => {
@@ -1092,7 +1093,7 @@ export function createServer(
             title,
             ...(parent !== undefined ? { parent } : {}),
             ...(tags !== undefined ? { tags } : {}),
-            ...(type !== undefined ? { type } : {}),
+            type,
           },
           options.tags,
         );
@@ -1374,19 +1375,12 @@ export function createServer(
           structuredContent: structured({ error, detail }),
           isError: true,
         });
-        if ((ops === undefined) === (replacements === undefined)) {
-          return refuse(
-            "bad_arguments",
-            "send exactly one of ops or replacements",
-          );
-        }
-        if (slot !== undefined && replacements === undefined) {
-          return refuse("bad_arguments", "slot applies only to replacements");
-        }
+        const exactlyOne = "send exactly one of ops or replacements";
         try {
           let result: Record<string, unknown> & { noop: boolean };
           let text: string;
           if (replacements !== undefined) {
+            if (ops !== undefined) return refuse("bad_arguments", exactlyOne);
             const patched = await patchContainer(
               facet,
               { container, slot, replacements },
@@ -1408,17 +1402,20 @@ export function createServer(
             text = patched.noop
               ? "noop: the replacements changed nothing"
               : `patched ${String(patched.slots_changed.length)} block(s) in tx ${String(patched.tx)}`;
-          } else {
-            const saved = await writeContainer(
-              facet,
-              container,
-              ops ?? [],
-              graph,
-            );
+          } else if (ops !== undefined) {
+            if (slot !== undefined) {
+              return refuse(
+                "bad_arguments",
+                "slot applies only to replacements",
+              );
+            }
+            const saved = await writeContainer(facet, container, ops, graph);
             result = { ...saved };
             text = saved.noop
               ? "noop: every op netted out"
               : `applied ${String(saved.applied.length)} op(s)`;
+          } else {
+            return refuse("bad_arguments", exactlyOne);
           }
           let tagOutcome = {};
           if (!result.noop && graph === "notes") {

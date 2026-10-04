@@ -536,6 +536,49 @@ describe("write_container with replacements", () => {
     ).toEqual(["uses #project and #b here"]);
   });
 
+  it("refuses an empty ops list at the schema", async () => {
+    const { mcp, node } = await rig();
+    const res = await mcp.callTool({
+      name: "write_container",
+      arguments: { container: node, ops: [] },
+    });
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent).toBeUndefined();
+  });
+
+  it("an ops save that nets out reports noop and runs no reconcile", async () => {
+    const { mcp, node } = await rig();
+    const read = await mcp.callTool({
+      name: "read_container",
+      arguments: { container: node },
+    });
+    const [block] = (
+      read.structuredContent as {
+        blocks: { slot: string; blobId: string; text: string }[];
+      }
+    ).blocks;
+    if (block === undefined) throw new Error("no block");
+    const res = await mcp.callTool({
+      name: "write_container",
+      arguments: {
+        container: node,
+        ops: [
+          {
+            op: "update",
+            slot: block.slot,
+            oldBlobId: block.blobId,
+            text: block.text,
+          },
+        ],
+      },
+    });
+    expect(res.isError).toBeFalsy();
+    expect(res.content).toEqual([
+      { type: "text", text: "noop: every op netted out" },
+    ]);
+    expect((res.structuredContent as Out).tags).toBeUndefined();
+  });
+
   it("a handler miss (empty_container) is structured", async () => {
     const { mcp } = await rig();
     const res = await mcp.callTool({
@@ -578,9 +621,14 @@ describe("write_container with replacements", () => {
       idempotentHint: false,
     });
     expect(tool?.title).toBe("Write a container (one graph transaction)");
-    expect(tool?.description?.length).toBeLessThan(400);
-    expect(tool?.description).toContain("EITHER ops");
-    expect(tool?.description).toContain("count_mismatch");
+    expect(tool?.description).toBe(
+      "Save a container as ONE graph transaction. Send EITHER ops " +
+        "(add/update/reorder/remove; identical content nets out) OR " +
+        "replacements (literal, case-sensitive find/replace applied " +
+        "server-side in order, optionally to one slot; any expected_count " +
+        "miss refuses the whole batch as count_mismatch, nothing written). " +
+        "Returns noop, the tx and, for replacements, the counts.",
+    );
     const schema = tool?.inputSchema as {
       properties: Record<string, { description?: string; enum?: string[] }>;
       required?: string[];
@@ -593,6 +641,13 @@ describe("write_container with replacements", () => {
       "tenant",
     ]);
     expect(schema.required).toEqual(["container"]);
+    expect(schema.properties.container?.description).toBe(
+      "The container node's 64-hex token.",
+    );
+    expect(schema.properties.slot?.description).toBe(
+      "With replacements: patch this block only.",
+    );
+    expect(schema.properties.tenant?.description).toBe("Default: notes.");
     expect(schema.properties.tenant?.enum).toEqual([
       "notes",
       "documents",

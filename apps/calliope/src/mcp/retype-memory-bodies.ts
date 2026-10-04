@@ -13,12 +13,14 @@
  * body write. Shapes govern by nodes.kind, so the Memory shape's required
  * fields never apply to these nodes.
  *
- * Run in the calliope pod, like cleanup-tags (env: `CALLIOPE_CHAOS_URL`,
- * `CALLIOPE_THEMIS_URL`, `CALLIOPE_NOTES_SCOPE`):
+ * Runs in the calliope pod, under calliope's own SVID and env. The image
+ * ships only the bundled server, so bundle this file first and copy it in:
  *
- *   bun run src/mcp/retype-memory-bodies.ts --probe       # dry run
- *   bun run src/mcp/retype-memory-bodies.ts [--batch N]   # apply
- *   bun run src/mcp/retype-memory-bodies.ts --revert < log.json
+ *   bun build src/mcp/retype-memory-bodies.ts --target=bun --outfile r.js
+ *   kubectl -n prime cp r.js <pod>:/tmp/r.js
+ *   kubectl -n prime exec <pod> -- bun /tmp/r.js --probe       # dry run
+ *   kubectl -n prime exec <pod> -- bun /tmp/r.js [--batch N]   # apply
+ *   kubectl -n prime exec -i <pod> -- bun /tmp/r.js --revert < log.json
  *
  * Each mode prints one JSON document on stdout. The apply document IS the
  * revert log: every batch's tx and node ids. Idempotent: a node already
@@ -62,34 +64,38 @@ export interface RetypeLog {
   /** Nodes with hasType Note before the run. */
   note_extent: number;
   selected: number;
-  by_scope: Record<string, number>;
   batches: BatchRecord[];
   nodes?: { id: string; label: string }[];
 }
 
-async function labelsOf(
+/** How many tokens one resolve_nodes call carries. */
+export const RESOLVE_CHUNK = 500;
+
+/** Labels for ids, resolved RESOLVE_CHUNK at a time. */
+export async function labelsOf(
   dial: ChaosDial,
   ids: readonly string[],
 ): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
-  for (let i = 0; i < ids.length; i += 500) {
-    Object.assign(out, await dial.resolveNodes(ids.slice(i, i + 500)));
+  for (let i = 0; i < ids.length; i += RESOLVE_CHUNK) {
+    Object.assign(
+      out,
+      await dial.resolveNodes(ids.slice(i, i + RESOLVE_CHUNK)),
+    );
   }
   return out;
 }
 
-/** The body containers still typed Note, sorted by id. */
+/** The body containers still typed Note (a node with no label is skipped). */
 export async function selectCandidates(
   dial: ChaosDial,
   scope: string,
 ): Promise<{ extent: number; candidates: Candidate[] }> {
   const notes = await dial.findByValue(scope, "hasType", FROM_TYPE);
   const already = new Set(await dial.findByValue(scope, "hasType", TO_TYPE));
-  const labels = await labelsOf(dial, notes);
-  const candidates = notes
-    .filter((id) => BODY_TITLE.test(labels[id] ?? ""))
-    .sort()
-    .map((id) => ({ id, label: labels[id] ?? "", hasTarget: already.has(id) }));
+  const candidates = Object.entries(await labelsOf(dial, notes))
+    .filter(([, label]) => BODY_TITLE.test(label))
+    .map(([id, label]) => ({ id, label, hasTarget: already.has(id) }));
   return { extent: notes.length, candidates };
 }
 
@@ -106,11 +112,6 @@ export async function retype(
   opts: { probe: boolean; batch: number },
 ): Promise<RetypeLog> {
   const { extent, candidates } = await selectCandidates(dial, scope);
-  const byScope: Record<string, number> = {};
-  for (const c of candidates) {
-    const s = c.label.split(":")[1] ?? "";
-    byScope[s] = (byScope[s] ?? 0) + 1;
-  }
   const log: RetypeLog = {
     graph: scope,
     predicate: "hasType",
@@ -119,7 +120,6 @@ export async function retype(
     probe: opts.probe,
     note_extent: extent,
     selected: candidates.length,
-    by_scope: byScope,
     batches: [],
   };
   if (opts.probe) {
@@ -170,16 +170,20 @@ export async function revert(
   return out;
 }
 
+/** The seams the CLI reaches for when not handed them. */
 export interface RetypeDeps {
   dial?: ChaosDial;
   write?: (line: string) => void;
-  stdin?: () => Promise<string>;
+  stdin?: AsyncIterable<Uint8Array | string>;
 }
 
-async function readStdin(): Promise<string> {
+/** Drain a byte stream to text (the revert log arrives on stdin). */
+export async function readAll(
+  source: AsyncIterable<Uint8Array | string>,
+): Promise<string> {
   const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks).toString("utf8");
+  for await (const chunk of source) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString();
 }
 
 /** The value after `--batch`, default 200; refuses a non-positive one. */
@@ -200,10 +204,10 @@ export async function main(
 ): Promise<void> {
   const dial = deps.dial ?? new LiveChaosDial();
   const scope = notesScope(env);
-  const write = deps.write ?? ((line: string) => process.stdout.write(line));
+  const write = deps.write ?? process.stdout.write.bind(process.stdout);
   if (argv.includes("--revert")) {
-    const read = deps.stdin ?? readStdin;
-    const log = JSON.parse(await read()) as Pick<RetypeLog, "batches">;
+    const text = await readAll(deps.stdin ?? process.stdin);
+    const log = JSON.parse(text) as Pick<RetypeLog, "batches">;
     const reverted = await revert(dial, scope, log);
     write(`${JSON.stringify({ reverted })}\n`);
     return;
@@ -220,17 +224,34 @@ export async function main(
   }
 }
 
-const entry = process.argv[1];
-if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
-  // Exit explicitly: the dial's X509Source holds a Workload API stream open,
-  // which keeps the event loop (and the kubectl exec) alive after main.
-  main().then(
-    () => process.exit(0),
-    (err: unknown) => {
-      process.stderr.write(
-        `retype-memory-bodies: fatal: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-      process.exit(1);
-    },
-  );
+/** The process seams `cli` reaches for when not handed them. */
+export interface CliDeps extends RetypeDeps {
+  exit?: (code: number) => void;
+  stderr?: (line: string) => void;
 }
+
+/**
+ * Run main and exit with its outcome. The exit is explicit because the
+ * live dial's X509Source holds a Workload API stream open, which would keep
+ * the event loop (and the kubectl exec) alive after main settles.
+ */
+export async function cli(
+  argv: readonly string[] = process.argv,
+  env: NodeJS.ProcessEnv = process.env,
+  deps: CliDeps = {},
+): Promise<void> {
+  const exit = deps.exit ?? process.exit.bind(process);
+  const stderr = deps.stderr ?? process.stderr.write.bind(process.stderr);
+  try {
+    await main(argv, env, deps);
+    exit(0);
+  } catch (err: unknown) {
+    stderr(`retype-memory-bodies: fatal: ${String(err)}\n`);
+    exit(1);
+  }
+}
+
+const entry = process.argv[1];
+const isEntry =
+  entry !== undefined && import.meta.url === pathToFileURL(entry).href;
+if (isEntry) void cli();

@@ -3,20 +3,47 @@
  * containers still typed Note, move only their hasType edge to Memory in
  * batches, log every batch's tx, and undo from that log.
  */
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { FixtureChaosDial } from "../src/chaos-client.js";
 import { createNote, isCreateNoteError } from "../src/mcp/tools.js";
 import {
   BODY_TITLE,
+  RESOLVE_CHUNK,
   RetypeRefused,
   batchSize,
+  cli,
+  labelsOf,
   main,
+  readAll,
   retype,
   revert,
   selectCandidates,
 } from "../src/mcp/retype-memory-bodies.js";
+import { installOfflineGuard } from "./setup/offline.js";
 
 const SCOPE = "notes";
+
+// The same two guards as archived-tags.test.ts, for the same reason: main
+// picks its dial with `deps.dial ?? new LiveChaosDial()`, and Stryker's
+// `??` -> `&&` mutant turns a passed fixture into a LIVE dial — which, in the
+// cluster lanes, would resolve chaos and themis and retype the real graph.
+// A plaintext dead URL keeps tls() off the Workload API socket and every
+// fetch off the network; the offline guard is the independent backstop.
+const DEAD_URL = "http://127.0.0.1:1";
+vi.stubEnv("CALLIOPE_CHAOS_URL", DEAD_URL);
+vi.stubEnv("CHAOS_URL", DEAD_URL);
+vi.stubEnv("CALLIOPE_THEMIS_URL", DEAD_URL);
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
+installOfflineGuard();
+
+async function* chunks(...parts: string[]): AsyncIterable<string> {
+  for (const p of parts) {
+    await Promise.resolve();
+    yield p;
+  }
+}
 
 async function mint(dial: FixtureChaosDial, title: string, type?: string) {
   const res = await createNote(dial, SCOPE, {
@@ -77,7 +104,6 @@ describe("retype", () => {
       probe: true,
       note_extent: 5,
       selected: 3,
-      by_scope: { mnemosyne: 2, aglaia: 1 },
       batches: [],
     });
     expect(log.nodes).toContainEqual({
@@ -161,12 +187,58 @@ describe("retype", () => {
   });
 });
 
+describe("selection", () => {
+  it("resolves labels RESOLVE_CHUNK tokens at a time, every token once", async () => {
+    const dial = new FixtureChaosDial();
+    const sizes: number[] = [];
+    const real = dial.resolveNodes.bind(dial);
+    dial.resolveNodes = (tokens) => {
+      sizes.push(tokens.length);
+      return real(tokens);
+    };
+    const ids = (n: number) =>
+      Array.from({ length: n }, (_, i) => i.toString(16).padStart(64, "0"));
+    await labelsOf(dial, ids(RESOLVE_CHUNK));
+    expect(sizes).toEqual([RESOLVE_CHUNK]);
+    sizes.length = 0;
+    await labelsOf(dial, ids(RESOLVE_CHUNK + 1));
+    expect(sizes).toEqual([RESOLVE_CHUNK, 1]);
+    sizes.length = 0;
+    await labelsOf(dial, []);
+    expect(sizes).toEqual([]);
+  });
+
+  it("a Note-typed node with no resolvable label is skipped", async () => {
+    const { dial, a, b, c } = await seeded();
+    const real = dial.resolveNodes.bind(dial);
+    dial.resolveNodes = async (tokens) => {
+      const out = await real(tokens);
+      return Object.fromEntries(Object.entries(out).filter(([k]) => k !== a));
+    };
+    const { candidates } = await selectCandidates(dial, SCOPE);
+    expect(candidates.map((x) => x.id).sort()).toEqual([b, c].sort());
+  });
+});
+
+describe("readAll", () => {
+  it("joins string and byte chunks into one text", async () => {
+    expect(await readAll(chunks('{"a":', "1}"))).toBe('{"a":1}');
+    async function* bytes(): AsyncIterable<Uint8Array> {
+      await Promise.resolve();
+      yield new TextEncoder().encode("é");
+    }
+    expect(await readAll(bytes())).toBe("é");
+    expect(await readAll(chunks())).toBe("");
+  });
+});
+
 describe("revert", () => {
   it("puts every logged node back to Note, one admit per batch", async () => {
     const { dial, a, b, c } = await seeded();
     const log = await retype(dial, SCOPE, { probe: false, batch: 2 });
     const back = await revert(dial, SCOPE, log);
     expect(back.map((x) => x.ids)).toEqual(log.batches.map((x) => x.ids));
+    expect(back.every((x) => typeof x.tx === "number")).toBe(true);
     for (const id of [a, b, c]) expect(await types(dial, id)).toEqual(["Note"]);
   });
 
@@ -183,6 +255,7 @@ describe("the CLI", () => {
   it("batchSize defaults to 200 and refuses a non-positive value", () => {
     expect(batchSize([])).toBe(200);
     expect(batchSize(["--batch", "25"])).toBe(25);
+    expect(batchSize(["--batch", "1"])).toBe(1);
     expect(() => batchSize(["--batch", "0"])).toThrow(
       "--batch needs a positive integer",
     );
@@ -219,7 +292,7 @@ describe("the CLI", () => {
       {
         dial,
         write,
-        stdin: () => Promise.resolve(lines[0] ?? ""),
+        stdin: chunks(lines[0] ?? ""),
       },
     );
     expect(await types(dial, a)).toEqual(["Note"]);
@@ -240,5 +313,87 @@ describe("the CLI", () => {
     };
     expect(out.batches).toEqual([]);
     expect(out.refused).toEqual(["closed"]);
+  });
+
+  it("a non-gate error propagates without printing a partial log", async () => {
+    const { dial } = await seeded();
+    dial.findByValue = () => Promise.reject(new Error("chaos down"));
+    const lines: string[] = [];
+    await expect(
+      main(["bun", "x"], {}, { dial, write: (l) => lines.push(l) }),
+    ).rejects.toThrow("chaos down");
+    expect(lines).toEqual([]);
+  });
+
+  it("writes to stdout when no writer is handed in", async () => {
+    const { dial } = await seeded();
+    const spy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    try {
+      await main(["bun", "x", "--probe"], {}, { dial });
+      const printed = spy.mock.calls.map((c) => String(c[0])).join("");
+      expect(JSON.parse(printed)).toMatchObject({ probe: true, selected: 3 });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("cli", () => {
+  it("exits 0 when main settles", async () => {
+    const { dial } = await seeded();
+    const codes: number[] = [];
+    const lines: string[] = [];
+    await cli(
+      ["bun", "x", "--probe"],
+      {},
+      {
+        dial,
+        write: (l) => lines.push(l),
+        exit: (c) => codes.push(c),
+      },
+    );
+    expect(codes).toEqual([0]);
+    expect(lines).toHaveLength(1);
+  });
+
+  it("names the failure on stderr and exits 1", async () => {
+    const { dial } = await seeded();
+    const codes: number[] = [];
+    const errs: string[] = [];
+    await cli(
+      ["bun", "x", "--batch", "0"],
+      {},
+      {
+        dial,
+        write: () => undefined,
+        exit: (c) => codes.push(c),
+        stderr: (l) => errs.push(l),
+      },
+    );
+    expect(codes).toEqual([1]);
+    expect(errs).toEqual([
+      "retype-memory-bodies: fatal: Error: --batch needs a positive integer\n",
+    ]);
+  });
+
+  it("writes to stderr when no writer is handed in", async () => {
+    const { dial } = await seeded();
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      await cli(
+        ["bun", "x", "--batch", "0"],
+        {},
+        { dial, exit: () => undefined },
+      );
+      expect(spy.mock.calls.map((c) => String(c[0])).join("")).toContain(
+        "--batch needs a positive integer",
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

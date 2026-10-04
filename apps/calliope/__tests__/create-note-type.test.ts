@@ -144,6 +144,16 @@ describe("the create_note verb's type", () => {
     expect(await tags.byNode(node)).toEqual([]);
   });
 
+  it("an absent type mints hasType Note", async () => {
+    const { mcp, dial } = await rig();
+    const res = await mcp.callTool({
+      name: "create_note",
+      arguments: { title: "plain" },
+    });
+    const node = (res.structuredContent as { node_id: string }).node_id;
+    expect(typesOf(await dial.edges(node))).toEqual(["Note"]);
+  });
+
   it("refuses a type that is not a bare identifier at the schema", async () => {
     const { mcp } = await rig();
     for (const type of ["", "has space", "1Memory", "Memory!"]) {
@@ -161,12 +171,13 @@ describe("the create_note verb's type", () => {
     const { tools } = await mcp.listTools();
     const tool = tools.find((t) => t.name === "create_note");
     const schema = tool?.inputSchema as {
-      properties: Record<string, { description?: string }>;
+      properties: Record<string, { description?: string; default?: string }>;
       required?: string[];
     };
     expect(schema.required).toEqual(["title"]);
-    expect(schema.properties.type?.description).toBe(
-      "The hasType edge (default Note; the kind stays Note).",
-    );
+    expect(schema.properties.type).toMatchObject({
+      default: "Note",
+      description: "The hasType edge; the node kind stays Note.",
+    });
   });
 });
