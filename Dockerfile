@@ -23,6 +23,11 @@ WORKDIR /app
 # Numeric, so the host and the kubelet can resolve it without the image's
 # /etc/passwd: the base's bun user, measured uid=1000 gid=1000 on the running pod.
 COPY --chown=1000:1000 release/server.js ./server.js
+# The identity core's wasm: stellar-core-ts reads it relative to its own module
+# (identitycore.ts), so it ships beside server.js. Without it the pod crashloops
+# on ENOENT /app/identitycore-gen/... (2026-10-04). bundle.ts writes it to
+# release/identitycore-gen.
+COPY --chown=1000:1000 release/identitycore-gen ./identitycore-gen
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8204
 USER 1000:1000
 EXPOSE 8204 8205
