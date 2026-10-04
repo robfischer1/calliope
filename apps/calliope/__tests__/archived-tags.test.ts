@@ -11,7 +11,12 @@
  * untouched, probe mode writing nothing.
  */
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { FixtureChaosDial, opAdd, opCreate } from "../src/chaos-client.js";
+import {
+  FixtureChaosDial,
+  opAdd,
+  opCreate,
+  opRemove,
+} from "../src/chaos-client.js";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import {
   isArchived,
@@ -19,7 +24,7 @@ import {
   reconcileNoteTags,
   sweepArchivedTags,
 } from "../src/mcp/tools.js";
-import { main } from "../src/mcp/cleanup-tags.js";
+import { healMirror, healTags, main } from "../src/mcp/cleanup-tags.js";
 import { FixtureTagStore } from "../src/tag-store.js";
 import { installOfflineGuard } from "./setup/offline.js";
 
@@ -282,5 +287,73 @@ describe("sweepArchivedTags", () => {
       rows: 0,
       tags: [],
     });
+  });
+});
+
+describe("cleanup-tags --heal (mirror follows the graph)", () => {
+  it("drops only the rows whose carrier lost the edge; probe writes nothing", async () => {
+    const dial = new FixtureChaosDial();
+    const store = new FixtureTagStore();
+    const kept = await mintNote(dial, "Journal/kept.md", false);
+    const lost = await mintNote(dial, "Journal/lost.md", false);
+    await reconcileNoteTags(dial, SCOPE, store, kept, { inline: ["#we"] });
+    await reconcileNoteTags(dial, SCOPE, store, lost, {
+      inline: ["#we", "#other"],
+    });
+    // The retraction a graph verb would make — the mirror never hears of it.
+    await dial.admit([opRemove(lost, "hasTag", { toLiteral: "#we" })], SCOPE);
+    // The same literal under another predicate is not the tag edge.
+    await dial.admit([opAdd(lost, "hasName", { toLiteral: "#we" })], SCOPE);
+
+    const probe = await healMirror(dial, store, ["We"], true);
+    expect(probe).toEqual({
+      checked: 2,
+      orphans: [{ node_id: lost, tag: "#we" }],
+    });
+    expect(await store.carriers("#we")).toEqual([kept, lost].sort());
+
+    const lines: string[] = [];
+    await main(
+      ["bun", "cleanup-tags.ts", "--heal", "#we", "#other"],
+      { DATABASE_URL: "postgres://unused" },
+      { dial, store, write: (l) => lines.push(l) },
+    );
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] ?? "")).toEqual({
+      probe: false,
+      checked: 3,
+      orphans: [{ node_id: lost, tag: "#we" }],
+    });
+    expect(await store.carriers("#we")).toEqual([kept]);
+    expect(await store.carriers("#other")).toEqual([lost]);
+  });
+
+  it("--probe reports through main without removing", async () => {
+    const dial = new FixtureChaosDial();
+    const store = new FixtureTagStore();
+    await store.upsert("deadbeef", "#ghost", "inline");
+    const lines: string[] = [];
+    await main(
+      ["bun", "cleanup-tags.ts", "--heal", "#ghost", "--probe"],
+      { DATABASE_URL: "postgres://unused" },
+      { dial, store, write: (l) => lines.push(l) },
+    );
+    expect(JSON.parse(lines[0] ?? "")).toEqual({
+      probe: true,
+      checked: 1,
+      orphans: [{ node_id: "deadbeef", tag: "#ghost" }],
+    });
+    expect(await store.carriers("#ghost")).toEqual(["deadbeef"]);
+  });
+
+  it("healTags reads the tags after --heal up to the next flag", () => {
+    expect(healTags(["bun", "x", "--heal", "#a", "#b", "--probe"])).toEqual([
+      "#a",
+      "#b",
+    ]);
+    expect(healTags(["--probe", "--heal", "#a"])).toEqual(["#a"]);
+    expect(healTags(["--probe"])).toEqual([]);
+    // No --heal at all names nothing, even with bare words present.
+    expect(healTags(["#a", "#b"])).toEqual([]);
   });
 });

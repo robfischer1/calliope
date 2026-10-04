@@ -24,6 +24,8 @@ export interface TagStore {
   upsert(nodeId: string, tag: string, source: TagRow["source"]): Promise<void>;
   remove(nodeId: string, tag: string): Promise<void>;
   distinct(): Promise<TagCount[]>;
+  /** The nodes holding a mirror row for `tag`. */
+  carriers(tag: string): Promise<string[]>;
 }
 
 /** The pg mirror on the sovereign store's shared pool. */
@@ -79,6 +81,14 @@ export class PgTagStore implements TagStore {
     );
     return res.rows.map((r) => ({ tag: r.tag, count: Number(r.count) }));
   }
+
+  async carriers(tag: string): Promise<string[]> {
+    const res = await this.pool.query<{ node_id: string }>(
+      "SELECT node_id FROM note_tags WHERE tag = $1 ORDER BY node_id",
+      [tag],
+    );
+    return res.rows.map((r) => r.node_id);
+  }
 }
 
 /** In-memory mirror for tests + the standalone fixture server. */
@@ -106,6 +116,15 @@ export class FixtureTagStore implements TagStore {
   remove(nodeId: string, tag: string): Promise<void> {
     this.rows.get(nodeId)?.delete(tag);
     return Promise.resolve();
+  }
+
+  carriers(tag: string): Promise<string[]> {
+    return Promise.resolve(
+      [...this.rows.entries()]
+        .filter(([, m]) => m.has(tag))
+        .map(([nodeId]) => nodeId)
+        .sort(),
+    );
   }
 
   distinct(): Promise<TagCount[]> {

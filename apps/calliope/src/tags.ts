@@ -68,10 +68,69 @@ export function normalizeTag(raw: string): string {
   return `#${bare.toLowerCase()}`;
 }
 
-/** Extract the inline `#tags` of a body text, normalized + deduped. */
+/** A fence opener/closer: up to three spaces of indent, then a run of three
+ *  or more backticks or tildes (CommonMark §4.5). */
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
+
+/**
+ * Blank out the code in a body so the tag grammar never reads it — the rule
+ * Obsidian applies: a `#word` inside a fenced block or an inline code span is
+ * code, not a tag. MEASURED 2026-10-03: the whitespace boundary above still
+ * minted `#issue` (from `` `closes #issue` ``), `#forge` (`` `JOIN #forge` ``)
+ * and `#beta` (`` `#Alpha #beta` ``) — the space INSIDE the span qualified.
+ *
+ * Fences follow CommonMark: the closer is the same character, at least as
+ * long as the opener; an unclosed fence runs to the end of the text. Inline
+ * spans pair a backtick run with the next run of EXACTLY the same length; an
+ * unpaired run is literal text. Masked characters become spaces, so a word
+ * after a span still sits on a whitespace boundary.
+ */
+export function maskCode(text: string): string {
+  let fence: string | undefined;
+  return text
+    .split("\n")
+    .map((line) => {
+      const marker = FENCE_RE.exec(line)?.[1];
+      if (fence === undefined) {
+        if (marker === undefined) return maskInlineCode(line);
+        fence = marker;
+        return "";
+      }
+      // A run holding the opener is the same character and at least as long
+      // (runs are homogeneous); the closer line carries nothing else.
+      if (
+        marker !== undefined &&
+        marker.includes(fence) &&
+        line.trim() === marker
+      ) {
+        fence = undefined;
+      }
+      return "";
+    })
+    .join("\n");
+}
+
+/** Blank every paired backtick span of one line (CommonMark §6.1): split on
+ *  backtick runs (odd indices), pair each run with the next run of exactly
+ *  the same width; an unpaired run stays literal. */
+function maskInlineCode(line: string): string {
+  const parts = line.split(/(`+)/);
+  let closeAt = -1;
+  return parts
+    .map((part, k) => {
+      if (k <= closeAt) return " ".repeat(part.length);
+      if (k % 2 === 0) return part;
+      closeAt = parts.findIndex((p, j) => j > k && p === part);
+      return closeAt === -1 ? part : " ".repeat(part.length);
+    })
+    .join("");
+}
+
+/** Extract the inline `#tags` of a body text, normalized + deduped. Code is
+ *  masked first — see `maskCode`. */
 export function extractInlineTags(text: string): string[] {
   const out = new Set<string>();
-  for (const m of text.matchAll(TAG_RE)) {
+  for (const m of maskCode(text).matchAll(TAG_RE)) {
     const tag = m[2];
     if (tag !== undefined && !isHexColor(tag)) {
       out.add(normalizeTag(tag));

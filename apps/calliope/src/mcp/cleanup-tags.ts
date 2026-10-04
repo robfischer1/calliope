@@ -13,6 +13,11 @@
  *       sweep the INLINE tags off every isArchived note (the phdb-migration
  *       corpus — C source, spreadsheets, mail — whose bodies the reconcile
  *       tagged before it learned to skip them); explicit rows stay.
+ *   bun run src/mcp/cleanup-tags.ts --heal <tag>... [--probe]
+ *       drop the mirror rows for those tags whose carrier no longer holds
+ *       the `hasTag` edge on the graph — the follow-up to a retraction made
+ *       through the graph verbs, which never touch this mirror. The graph is
+ *       the truth; this only ever deletes rows, never edges.
  *
  * Reversibility: chaos is append-only — the retractions are logged ops on
  * the substrate, so the sweep is reversible at the substrate level; no undo
@@ -34,7 +39,7 @@ import {
   type ChaosOp,
 } from "../chaos-client.js";
 import { PgTagStore } from "../tag-store.js";
-import { sweepArchivedTags } from "./tools.js";
+import { HAS_TAG, sweepArchivedTags } from "./tools.js";
 
 /** The pure plan: which stored tags are removed, which merge to what. */
 export interface TagCleanupPlan {
@@ -55,6 +60,58 @@ export function planTagCleanup(distinct: readonly TagCount[]): TagCleanupPlan {
     }
   }
   return { remove, merge };
+}
+
+/** One mirror row whose carrier no longer holds the graph edge. */
+export interface MirrorOrphan {
+  node_id: string;
+  tag: string;
+}
+
+/** What a mirror heal found (and, unless probing, removed). */
+export interface MirrorHeal {
+  /** Mirror rows checked against the graph. */
+  checked: number;
+  /** Rows with no matching `hasTag` edge on their carrier. */
+  orphans: MirrorOrphan[];
+}
+
+/**
+ * Re-align the mirror to the graph for the given tags: a row survives only
+ * while its carrier still holds `hasTag = tag` as a literal edge. The mirror
+ * is `list_tags`' source, so an edge retracted through the graph verbs keeps
+ * its chip until this runs (or the note next reconciles).
+ */
+export async function healMirror(
+  dial: ChaosDial,
+  store: TagStore,
+  tags: readonly string[],
+  probe: boolean,
+): Promise<MirrorHeal> {
+  const orphans: MirrorOrphan[] = [];
+  let checked = 0;
+  for (const tag of tags.map(normalizeTag)) {
+    for (const nodeId of await store.carriers(tag)) {
+      checked += 1;
+      const edges = await dial.edges(nodeId);
+      const held = edges.some(
+        (e) => e.predicate === HAS_TAG && e.value === tag,
+      );
+      if (held) continue;
+      orphans.push({ node_id: nodeId, tag });
+      if (!probe) await store.remove(nodeId, tag);
+    }
+  }
+  return { checked, orphans };
+}
+
+/** The tags named after `--heal`, up to the next flag. */
+export function healTags(argv: readonly string[]): string[] {
+  const at = argv.indexOf("--heal");
+  if (at === -1) return [];
+  const rest = argv.slice(at + 1);
+  const end = rest.findIndex((a) => a.startsWith("--"));
+  return end === -1 ? rest : rest.slice(0, end);
 }
 
 /** The seams `main` reaches for when not handed them — the live store and
@@ -83,6 +140,16 @@ export async function main(
         deps.dial ?? new LiveChaosDial(),
         notesScope(env),
         deps.store ?? new PgTagStore(pool),
+        probe,
+      );
+      write(`${JSON.stringify({ probe, ...report })}\n`);
+      return;
+    }
+    if (argv.includes("--heal")) {
+      const report = await healMirror(
+        deps.dial ?? new LiveChaosDial(),
+        deps.store ?? new PgTagStore(pool),
+        healTags(argv),
         probe,
       );
       write(`${JSON.stringify({ probe, ...report })}\n`);
