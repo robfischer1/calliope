@@ -48,6 +48,7 @@ import {
   listByTag,
   listTags,
   maybeReconcileInlineTags,
+  NOTE_KIND,
 } from "./tools.js";
 import type { ChaosFacet } from "../chaos-client.js";
 import { ChaosClientError } from "../chaos-client.js";
@@ -1077,9 +1078,14 @@ export function createServer(
               "Explicit tags (e.g. folder-derived) — validated here, written " +
                 "as hasTag edges by C9.",
             ),
+          type: z
+            .string()
+            .regex(/^[A-Za-z][A-Za-z0-9_-]*$/)
+            .default(NOTE_KIND)
+            .describe("The hasType edge; the node kind stays Note."),
         },
       },
-      async ({ title, parent, tags }) => {
+      async ({ title, parent, tags, type }) => {
         const result = await createNote(
           dial,
           scope,
@@ -1087,6 +1093,7 @@ export function createServer(
             title,
             ...(parent !== undefined ? { parent } : {}),
             ...(tags !== undefined ? { tags } : {}),
+            type,
           },
           options.tags,
         );
@@ -1326,155 +1333,98 @@ export function createServer(
           destructiveHint: false,
           idempotentHint: false,
         },
-        title: "Write a container (the tree-native save)",
+        title: "Write a container (one graph transaction)",
         description:
-          "041 F4 (Git for Ideas): save a container as ONE graph " +
-          "transaction. Blob-first: prose mints into the content-deduped " +
-          "blob store, then the surviving ops ride one admit batch of tree " +
-          "facts (add births a slot; update repoints one; reorder rewrites " +
-          "a position; remove retracts a slot's facts). Byte-identical " +
-          "content nets out before the batch — a save that nets to nothing " +
-          "writes nothing. Returns {noop, applied, minted, blobIds}; a " +
-          "refused batch surfaces the gate's violations and leaves NO tree " +
-          "change (minted blobs remain as orphans for the census).",
+          "Save a container as ONE graph transaction. Send EITHER ops " +
+          "(add/update/reorder/remove; identical content nets out) OR " +
+          "replacements (literal, case-sensitive find/replace applied " +
+          "server-side in order, optionally to one slot; any expected_count " +
+          "miss refuses the whole batch as count_mismatch, nothing written). " +
+          "Returns noop, the tx and, for replacements, the counts.",
         inputSchema: {
           container: z
             .string()
             .regex(/^[0-9a-f]{64}$/)
             .describe("The container node's 64-hex token."),
-          ops: z.array(containerOpField).min(1).describe("The save's ops."),
+          ops: z.array(containerOpField).min(1).optional(),
+          slot: z
+            .string()
+            .regex(/^[0-9a-f]{64}$/)
+            .optional()
+            .describe("With replacements: patch this block only."),
+          replacements: z
+            .array(
+              z.object({
+                find: z.string().min(1),
+                replace: z.string(),
+                expected_count: z.number().int().min(0),
+              }),
+            )
+            .min(1)
+            .optional(),
           tenant: z
             .enum(["notes", "documents", "comments", "governance", "issues"])
             .optional()
-            .describe("The tenant graph (default: notes)."),
+            .describe("Default: notes."),
         },
       },
-      async ({ container, ops, tenant }) => {
+      async ({ container, ops, slot, replacements, tenant }) => {
+        const graph = tenant ?? "notes";
+        const refuse = (error: string, detail: string) => ({
+          content: [{ type: "text" as const, text: `${error}: ${detail}` }],
+          structuredContent: structured({ error, detail }),
+          isError: true,
+        });
+        const exactlyOne = "send exactly one of ops or replacements";
         try {
-          const result = await writeContainer(
-            facet,
-            container,
-            ops,
-            tenant ?? "notes",
-          );
+          let result: Record<string, unknown> & { noop: boolean };
+          let text: string;
+          if (replacements !== undefined) {
+            if (ops !== undefined) return refuse("bad_arguments", exactlyOne);
+            const patched = await patchContainer(
+              facet,
+              { container, slot, replacements },
+              graph,
+            );
+            if (isPatchError(patched)) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `${patched.error}: ${patched.detail}`,
+                  },
+                ],
+                structuredContent: structured(patched),
+                isError: true,
+              };
+            }
+            result = { ...patched };
+            text = patched.noop
+              ? "noop: the replacements changed nothing"
+              : `patched ${String(patched.slots_changed.length)} block(s) in tx ${String(patched.tx)}`;
+          } else if (ops !== undefined) {
+            if (slot !== undefined) {
+              return refuse(
+                "bad_arguments",
+                "slot applies only to replacements",
+              );
+            }
+            const saved = await writeContainer(facet, container, ops, graph);
+            result = { ...saved };
+            text = saved.noop
+              ? "noop: every op netted out"
+              : `applied ${String(saved.applied.length)} op(s)`;
+          } else {
+            return refuse("bad_arguments", exactlyOne);
+          }
           let tagOutcome = {};
-          if (!result.noop && (tenant ?? "notes") === "notes") {
+          if (!result.noop && graph === "notes") {
             // Tags before the publish, so the projection carries them.
             tagOutcome = await afterContainerWrite(facet, container);
             await publishNote(facet, container);
           }
           return {
-            content: [
-              {
-                type: "text",
-                text: result.noop
-                  ? "noop: every op netted out"
-                  : `applied ${String(result.applied.length)} op(s)`,
-              },
-            ],
-            structuredContent: structured({ ...result, ...tagOutcome }),
-          };
-        } catch (err) {
-          if (err instanceof ChaosClientError) {
-            return {
-              content: [{ type: "text", text: `${err.code}: ${err.message}` }],
-              structuredContent: structured({
-                error: err.code,
-                violations: err.violations,
-              }),
-              isError: true,
-            };
-          }
-          throw err;
-        }
-      },
-    );
-  }
-
-  if (options?.containers !== undefined) {
-    const facet = options.containers;
-    server.registerTool(
-      "patch_container",
-      {
-        annotations: {
-          readOnlyHint: false,
-          destructiveHint: false,
-          idempotentHint: false,
-        },
-        title: "Patch a container (literal find/replace, one transaction)",
-        description:
-          "Edit a container's prose without sending it: literal find/replace " +
-          "applied server-side, landed as ONE write_container save (one graph " +
-          "transaction). slot names one block; omit it to patch every block. " +
-          "Replacements run in order, each on the text the earlier ones left; " +
-          "expected_count is the occurrences of find summed over the targeted " +
-          "blocks, and ANY miss refuses the whole batch before a byte is " +
-          "written (count_mismatch, with every tally). Matching is literal and " +
-          "case-sensitive; occurrences are non-overlapping, left to right. " +
-          "Returns {container, noop, tx?, counts: [{expected, found}], " +
-          "slots_changed, tags?}; other misses are structured (empty_container " +
-          "/ bad_slot / dangling_slot / empty_find / admit_refused).",
-        inputSchema: {
-          container: z
-            .string()
-            .regex(/^[0-9a-f]{64}$/)
-            .describe("The container node's 64-hex token."),
-          slot: z
-            .string()
-            .regex(/^[0-9a-f]{64}$/)
-            .optional()
-            .describe("One block's slot token; omit to patch every block."),
-          replacements: z
-            .array(
-              z.object({
-                find: z.string().min(1).describe("Literal text to find."),
-                replace: z.string().describe("Literal replacement text."),
-                expected_count: z
-                  .number()
-                  .int()
-                  .min(0)
-                  .describe("Occurrences required across the targets."),
-              }),
-            )
-            .min(1)
-            .describe("The replacements, applied in order."),
-          tenant: z
-            .enum(["notes", "documents", "comments", "governance", "issues"])
-            .optional()
-            .describe("The tenant graph (default: notes)."),
-        },
-      },
-      async ({ container, slot, replacements, tenant }) => {
-        const graph = tenant ?? "notes";
-        try {
-          const result = await patchContainer(
-            facet,
-            { container, slot, replacements },
-            graph,
-          );
-          if (isPatchError(result)) {
-            return {
-              content: [
-                { type: "text", text: `${result.error}: ${result.detail}` },
-              ],
-              structuredContent: structured(result),
-              isError: true,
-            };
-          }
-          let tagOutcome = {};
-          if (!result.noop && graph === "notes") {
-            tagOutcome = await afterContainerWrite(facet, container);
-            await publishNote(facet, container);
-          }
-          return {
-            content: [
-              {
-                type: "text",
-                text: result.noop
-                  ? "noop: the replacements changed nothing"
-                  : `patched ${String(result.slots_changed.length)} block(s) in tx ${String(result.tx)}`,
-              },
-            ],
+            content: [{ type: "text", text }],
             structuredContent: structured({ ...result, ...tagOutcome }),
           };
         } catch (err) {

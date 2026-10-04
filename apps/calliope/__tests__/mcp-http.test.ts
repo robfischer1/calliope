@@ -104,7 +104,6 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "list_tags",
       "look",
       "materialize_note",
-      "patch_container", // a large block edited by literal replacement, one tx
       "read_container", // F5 — the ordered tree read
       "revision_deltas", // stays [Rob, F12] — frozen archive, read-only
       "search", // Findability F2 — licensed by its Exposes row `search(query, scope)`
@@ -143,9 +142,6 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       // the ONE write path (F4/F12): a save whose ops all net out writes
       // nothing, but the verb itself is not idempotent (adds mint slots)
       write_container: [false, false, false],
-      // a save built server-side from replacements: same hints as the save
-      // (a re-run after success finds no matches and refuses on its counts)
-      patch_container: [false, false, false],
     };
     await rpc(initEnvelope(1));
     const listed = (await rpc({

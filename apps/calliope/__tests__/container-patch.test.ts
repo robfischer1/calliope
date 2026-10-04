@@ -1,6 +1,7 @@
 /**
- * patch_container — literal find/replace inside a container's blocks,
- * landed server-side as ONE save, all-or-nothing on its counts.
+ * write_container({replacements}) — literal find/replace inside a
+ * container's blocks, landed server-side as ONE save, all-or-nothing on its
+ * counts.
  *
  * Every master-plan on the notes graph is one block of 13–156 KB, and the
  * only edit path carried the whole text. These pin the planner (counts,
@@ -307,7 +308,7 @@ interface Out {
   violations?: unknown[];
 }
 
-describe("the patch_container verb", () => {
+describe("write_container with replacements", () => {
   it("patches the text, reports the tx, and reconciles the inline tags", async () => {
     const { mcp, tags, node } = await rig();
     expect((await tags.byNode(node)).map((r) => r.tag)).toEqual([
@@ -315,7 +316,7 @@ describe("the patch_container verb", () => {
       "#project",
     ]);
     const res = await mcp.callTool({
-      name: "patch_container",
+      name: "write_container",
       arguments: {
         container: node,
         replacements: [
@@ -345,7 +346,7 @@ describe("the patch_container verb", () => {
   it("a count miss is a structured refusal and leaves the text alone", async () => {
     const { mcp, node } = await rig();
     const res = await mcp.callTool({
-      name: "patch_container",
+      name: "write_container",
       arguments: {
         container: node,
         replacements: [{ find: "#b", replace: "x", expected_count: 5 }],
@@ -366,7 +367,7 @@ describe("the patch_container verb", () => {
   it("a noop patch reports so and runs no reconcile", async () => {
     const { mcp, node } = await rig();
     const res = await mcp.callTool({
-      name: "patch_container",
+      name: "write_container",
       arguments: {
         container: node,
         replacements: [{ find: "absent", replace: "x", expected_count: 0 }],
@@ -383,7 +384,7 @@ describe("the patch_container verb", () => {
   it("a non-notes tenant patch skips the tag path", async () => {
     const { mcp, dial, node } = await rig();
     const res = await mcp.callTool({
-      name: "patch_container",
+      name: "write_container",
       arguments: {
         container: node,
         tenant: "issues",
@@ -405,7 +406,7 @@ describe("the patch_container verb", () => {
     dial.admit = () =>
       Promise.resolve({ admitted: false, minted: [], violations: ["nope"] });
     const res = await mcp.callTool({
-      name: "patch_container",
+      name: "write_container",
       arguments: {
         container: node,
         replacements: [{ find: "#b", replace: "#c", expected_count: 1 }],
@@ -421,7 +422,7 @@ describe("the patch_container verb", () => {
   it("refuses a malformed slot and an empty replacement list at the schema", async () => {
     const { mcp, node } = await rig();
     const badSlot = await mcp.callTool({
-      name: "patch_container",
+      name: "write_container",
       arguments: {
         container: node,
         slot: "nope",
@@ -430,7 +431,7 @@ describe("the patch_container verb", () => {
     });
     expect(badSlot.isError).toBe(true);
     const empty = await mcp.callTool({
-      name: "patch_container",
+      name: "write_container",
       arguments: { container: node, replacements: [] },
     });
     expect(empty.isError).toBe(true);
@@ -453,7 +454,7 @@ describe("the patch_container verb", () => {
       read.structuredContent as { blocks: { slot: string }[] }
     ).blocks.map((b) => b.slot);
     const res = await mcp.callTool({
-      name: "patch_container",
+      name: "write_container",
       arguments: {
         container: node,
         slot: slots[1],
@@ -470,7 +471,7 @@ describe("the patch_container verb", () => {
     const { mcp, node } = await rig();
     for (const tenant of ["notes", "documents", "comments", "governance"]) {
       const res = await mcp.callTool({
-        name: "patch_container",
+        name: "write_container",
         arguments: {
           container: node,
           tenant,
@@ -491,7 +492,7 @@ describe("the patch_container verb", () => {
       { container: node, slot: `${"1".repeat(64)}x`, replacements: r },
     ]) {
       const res = await mcp.callTool({
-        name: "patch_container",
+        name: "write_container",
         arguments: args,
       });
       expect(res.isError, JSON.stringify(args)).toBe(true);
@@ -501,58 +502,153 @@ describe("the patch_container verb", () => {
     }
   });
 
-  it("publishes its description and schema", async () => {
+  it("refuses both payloads, neither, and a slot with ops", async () => {
+    const { mcp, node } = await rig();
+    const r = [{ find: "#b", replace: "#c", expected_count: 1 }];
+    const ops = [{ op: "add", text: "x", position: "b0" }];
+    const both = "send exactly one of ops or replacements";
+    const slotted = "slot applies only to replacements";
+    const cases: [Record<string, unknown>, string][] = [
+      [{ container: node, ops, replacements: r }, both],
+      [{ container: node }, both],
+      [{ container: node, ops, slot: "1".repeat(64) }, slotted],
+    ];
+    for (const [args, detail] of cases) {
+      const res = await mcp.callTool({
+        name: "write_container",
+        arguments: args,
+      });
+      expect(res.isError, JSON.stringify(args)).toBe(true);
+      expect(res.structuredContent).toEqual({ error: "bad_arguments", detail });
+      expect(res.content).toEqual([
+        { type: "text", text: `bad_arguments: ${detail}` },
+      ]);
+    }
+    // Nothing was written: the one block still reads as seeded.
+    const read = await mcp.callTool({
+      name: "read_container",
+      arguments: { container: node },
+    });
+    expect(
+      (read.structuredContent as { blocks: { text: string }[] }).blocks.map(
+        (b) => b.text,
+      ),
+    ).toEqual(["uses #project and #b here"]);
+  });
+
+  it("refuses an empty ops list at the schema", async () => {
+    const { mcp, node } = await rig();
+    const res = await mcp.callTool({
+      name: "write_container",
+      arguments: { container: node, ops: [] },
+    });
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent).toBeUndefined();
+  });
+
+  it("an ops save that nets out reports noop and runs no reconcile", async () => {
+    const { mcp, node } = await rig();
+    const read = await mcp.callTool({
+      name: "read_container",
+      arguments: { container: node },
+    });
+    const [block] = (
+      read.structuredContent as {
+        blocks: { slot: string; blobId: string; text: string }[];
+      }
+    ).blocks;
+    if (block === undefined) throw new Error("no block");
+    const res = await mcp.callTool({
+      name: "write_container",
+      arguments: {
+        container: node,
+        ops: [
+          {
+            op: "update",
+            slot: block.slot,
+            oldBlobId: block.blobId,
+            text: block.text,
+          },
+        ],
+      },
+    });
+    expect(res.isError).toBeFalsy();
+    expect(res.content).toEqual([
+      { type: "text", text: "noop: every op netted out" },
+    ]);
+    expect((res.structuredContent as Out).tags).toBeUndefined();
+  });
+
+  it("a handler miss (empty_container) is structured", async () => {
+    const { mcp } = await rig();
+    const res = await mcp.callTool({
+      name: "write_container",
+      arguments: {
+        container: "9".repeat(64),
+        replacements: [{ find: "a", replace: "b", expected_count: 0 }],
+      },
+    });
+    expect(res.isError).toBe(true);
+    expect((res.structuredContent as Out).error).toBe("empty_container");
+  });
+
+  it("the ops path still saves, nets out, and reconciles tags", async () => {
+    const { mcp, tags, node } = await rig();
+    const res = await mcp.callTool({
+      name: "write_container",
+      arguments: {
+        container: node,
+        ops: [{ op: "add", text: "more #c", position: "b0" }],
+      },
+    });
+    expect(res.isError).toBeFalsy();
+    expect(res.content).toEqual([{ type: "text", text: "applied 1 op(s)" }]);
+    expect((res.structuredContent as Out).tags).toEqual({
+      added: ["#c"],
+      removed: [],
+    });
+    expect((await tags.byNode(node)).map((t) => t.tag)).toContain("#c");
+  });
+
+  it("publishes a short description and both payloads", async () => {
     const { mcp } = await rig();
     const { tools } = await mcp.listTools();
-    const tool = tools.find((t) => t.name === "patch_container");
+    expect(tools.find((t) => t.name === "patch_container")).toBeUndefined();
+    const tool = tools.find((t) => t.name === "write_container");
     expect(tool?.annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: false,
     });
-    expect(tool?.title).toBe(
-      "Patch a container (literal find/replace, one transaction)",
-    );
+    expect(tool?.title).toBe("Write a container (one graph transaction)");
     expect(tool?.description).toBe(
-      "Edit a container's prose without sending it: literal find/replace " +
-        "applied server-side, landed as ONE write_container save (one graph " +
-        "transaction). slot names one block; omit it to patch every block. " +
-        "Replacements run in order, each on the text the earlier ones left; " +
-        "expected_count is the occurrences of find summed over the targeted " +
-        "blocks, and ANY miss refuses the whole batch before a byte is " +
-        "written (count_mismatch, with every tally). Matching is literal and " +
-        "case-sensitive; occurrences are non-overlapping, left to right. " +
-        "Returns {container, noop, tx?, counts: [{expected, found}], " +
-        "slots_changed, tags?}; other misses are structured (empty_container " +
-        "/ bad_slot / dangling_slot / empty_find / admit_refused).",
+      "Save a container as ONE graph transaction. Send EITHER ops " +
+        "(add/update/reorder/remove; identical content nets out) OR " +
+        "replacements (literal, case-sensitive find/replace applied " +
+        "server-side in order, optionally to one slot; any expected_count " +
+        "miss refuses the whole batch as count_mismatch, nothing written). " +
+        "Returns noop, the tx and, for replacements, the counts.",
     );
-    const props = tool?.inputSchema.properties as Record<
-      string,
-      {
-        description?: string;
-        enum?: string[];
-        items?: { properties: Record<string, { description?: string }> };
-      }
-    >;
-    expect(props.container?.description).toBe(
+    const schema = tool?.inputSchema as {
+      properties: Record<string, { description?: string; enum?: string[] }>;
+      required?: string[];
+    };
+    expect(Object.keys(schema.properties).sort()).toEqual([
+      "container",
+      "ops",
+      "replacements",
+      "slot",
+      "tenant",
+    ]);
+    expect(schema.required).toEqual(["container"]);
+    expect(schema.properties.container?.description).toBe(
       "The container node's 64-hex token.",
     );
-    expect(props.slot?.description).toBe(
-      "One block's slot token; omit to patch every block.",
+    expect(schema.properties.slot?.description).toBe(
+      "With replacements: patch this block only.",
     );
-    expect(props.replacements?.description).toBe(
-      "The replacements, applied in order.",
-    );
-    const item = props.replacements?.items?.properties;
-    expect(item?.find?.description).toBe("Literal text to find.");
-    expect(item?.replace?.description).toBe("Literal replacement text.");
-    expect(item?.expected_count?.description).toBe(
-      "Occurrences required across the targets.",
-    );
-    expect(props.tenant?.description).toBe(
-      "The tenant graph (default: notes).",
-    );
-    expect(props.tenant?.enum).toEqual([
+    expect(schema.properties.tenant?.description).toBe("Default: notes.");
+    expect(schema.properties.tenant?.enum).toEqual([
       "notes",
       "documents",
       "comments",
