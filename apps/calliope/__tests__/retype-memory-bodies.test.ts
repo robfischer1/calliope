@@ -3,6 +3,7 @@
  * containers still typed Note, move only their hasType edge to Memory in
  * batches, log every batch's tx, and undo from that log.
  */
+import { EventEmitter } from "node:events";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { FixtureChaosDial } from "../src/chaos-client.js";
 import { createNote, isCreateNoteError } from "../src/mcp/tools.js";
@@ -16,6 +17,7 @@ import {
   main,
   readAll,
   retype,
+  writeStdout,
   revert,
   selectCandidates,
 } from "../src/mcp/retype-memory-bodies.js";
@@ -269,7 +271,7 @@ describe("the CLI", () => {
     await main(
       ["bun", "x", "--probe"],
       {},
-      { dial, write: (l) => lines.push(l) },
+      { dial, write: (l) => void lines.push(l) },
     );
     expect(lines).toHaveLength(1);
     expect(lines[0]?.endsWith("\n")).toBe(true);
@@ -283,7 +285,7 @@ describe("the CLI", () => {
   it("apply then --revert round-trips through the printed log", async () => {
     const { dial, a } = await seeded();
     const lines: string[] = [];
-    const write = (l: string) => lines.push(l);
+    const write = (l: string) => void lines.push(l);
     await main(["bun", "x", "--batch", "2"], {}, { dial, write });
     expect(await types(dial, a)).toEqual(["Memory"]);
     await main(
@@ -305,7 +307,7 @@ describe("the CLI", () => {
     dial.refuseWith = ["closed"];
     const lines: string[] = [];
     await expect(
-      main(["bun", "x"], {}, { dial, write: (l) => lines.push(l) }),
+      main(["bun", "x"], {}, { dial, write: (l) => void lines.push(l) }),
     ).rejects.toThrow("the gate refused a batch");
     const out = JSON.parse(lines[0] ?? "") as {
       batches: unknown[];
@@ -320,7 +322,7 @@ describe("the CLI", () => {
     dial.findByValue = () => Promise.reject(new Error("chaos down"));
     const lines: string[] = [];
     await expect(
-      main(["bun", "x"], {}, { dial, write: (l) => lines.push(l) }),
+      main(["bun", "x"], {}, { dial, write: (l) => void lines.push(l) }),
     ).rejects.toThrow("chaos down");
     expect(lines).toEqual([]);
   });
@@ -350,7 +352,7 @@ describe("cli", () => {
       {},
       {
         dial,
-        write: (l) => lines.push(l),
+        write: (l) => void lines.push(l),
         exit: (c) => codes.push(c),
       },
     );
@@ -395,5 +397,61 @@ describe("cli", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("writeStdout", () => {
+  class FakeStream extends EventEmitter {
+    written: string[] = [];
+    constructor(private readonly accepts: boolean) {
+      super();
+    }
+    write(chunk: string): boolean {
+      this.written.push(chunk);
+      return this.accepts;
+    }
+  }
+
+  it("resolves at once when the stream takes the bytes", async () => {
+    const stream = new FakeStream(true);
+    await writeStdout("line\n", stream);
+    expect(stream.written).toEqual(["line\n"]);
+  });
+
+  it("waits for drain when the write is buffered", async () => {
+    const stream = new FakeStream(false);
+    let settled = false;
+    const done = writeStdout("big", stream).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    stream.emit("drain");
+    await done;
+    expect(settled).toBe(true);
+  });
+
+  it("main awaits a buffered write before it returns", async () => {
+    const { dial } = await seeded();
+    const events: string[] = [];
+    let release: () => void = () => undefined;
+    const write = () =>
+      new Promise<void>((resolve) => {
+        release = () => {
+          events.push("drained");
+          resolve();
+        };
+      });
+    const run = main(["bun", "x", "--probe"], {}, { dial, write }).then(() =>
+      events.push("returned"),
+    );
+    for (let i = 0; i < 50 && events.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    expect(events).toEqual([]);
+    release();
+    await run;
+    expect(events).toEqual(["drained", "returned"]);
   });
 });
