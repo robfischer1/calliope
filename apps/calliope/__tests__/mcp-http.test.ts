@@ -107,6 +107,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "read_container", // F5 — the ordered tree read
       "revision_deltas", // stays [Rob, F12] — frozen archive, read-only
       "search", // Findability F2 — licensed by its Exposes row `search(query, scope)`
+      "set_properties", // a note's frontmatter as graph edges
       "unpin",
       "write_container", // F4 — the ONE write path since the F12 cut
     ]);
@@ -135,6 +136,9 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       // idempotent writes (no-op convergence tested in their own suites)
       create_note: [false, false, true],
       dissolve_note: [false, false, true],
+      // replaces a named predicate's value set (and retract: removes), so
+      // it can take a value away: destructive, and a re-run converges
+      set_properties: [false, true, true],
       // the ONE write path (F4/F12): a save whose ops all net out writes
       // nothing, but the verb itself is not idempotent (adds mint slots)
       write_container: [false, false, false],
