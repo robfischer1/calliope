@@ -173,7 +173,7 @@ export async function revert(
 /** The seams the CLI reaches for when not handed them. */
 export interface RetypeDeps {
   dial?: ChaosDial;
-  write?: (line: string) => void;
+  write?: (line: string) => void | Promise<void>;
   stdin?: AsyncIterable<Uint8Array | string>;
 }
 
@@ -184,6 +184,35 @@ export async function readAll(
   const chunks: Buffer[] = [];
   for await (const chunk of source) chunks.push(Buffer.from(chunk));
   return Buffer.concat(chunks).toString();
+}
+
+/** The part of a writable stream writeStdout uses. */
+export interface StdoutSink {
+  write(chunk: string): boolean;
+  once(event: "drain", listener: () => void): unknown;
+}
+
+/**
+ * Write to a stream and resolve once it has taken the bytes. A false from
+ * write() means the rest is buffered, so wait for "drain": cli exits right
+ * after main, and exiting over a buffered write cut a 400 KB probe off at
+ * 128 KiB on the kubectl exec pipe (measured 2026-10-04). bun's
+ * writableNeedDrain reads false even then, so the write()'s own answer is
+ * the only signal.
+ */
+export function writeStdout(
+  line: string,
+  stream: StdoutSink = process.stdout,
+): Promise<void> {
+  return new Promise((resolve) => {
+    if (stream.write(line)) {
+      resolve();
+    } else {
+      stream.once("drain", () => {
+        resolve();
+      });
+    }
+  });
 }
 
 /** The value after `--batch`, default 200; refuses a non-positive one. */
@@ -204,21 +233,23 @@ export async function main(
 ): Promise<void> {
   const dial = deps.dial ?? new LiveChaosDial();
   const scope = notesScope(env);
-  const write = deps.write ?? process.stdout.write.bind(process.stdout);
+  const write = deps.write ?? writeStdout;
   if (argv.includes("--revert")) {
     const text = await readAll(deps.stdin ?? process.stdin);
     const log = JSON.parse(text) as Pick<RetypeLog, "batches">;
     const reverted = await revert(dial, scope, log);
-    write(`${JSON.stringify({ reverted })}\n`);
+    await write(`${JSON.stringify({ reverted })}\n`);
     return;
   }
   const probe = argv.includes("--probe");
   try {
     const log = await retype(dial, scope, { probe, batch: batchSize(argv) });
-    write(`${JSON.stringify(log)}\n`);
+    await write(`${JSON.stringify(log)}\n`);
   } catch (err) {
     if (err instanceof RetypeRefused) {
-      write(`${JSON.stringify({ ...err.log, refused: err.violations })}\n`);
+      await write(
+        `${JSON.stringify({ ...err.log, refused: err.violations })}\n`,
+      );
     }
     throw err;
   }
