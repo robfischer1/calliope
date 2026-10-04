@@ -67,7 +67,12 @@ describe("bundleCalliope", () => {
       await bundleCalliope(["bun", "scripts/bundle.ts"], build, errors, copy),
     ).toBe(2);
     expect(
-      await bundleCalliope(["bun", "scripts/bundle.ts", ""], build, errors, copy),
+      await bundleCalliope(
+        ["bun", "scripts/bundle.ts", ""],
+        build,
+        errors,
+        copy,
+      ),
     ).toBe(2);
     expect(errors.lines).toEqual([
       "usage: bun apps/calliope/scripts/bundle.ts <outdir>\n",

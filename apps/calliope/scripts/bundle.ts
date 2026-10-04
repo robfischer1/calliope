@@ -3,7 +3,11 @@
 // the lib where a test reaches them, and `Bun.build` is declared here (the
 // one Bun surface used) rather than pulling bun-types in globally, the
 // convention fetch-search-assets.ts set.
-import { bundleCalliope, copyIdentityCore, type BuildFn } from "./bundle-lib.js";
+import {
+  bundleCalliope,
+  copyIdentityCore,
+  type BuildFn,
+} from "./bundle-lib.js";
 
 declare const Bun: { readonly build: BuildFn };
 
