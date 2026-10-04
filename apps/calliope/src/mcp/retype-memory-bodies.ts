@@ -222,10 +222,15 @@ export async function main(
 
 const entry = process.argv[1];
 if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
-  main().catch((err: unknown) => {
-    process.stderr.write(
-      `retype-memory-bodies: fatal: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
-    process.exit(1);
-  });
+  // Exit explicitly: the dial's X509Source holds a Workload API stream open,
+  // which keeps the event loop (and the kubectl exec) alive after main.
+  main().then(
+    () => process.exit(0),
+    (err: unknown) => {
+      process.stderr.write(
+        `retype-memory-bodies: fatal: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      process.exit(1);
+    },
+  );
 }
