@@ -1,16 +1,10 @@
 // ── the image's bundle step, driven with a bundler double ───────────────────
 
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { platformaticWasmBundled } from "@forge/stellar-core-ts/bundle";
 import {
   bundleCalliope,
   bundleOptions,
-  CORE_DIR,
-  copyIdentityCore,
-  identityCoreSource,
   outdirFrom,
   type BuildFn,
   type BuildOptions,
@@ -54,40 +48,26 @@ describe("bundleOptions", () => {
 describe("bundleCalliope", () => {
   it("refuses with the usage line and exit 2 when no outdir is given, building nothing", async () => {
     const errors = sink();
-    const copied: string[] = [];
-    const copy = (dir: string): void => {
-      copied.push(dir);
-    };
     let built = 0;
     const build: BuildFn = () => {
       built++;
       return Promise.resolve({ success: true, outputs: [], logs: [] });
     };
     expect(
-      await bundleCalliope(["bun", "scripts/bundle.ts"], build, errors, copy),
+      await bundleCalliope(["bun", "scripts/bundle.ts"], build, errors),
     ).toBe(2);
     expect(
-      await bundleCalliope(
-        ["bun", "scripts/bundle.ts", ""],
-        build,
-        errors,
-        copy,
-      ),
+      await bundleCalliope(["bun", "scripts/bundle.ts", ""], build, errors),
     ).toBe(2);
     expect(errors.lines).toEqual([
       "usage: bun apps/calliope/scripts/bundle.ts <outdir>\n",
       "usage: bun apps/calliope/scripts/bundle.ts <outdir>\n",
     ]);
     expect(built).toBe(0);
-    expect(copied).toEqual([]);
   });
 
   it("builds with exactly the declared options and reports each output, exit 0", async () => {
     const errors = sink();
-    const copied: string[] = [];
-    const copy = (dir: string): void => {
-      copied.push(dir);
-    };
     const seen: BuildOptions[] = [];
     const build: BuildFn = (options) => {
       seen.push(options);
@@ -102,11 +82,9 @@ describe("bundleCalliope", () => {
         ["bun", "scripts/bundle.ts", "/deploy"],
         build,
         errors,
-        copy,
       ),
     ).toBe(0);
     expect(seen).toEqual([bundleOptions("/deploy")]);
-    expect(copied).toEqual(["/deploy"]);
     expect(errors.lines).toEqual([
       "bundled /deploy/server.js (2547411 bytes)\n",
     ]);
@@ -114,10 +92,6 @@ describe("bundleCalliope", () => {
 
   it("writes every build log and exits 1 when the build fails", async () => {
     const errors = sink();
-    const copied: string[] = [];
-    const copy = (dir: string): void => {
-      copied.push(dir);
-    };
     const build: BuildFn = () =>
       Promise.resolve({
         success: false,
@@ -129,34 +103,8 @@ describe("bundleCalliope", () => {
         ["bun", "scripts/bundle.ts", "/deploy"],
         build,
         errors,
-        copy,
       ),
     ).toBe(1);
     expect(errors.lines).toEqual(["error: cannot resolve x\n", "second\n"]);
-    expect(copied).toEqual([]);
-  });
-});
-
-describe("CORE_DIR", () => {
-  it("is the directory the core reads beside its module", () => {
-    expect(CORE_DIR).toBe("identitycore-gen");
-  });
-});
-
-describe("the identity core's wasm", () => {
-  let outdir = "";
-  afterEach(() => {
-    rmSync(outdir, { recursive: true, force: true });
-  });
-
-  it("is sourced from the package's identitycore-gen directory", () => {
-    expect(basename(identityCoreSource())).toBe(CORE_DIR);
-  });
-
-  it("is copied to <outdir>/identitycore-gen, wasm included", () => {
-    outdir = mkdtempSync(join(tmpdir(), "calliope-core-"));
-    copyIdentityCore(outdir);
-    const files = readdirSync(join(outdir, CORE_DIR));
-    expect(files.some((f) => f.endsWith(".wasm"))).toBe(true);
   });
 });
