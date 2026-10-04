@@ -114,7 +114,9 @@ The container surface (the ONE write path):
 - `blob_census()` — the F7 GC (roster-gated mark-and-sweep)
 
 The note-native verbs (C8/F10): `create_note`, `dissolve_note`,
-`export_note`, `materialize_note`. Findability: `search`, `list_tags`,
+`export_note`, `materialize_note`, `set_properties` (a note's frontmatter
+as graph edges; the source YAML rides back out through `export_note` and
+`materialize_note`). Findability: `search`, `list_tags`,
 `list_by_tag`, `copy_reference`. Attention: `look`, `unpin`. The frozen
 git-for-ideas archive (read-only): `file_revisions`, `revision_deltas`.
 

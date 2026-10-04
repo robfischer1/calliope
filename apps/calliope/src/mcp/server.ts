@@ -35,6 +35,12 @@ import {
   writeBody,
 } from "./tools.js";
 import { dissolveContainer } from "../notes-sink.js";
+import {
+  frontmatterOf,
+  isSetPropertiesError,
+  setProperties,
+  withFrontmatter,
+} from "../properties.js";
 import type { FocusRegister } from "../focus-register.js";
 import {
   createNote,
@@ -880,7 +886,12 @@ export function createServer(
         if (body.length === 0) {
           return miss(nodeId);
         }
-        const markdown = body.map((s) => s.text).join("\n\n");
+        // The source YAML (set_properties' `frontmatter` literal) re-joins
+        // the export as its leading fence, so a vault note round-trips.
+        const markdown = withFrontmatter(
+          body.map((s) => s.text).join("\n\n"),
+          frontmatterOf(await dial.edges(nodeId)),
+        );
         const result = {
           container_id: nodeId,
           markdown,
@@ -963,8 +974,10 @@ export function createServer(
             provenance[e.predicate] = e.value;
           }
         }
+        const fm = frontmatterOf(edges);
         const result = {
           container_id: nodeId,
+          ...(fm !== null ? { frontmatter: fm } : {}),
           blocks: body.map((s) => ({
             id: s.id,
             text: s.text,
@@ -1153,6 +1166,80 @@ export function createServer(
         return {
           content: [
             { type: "text", text: `${String(result.tags.length)} tag(s).` },
+          ],
+          structuredContent: structured(result),
+        };
+      },
+    );
+
+    const propertyValue = z.union([
+      z.object({ literal: z.string() }).strict(),
+      z.object({ node: z.string() }).strict(),
+    ]);
+    server.registerTool(
+      "set_properties",
+      {
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: true,
+        },
+        title: "Set a note's properties (frontmatter as edges)",
+        description:
+          "Land a note's frontmatter on the graph: each named predicate's " +
+          "values become exactly the given set (literals, or node tokens for " +
+          "resolved wikilinks); unnamed predicates are untouched. tags[] " +
+          "ride the C9 explicit tag path; frontmatter is the source YAML, " +
+          "kept verbatim as one literal so export_note can reproduce it. " +
+          "retract:true removes exactly the named values (the revert form). " +
+          "Idempotent — a re-run is a read. Returns {node_id, added, " +
+          "removed, tags_added, tags_removed, tags_skipped, tx?}; misses are " +
+          "structured (not_a_note / bad_predicate / bad_value / bad_target / " +
+          "admit_refused).",
+        inputSchema: {
+          container_id: z
+            .string()
+            .regex(/^[0-9a-f]{64}$/)
+            .describe("The note's node token."),
+          properties: z
+            .array(
+              z.object({
+                predicate: z.string().min(1),
+                values: z.array(propertyValue),
+              }),
+            )
+            .optional()
+            .describe("predicate → values; a node value is a 64-hex token."),
+          tags: z.array(z.string()).optional().describe("Explicit tags."),
+          frontmatter: z
+            .string()
+            .optional()
+            .describe("The source YAML (between the fences), verbatim."),
+          retract: z
+            .boolean()
+            .optional()
+            .describe("Remove exactly the named values instead of setting."),
+        },
+      },
+      async (args) => {
+        const result = await setProperties(dial, scope, tagStore, args);
+        if (isSetPropertiesError(result)) {
+          return {
+            content: [
+              { type: "text", text: `${result.error}: ${result.detail}` },
+            ],
+            structuredContent: structured(result),
+            isError: true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `+${String(result.added.length)} -${String(result.removed.length)} edge(s), ` +
+                `+${String(result.tags_added.length)} -${String(result.tags_removed.length)} tag(s).`,
+            },
           ],
           structuredContent: structured(result),
         };
