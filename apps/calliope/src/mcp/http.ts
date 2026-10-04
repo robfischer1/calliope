@@ -60,6 +60,7 @@ import {
 } from "./consciousness-emit.js";
 import { FocusRegister, startFocusConsumer } from "../focus-register.js";
 import { makeErosProvider } from "../eros-provider.js";
+import { reservedHeaders } from "@forge/stellar-core-ts/identitycore";
 import { makeWitness } from "./witness.js";
 import type { Witness } from "./witness.js";
 import { LoopbackPeers, serveMtlsDoor, withDoorPeers } from "./mtls-door.js";
@@ -297,6 +298,14 @@ async function main(): Promise<void> {
   // the door from binding. Before initBackend because a span is only useful if
   // the provider exists when the first request lands.
   const telemetryShutdown = await startTelemetry(telemetryConfigFromEnv());
+
+  // THE IDENTITY CORE LOADS AT BOOT, not at the first mTLS peer. Lazily, a
+  // core that cannot load (stellar-core-ts 0.17.0 read its wasm off disk,
+  // beside a one-file bundle that does not carry it) took the process down
+  // on whichever call typed a peer first, minutes into a healthy-looking
+  // pod. Now it fails here, before the star serves, where the build lane's
+  // boot smoke sees it.
+  reservedHeaders();
 
   const kind = backendKind();
   const port = resolvePort();
