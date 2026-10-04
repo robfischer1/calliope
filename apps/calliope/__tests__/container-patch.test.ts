@@ -495,6 +495,9 @@ describe("the patch_container verb", () => {
         arguments: args,
       });
       expect(res.isError, JSON.stringify(args)).toBe(true);
+      // Refused at the schema, before the handler: a handler miss
+      // (empty_container / bad_slot) would carry structured content.
+      expect(res.structuredContent, JSON.stringify(args)).toBeUndefined();
     }
   });
 
@@ -502,6 +505,11 @@ describe("the patch_container verb", () => {
     const { mcp } = await rig();
     const { tools } = await mcp.listTools();
     const tool = tools.find((t) => t.name === "patch_container");
+    expect(tool?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    });
     expect(tool?.title).toBe(
       "Patch a container (literal find/replace, one transaction)",
     );

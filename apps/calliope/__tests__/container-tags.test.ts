@@ -297,4 +297,29 @@ describe("write_container runs the inline-tag reconcile", () => {
       },
     ]);
   });
+
+  it("a failure that is not the gate's propagates as a tool error, unshaped", async () => {
+    const dial = new FixtureChaosDial();
+    const blobs = new FixtureBlobStore();
+    blobs.mint = () => Promise.reject(new Error("blob store down"));
+    const server = createServer(new DroppedTableClient(), {
+      chaos: { dial, scope: "notes" },
+      containers: { blobs, dial },
+      tags: new FixtureTagStore(),
+    });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const mcp = new Client({ name: "test", version: "0" });
+    await Promise.all([server.connect(st), mcp.connect(ct)]);
+    const n = await note(mcp, "Blobless");
+    const res = await mcp.callTool({
+      name: "write_container",
+      arguments: {
+        container: n,
+        ops: [{ op: "add", text: "#alpha", position: "a0" }],
+      },
+    });
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent).toBeUndefined();
+    expect(JSON.stringify(res.content)).toContain("blob store down");
+  });
 });
