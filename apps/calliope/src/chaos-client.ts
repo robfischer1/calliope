@@ -149,6 +149,26 @@ export interface NodeEdge {
   domain: "node" | "scalar" | "blob";
 }
 
+/**
+ * One current fact touching a node, with the scope it was asserted in —
+ * what a retraction must pin to. Outbound: `subject` is the node itself.
+ * Inbound: `subject` is the referrer and `value` the node (always a node
+ * edge). `graph` is 64-hex.
+ */
+export interface PlacedEdge {
+  subject: string;
+  predicate: string;
+  value: string;
+  isNode: boolean;
+  domain: NodeEdge["domain"];
+  graph: string;
+}
+
+/** A scope the wire answered by name or by token, as the 64-hex token. */
+export function graphToken(graph: string): string {
+  return HEX64.test(graph) ? graph : scopeHash(graph);
+}
+
 /** The dial surface `create_note` needs — fixture-implementable. */
 export interface ChaosDial {
   admit(ops: ChaosOp[], scope: string): Promise<AdmitResult>;
@@ -196,6 +216,13 @@ export interface ChaosDial {
     predicate: string,
     value: string,
   ): Promise<string[]>;
+  /** Every current OUTBOUND fact of a node, each with its scope
+   *  (`materialize_edges` full). Optional: only delete_note needs it, and a
+   *  dial without it makes that verb refuse rather than half-delete. */
+  placedEdges?(token: string): Promise<PlacedEdge[]>;
+  /** Every current INBOUND node fact onto a node, each with its scope
+   *  (`quads_to` full). Optional for the same reason. */
+  referrers?(token: string): Promise<PlacedEdge[]>;
 }
 
 /** SHA-256 name-hash of a bare graph/scope name (the chaos identity form). */
@@ -203,17 +230,23 @@ export function scopeHash(name: string): string {
   return createHash("sha256").update(name, "utf8").digest("hex");
 }
 
-/** Retract one edge; the mirror of {@link opAdd}. */
+/**
+ * Retract one edge; the mirror of {@link opAdd}. `graph` (64-hex) pins the
+ * retraction to the scope the fact actually lives in — themis forwards it
+ * as the wire `g`. Absent, the retraction lands in the batch's scope.
+ */
 export function opRemove(
   fromId: string,
   predicate: string,
   target: EdgeTarget,
+  graph?: string,
 ): ChaosOp {
   return {
     op: "removeEdge",
     from_id: fromId,
     predicate,
     ...edgeFields(target),
+    ...(graph !== undefined ? { graph } : {}),
   };
 }
 
@@ -585,6 +618,55 @@ export class LiveChaosDial implements ChaosDial {
     });
   }
 
+  async placedEdges(token: string): Promise<PlacedEdge[]> {
+    this.id += 1;
+    const raw = (await this.chaosRpc("materialize_edges", {
+      node: token,
+      full: true,
+    })) as { edges?: Record<string, unknown>[] } | null;
+    if (raw === null || !Array.isArray(raw.edges)) {
+      return [];
+    }
+    return raw.edges.map((e) => {
+      const isNode = e.is_node === true;
+      return {
+        subject: token,
+        predicate: asStr(e.predicate),
+        value: asStr(e.value),
+        isNode,
+        domain:
+          e.domain === "blob"
+            ? ("blob" as const)
+            : isNode
+              ? ("node" as const)
+              : ("scalar" as const),
+        graph: graphToken(asStr(e.graph)),
+      };
+    });
+  }
+
+  async referrers(token: string): Promise<PlacedEdge[]> {
+    this.id += 1;
+    const raw = await this.chaosRpc("quads_to", {
+      objects: [token],
+      full: true,
+    });
+    if (!Array.isArray(raw)) return [];
+    const out: PlacedEdge[] = [];
+    for (const row of raw as Record<string, unknown>[]) {
+      if (row.o_domain !== "node" || asStr(row.o) !== token) continue;
+      out.push({
+        subject: asStr(row.s),
+        predicate: asStr(row.predicate),
+        value: token,
+        isNode: true,
+        domain: "node",
+        graph: graphToken(asStr(row.g)),
+      });
+    }
+    return out;
+  }
+
   async registerGraph(name: string): Promise<void> {
     this.id += 1;
     await this.chaosRpc("register_graph", {
@@ -820,6 +902,8 @@ export class FixtureChaosDial implements ChaosDial {
   private readonly byName = new Map<string, string>();
   private readonly labels = new Map<string, string>();
   private readonly nodeEdges = new Map<string, NodeEdge[]>();
+  /** s␟p␟value → the scope the fact was asserted in (placedEdges). */
+  private readonly factGraph = new Map<string, string>();
   private seq = 0;
   /** When set, every admit refuses with these violations. */
   refuseWith: unknown[] | null = null;
@@ -883,6 +967,10 @@ export class FixtureChaosDial implements ChaosDial {
         };
         list.push(edge);
         this.nodeEdges.set(from, list);
+        this.factGraph.set(
+          `${from}\u001f${edge.predicate}\u001f${edge.value}`,
+          scopeHash(scope),
+        );
         this.factLog.push({
           tx,
           s: from,
@@ -943,6 +1031,34 @@ export class FixtureChaosDial implements ChaosDial {
   registerGraph(name: string): Promise<void> {
     this.graphs.add(name);
     return Promise.resolve();
+  }
+
+  #placed(s: string, e: NodeEdge): PlacedEdge {
+    return {
+      subject: s,
+      predicate: e.predicate,
+      value: e.value,
+      isNode: e.isNode,
+      domain: e.domain,
+      graph:
+        this.factGraph.get(`${s}\u001f${e.predicate}\u001f${e.value}`) ?? "",
+    };
+  }
+
+  placedEdges(token: string): Promise<PlacedEdge[]> {
+    return Promise.resolve(
+      (this.nodeEdges.get(token) ?? []).map((e) => this.#placed(token, e)),
+    );
+  }
+
+  referrers(token: string): Promise<PlacedEdge[]> {
+    const out: PlacedEdge[] = [];
+    for (const [s, list] of this.nodeEdges) {
+      for (const e of list) {
+        if (e.isNode && e.value === token) out.push(this.#placed(s, e));
+      }
+    }
+    return Promise.resolve(out);
   }
 
   quadsFrom(

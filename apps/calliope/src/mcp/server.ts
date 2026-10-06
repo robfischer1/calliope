@@ -36,6 +36,11 @@ import {
 } from "./tools.js";
 import { dissolveContainer } from "../notes-sink.js";
 import {
+  DELETE_NOTE_MAX,
+  deleteNotes,
+  isDeleteNotesError,
+} from "../note-delete.js";
+import {
   frontmatterOf,
   isSetPropertiesError,
   setProperties,
@@ -1152,6 +1157,68 @@ export function createServer(
         }
         return {
           content: [{ type: "text", text: result.compound }],
+          structuredContent: structured(result),
+        };
+      },
+    );
+
+    server.registerTool(
+      "delete_note",
+      {
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: true,
+        },
+        title: "Delete notes (retract every current fact)",
+        description:
+          "Take Note nodes off the notes graph: every current outbound and " +
+          "inbound fact, each block slot's facts, and the tag-mirror rows. " +
+          "History keeps the retracted facts; blobs are left to the census. " +
+          "dry_run defaults to TRUE and reports what would go (edges by " +
+          "predicate, blocks, blobs, tags). Takes up to " +
+          `${String(DELETE_NOTE_MAX)} ids. Refuses the whole call, writing ` +
+          "nothing, on a non-Note, a protected note (archived, or claimed " +
+          "by another star) or a parent of a note outside the call. A " +
+          "note already gone answers not_found.",
+        inputSchema: {
+          ids: z
+            .array(z.string().regex(/^[0-9a-f]{64}$/))
+            .min(1)
+            .max(DELETE_NOTE_MAX)
+            .describe("Note node tokens."),
+          dry_run: z
+            .boolean()
+            .optional()
+            .describe("Default true. false deletes."),
+        },
+      },
+      async ({ ids, dry_run }) => {
+        const result = await deleteNotes(dial, scope, options.tags, {
+          ids,
+          dry_run,
+        });
+        if (isDeleteNotesError(result)) {
+          return {
+            content: [
+              { type: "text", text: `${result.error}: ${result.detail}` },
+            ],
+            structuredContent: structured(result),
+            isError: true,
+          };
+        }
+        const t = result.totals;
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `${result.dry_run ? "would delete" : "deleted"} ` +
+                `${String(t.deleted)} note(s), ${String(t.not_found)} not ` +
+                `found, ${String(t.blocks)} block(s), ` +
+                `${String(t.tag_rows)} tag row(s).`,
+            },
+          ],
           structuredContent: structured(result),
         };
       },

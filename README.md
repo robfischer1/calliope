@@ -99,7 +99,7 @@ build of chaosstore, linux and windows).
 
 ## MCP tools — the post-cut surface (F12)
 
-The fleet serves **seventeen verbs**, pinned (names AND annotations) by an
+The fleet serves **eighteen verbs**, pinned (names AND annotations) by an
 executable fence in `__tests__/mcp-http.test.ts` — change the surface only
 alongside the plan that licenses it:
 
@@ -120,9 +120,22 @@ The container surface (the ONE write path):
 The note-native verbs (C8/F10): `create_note`, `dissolve_note`,
 `export_note`, `materialize_note`, `set_properties` (a note's frontmatter
 as graph edges; the source YAML rides back out through `export_note` and
-`materialize_note`). Findability: `search`, `list_tags`,
+`materialize_note`), `delete_note` (see below). Findability: `search`, `list_tags`,
 `list_by_tag`, `copy_reference`. Attention: `look`, `unpin`. The frozen
 git-for-ideas archive (read-only): `file_revisions`, `revision_deltas`.
+
+`delete_note(ids[], dry_run = true)` takes up to 100 Notes off the graph,
+so a bulk import can be reversed. chaos is an append-only log and the gate
+carries `removeEdge`, not `deleteNode`, so a delete retracts every current
+fact pinned to the scope it lives in: the note's outbound and inbound
+edges, each block slot's facts (only the membership when another container
+shares the slot), and the note's tag-mirror rows. History still
+reconstructs the note; system edges (`ownedBy`, `hasKind`) and blobs stay,
+blobs being the census's to reap. The dry run reports edges by predicate,
+blocks, blobs and tags. The whole call refuses, writing nothing, on a
+non-Note, a protected note (`isArchived=true`, or claimed by a star other
+than calliope) or the parent of a note outside the call; a note already
+gone answers `not_found`.
 
 **Retired by the F12 cut (2026-08-16)** — the body family (`read_body`,
 `write_body`, `has_body`, `read_body_revisions`, `read_body_at`), the
