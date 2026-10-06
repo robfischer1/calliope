@@ -22,7 +22,9 @@
  * for the live backends so the injected transport is honored.
  */
 
-import { Pool } from "pg";
+import { Client, Pool } from "pg";
+import { dbLogin } from "@forge/stellar-core-ts";
+import type { DbLogin, DbLoginOptions } from "@forge/stellar-core-ts";
 import type { BodyClient } from "../types.js";
 import type { DocumentStore } from "../document-store.js";
 import { PgDocumentStore } from "../document-store.js";
@@ -96,6 +98,20 @@ function pgConnectionString(env: NodeJS.ProcessEnv): string {
     );
   }
   return url;
+}
+
+/**
+ * The sovereign store's pool. With no `login` it is the bare DATABASE_URL,
+ * exactly as before F7; with one (from {@link prepareBackend}) it is whatever
+ * STELLAR_DB_AUTH asked for — in svid mode a stripped DSN and a pg Client
+ * that presents the star's CURRENT SVID on every new connection
+ * (stellar-core-ts dbauth).
+ */
+export function pgPool(
+  env: NodeJS.ProcessEnv,
+  login?: DbLogin<typeof Client>,
+): Pool {
+  return new Pool(login ?? { connectionString: pgConnectionString(env) });
 }
 
 /**
@@ -216,6 +232,7 @@ export interface Backend {
 export function makeBackend(
   kind: BackendKind = backendKind(),
   env: NodeJS.ProcessEnv = process.env,
+  login?: DbLogin<typeof Client>,
 ): Backend {
   if (kind === "fixture") {
     // F7: the fixture backend serves documents NOTES-BACKED, exactly like
@@ -241,7 +258,7 @@ export function makeBackend(
   }
   if (kind === "pg") {
     // ONE pool for every facet — the sovereign store is one database.
-    const pool = new Pool({ connectionString: pgConnectionString(env) });
+    const pool = pgPool(env, login);
     const client = withIndexPush(new PgBodyClient(pool), env);
     const dial = new LiveChaosDial();
     const scope = notesScope(env);
@@ -260,6 +277,27 @@ export function makeBackend(
     };
   }
   return { client: makeBodyClient(kind, env) };
+}
+
+/**
+ * {@link makeBackend} with the database login resolved first — what a running
+ * star calls. The pg backend's login comes from STELLAR_DB_AUTH
+ * (stellar-core-ts `dbLogin`): unset or "kairos" is the DSN as delivered;
+ * "svid" waits (bounded) for the workload identity, so a fresh pod that beats
+ * SPIRE to its first connect pauses instead of crashing. `opts` is the
+ * test seam (the identity source, the wait).
+ */
+export async function prepareBackend(
+  kind: BackendKind = backendKind(),
+  env: NodeJS.ProcessEnv = process.env,
+  opts: DbLoginOptions = {},
+): Promise<Backend> {
+  if (kind !== "pg") return makeBackend(kind, env);
+  const login = await dbLogin(pgConnectionString(env), Client, {
+    ...opts,
+    env,
+  });
+  return makeBackend(kind, env, login);
 }
 
 /** Async init for a {@link Backend}: bootstrap every pg-backed schema. */

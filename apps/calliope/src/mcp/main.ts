@@ -14,14 +14,14 @@
  */
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { backendKind, initBackend, makeBackend } from "./backend.js";
+import { backendKind, initBackend, prepareBackend } from "./backend.js";
 import { makeErosProvider } from "../eros-provider.js";
 import { createServer } from "./server.js";
 import { makeConsciousnessPublisher } from "./consciousness-emit.js";
 
 async function main(): Promise<void> {
   const kind = backendKind();
-  const backend = makeBackend(kind);
+  const backend = await prepareBackend(kind);
   await initBackend(backend);
   const consciousness = makeConsciousnessPublisher(process.env);
   // Findability F4: the eros-routed pg search arm (env-gated).

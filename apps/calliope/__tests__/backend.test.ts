@@ -1,9 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Client, type Pool } from "pg";
+import { afterAll, describe, expect, it } from "vitest";
 import {
+  type Backend,
   backendKind,
   initBodyClient,
   makeBackend,
   makeBodyClient,
+  pgPool,
+  prepareBackend,
 } from "../src/mcp/backend.js";
 import {
   IndexingBodyClient,
@@ -103,5 +110,119 @@ describe("initBodyClient", () => {
     expect(
       queries.some((q) => q.includes("CREATE TABLE IF NOT EXISTS sections")),
     ).toBe(false);
+  });
+});
+
+// F7: the sovereign store's login under STELLAR_DB_AUTH (stellar-core-ts
+// dbauth). Nothing here dials: a pg Pool connects lazily, so its options are
+// the whole observable — read through the tag store, which holds the ONE pool.
+describe("F7 — the pg login follows STELLAR_DB_AUTH", () => {
+  const root = mkdtempSync(join(tmpdir(), "calliope-dbauth-"));
+  const caFile = join(root, "ca.crt");
+  writeFileSync(caFile, "THE-CA");
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+  const svidUrl = `postgresql://calliope_svid@aether:5432/calliope?sslmode=verify-full&sslrootcert=${caFile}`;
+  const identity = {
+    current: () => ({ certPem: "SVID-CERT", keyPem: "SVID-KEY" }),
+  };
+  const poolOf = (backend: Backend): Pool =>
+    (backend.tags as unknown as { pool: Pool }).pool;
+
+  it("pgPool without a login is the bare DATABASE_URL", () => {
+    const pool = pgPool({ DATABASE_URL: "postgresql://u:pw@aether/calliope" });
+    expect(pool.options.connectionString).toBe(
+      "postgresql://u:pw@aether/calliope",
+    );
+    expect(pool.options.Client).toBeUndefined();
+  });
+
+  it("pgPool without a login refuses a missing DATABASE_URL", () => {
+    expect(() => pgPool({})).toThrow(/DATABASE_URL/);
+  });
+
+  it("kairos (unset): the pool dials the delivered DSN, no identity asked for", async () => {
+    let opened = 0;
+    const backend = await prepareBackend(
+      "pg",
+      { DATABASE_URL: "postgresql://v-calliope-1:pw@aether/calliope" },
+      {
+        source: () => {
+          opened++;
+          return Promise.resolve(identity);
+        },
+      },
+    );
+    const pool = poolOf(backend);
+    expect(pool.options.connectionString).toBe(
+      "postgresql://v-calliope-1:pw@aether/calliope",
+    );
+    expect(pool.options.Client).toBeUndefined();
+    expect(opened).toBe(0);
+  });
+
+  it("svid: every facet's pool presents the live SVID, verify-full against the CA", async () => {
+    const backend = await prepareBackend(
+      "pg",
+      { DATABASE_URL: svidUrl, STELLAR_DB_AUTH: "svid" },
+      { source: () => Promise.resolve(identity), pollMs: 5 },
+    );
+    const pool = poolOf(backend);
+    expect(pool.options.connectionString).toBe(
+      "postgresql://calliope_svid@aether:5432/calliope",
+    );
+    const PoolClient = pool.options.Client;
+    expect(PoolClient).toBeDefined();
+    const client = new (PoolClient ?? Client)(pool.options);
+    expect(client).toBeInstanceOf(Client);
+    // pg hides `key` (non-enumerable) once it has the config, so it is
+    // read by name rather than compared as part of the object.
+    const ssl = (
+      client as unknown as {
+        connectionParameters: { ssl: Record<string, unknown> };
+      }
+    ).connectionParameters.ssl;
+    expect(ssl).toEqual({
+      ca: "THE-CA",
+      cert: "SVID-CERT",
+      rejectUnauthorized: true,
+    });
+    expect(ssl.key).toBe("SVID-KEY");
+  });
+
+  it("svid: the env the backend reads is the env the mode is read from", async () => {
+    await expect(
+      prepareBackend(
+        "pg",
+        {
+          DATABASE_URL: "postgresql://u@aether/calliope",
+          STELLAR_DB_AUTH: "svid",
+        },
+        { source: () => Promise.resolve(identity) },
+      ),
+    ).rejects.toThrow(/sslmode/);
+  });
+
+  it("svid: a missing DATABASE_URL still refuses by name", async () => {
+    await expect(
+      prepareBackend("pg", { STELLAR_DB_AUTH: "svid" }),
+    ).rejects.toThrow(/DATABASE_URL/);
+  });
+
+  it("a non-pg backend asks nothing of the login", async () => {
+    let opened = 0;
+    const backend = await prepareBackend(
+      "fixture",
+      { STELLAR_DB_AUTH: "bogus" },
+      {
+        source: () => {
+          opened++;
+          return Promise.resolve(identity);
+        },
+      },
+    );
+    expect(backend.documents).toBeDefined();
+    expect(opened).toBe(0);
   });
 });
