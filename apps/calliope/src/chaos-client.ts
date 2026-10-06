@@ -149,6 +149,26 @@ export interface NodeEdge {
   domain: "node" | "scalar" | "blob";
 }
 
+/**
+ * One current fact touching a node, with the scope it was asserted in —
+ * what a retraction must pin to. Outbound: `subject` is the node itself.
+ * Inbound: `subject` is the referrer and `value` the node (always a node
+ * edge). `graph` is 64-hex.
+ */
+export interface PlacedEdge {
+  subject: string;
+  predicate: string;
+  value: string;
+  isNode: boolean;
+  domain: NodeEdge["domain"];
+  graph: string;
+}
+
+/** A scope the wire answered by name or by token, as the 64-hex token. */
+export function graphToken(graph: string): string {
+  return HEX64.test(graph) ? graph : scopeHash(graph);
+}
+
 /** The dial surface `create_note` needs — fixture-implementable. */
 export interface ChaosDial {
   admit(ops: ChaosOp[], scope: string): Promise<AdmitResult>;
@@ -196,6 +216,13 @@ export interface ChaosDial {
     predicate: string,
     value: string,
   ): Promise<string[]>;
+  /** Every current OUTBOUND fact of a node, each with its scope
+   *  (`materialize_edges` full). Optional: only delete_note needs it, and a
+   *  dial without it makes that verb refuse rather than half-delete. */
+  placedEdges?(token: string): Promise<PlacedEdge[]>;
+  /** Every current INBOUND node fact onto a node, each with its scope
+   *  (`quads_to` full). Optional for the same reason. */
+  referrers?(token: string): Promise<PlacedEdge[]>;
 }
 
 /** SHA-256 name-hash of a bare graph/scope name (the chaos identity form). */
@@ -203,17 +230,23 @@ export function scopeHash(name: string): string {
   return createHash("sha256").update(name, "utf8").digest("hex");
 }
 
-/** Retract one edge; the mirror of {@link opAdd}. */
+/**
+ * Retract one edge; the mirror of {@link opAdd}. `graph` (64-hex) pins the
+ * retraction to the scope the fact actually lives in — themis forwards it
+ * as the wire `g`. Absent, the retraction lands in the batch's scope.
+ */
 export function opRemove(
   fromId: string,
   predicate: string,
   target: EdgeTarget,
+  graph?: string,
 ): ChaosOp {
   return {
     op: "removeEdge",
     from_id: fromId,
     predicate,
     ...edgeFields(target),
+    ...(graph !== undefined ? { graph } : {}),
   };
 }
 
@@ -585,6 +618,55 @@ export class LiveChaosDial implements ChaosDial {
     });
   }
 
+  async placedEdges(token: string): Promise<PlacedEdge[]> {
+    this.id += 1;
+    const raw = (await this.chaosRpc("materialize_edges", {
+      node: token,
+      full: true,
+    })) as { edges?: Record<string, unknown>[] } | null;
+    if (raw === null || !Array.isArray(raw.edges)) {
+      return [];
+    }
+    return raw.edges.map((e) => {
+      const isNode = e.is_node === true;
+      return {
+        subject: token,
+        predicate: asStr(e.predicate),
+        value: asStr(e.value),
+        isNode,
+        domain:
+          e.domain === "blob"
+            ? ("blob" as const)
+            : isNode
+              ? ("node" as const)
+              : ("scalar" as const),
+        graph: graphToken(asStr(e.graph)),
+      };
+    });
+  }
+
+  async referrers(token: string): Promise<PlacedEdge[]> {
+    this.id += 1;
+    const raw = await this.chaosRpc("quads_to", {
+      objects: [token],
+      full: true,
+    });
+    if (!Array.isArray(raw)) return [];
+    const out: PlacedEdge[] = [];
+    for (const row of raw as Record<string, unknown>[]) {
+      if (row.o_domain !== "node" || asStr(row.o) !== token) continue;
+      out.push({
+        subject: asStr(row.s),
+        predicate: asStr(row.predicate),
+        value: token,
+        isNode: true,
+        domain: "node",
+        graph: graphToken(asStr(row.g)),
+      });
+    }
+    return out;
+  }
+
   async registerGraph(name: string): Promise<void> {
     this.id += 1;
     await this.chaosRpc("register_graph", {
@@ -813,6 +895,8 @@ export class FixtureChaosDial implements ChaosDial {
     value: string;
     domain: NodeEdge["domain"];
     added: boolean;
+    /** The scope token the fact was asserted or retracted in. */
+    graph: string;
   }[] = [];
   #txSeq = 0;
   /** The fixture's transaction author (the door's are themis-resolved). */
@@ -890,6 +974,7 @@ export class FixtureChaosDial implements ChaosDial {
           value: edge.value,
           domain: edge.domain,
           added: true,
+          graph: scopeHash(scope),
         });
       } else if (op.op === "removeEdge") {
         const from = resolveRef(op.from_id);
@@ -913,6 +998,7 @@ export class FixtureChaosDial implements ChaosDial {
             value: removed.value,
             domain: removed.domain,
             added: false,
+            graph: scopeHash(scope),
           });
         }
       }
@@ -943,6 +1029,35 @@ export class FixtureChaosDial implements ChaosDial {
   registerGraph(name: string): Promise<void> {
     this.graphs.add(name);
     return Promise.resolve();
+  }
+
+  /** The current facts, replayed off the log — each with its scope. */
+  #placed(keep: (f: PlacedEdge) => boolean): PlacedEdge[] {
+    const live = new Map<string, PlacedEdge>();
+    for (const f of this.factLog) {
+      const key = JSON.stringify([f.s, f.predicate, f.value]);
+      if (!f.added) {
+        live.delete(key);
+        continue;
+      }
+      live.set(key, {
+        subject: f.s,
+        predicate: f.predicate,
+        value: f.value,
+        isNode: f.domain === "node",
+        domain: f.domain,
+        graph: f.graph,
+      });
+    }
+    return [...live.values()].filter(keep);
+  }
+
+  placedEdges(token: string): Promise<PlacedEdge[]> {
+    return Promise.resolve(this.#placed((f) => f.subject === token));
+  }
+
+  referrers(token: string): Promise<PlacedEdge[]> {
+    return Promise.resolve(this.#placed((f) => f.isNode && f.value === token));
   }
 
   quadsFrom(

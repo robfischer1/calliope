@@ -97,6 +97,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "container_history", // F5 — history IS the graph (as-of reads)
       "copy_reference",
       "create_note",
+      "delete_note", // retracts a note whole, so a bulk import can be reversed
       "dissolve_note",
       "export_note",
       "file_revisions", // stays [Rob, F12] — frozen archive, read-only
@@ -139,6 +140,9 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       // replaces a named predicate's value set (and retract: removes), so
       // it can take a value away: destructive, and a re-run converges
       set_properties: [false, true, true],
+      // retracts every current fact of a note; a re-delete answers
+      // not_found, so a re-run converges
+      delete_note: [false, true, true],
       // the ONE write path (F4/F12): a save whose ops all net out writes
       // nothing, but the verb itself is not idempotent (adds mint slots)
       write_container: [false, false, false],

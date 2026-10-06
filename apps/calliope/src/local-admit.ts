@@ -28,6 +28,7 @@ import {
   type HistoryEntry,
   LiveChaosDial,
   type NodeEdge,
+  type PlacedEdge,
   type QuadRow,
 } from "./chaos-client.js";
 
@@ -233,6 +234,12 @@ export class LocalChaosDial implements ChaosDial {
   }
   heldBlobs(graph?: string): Promise<string[]> {
     return this.#reads.heldBlobs(graph);
+  }
+  placedEdges(token: string): Promise<PlacedEdge[]> {
+    return this.#reads.placedEdges(token);
+  }
+  referrers(token: string): Promise<PlacedEdge[]> {
+    return this.#reads.referrers(token);
   }
 }
 
