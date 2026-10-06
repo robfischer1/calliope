@@ -12,35 +12,35 @@
 [[produces]]
 to = "athena"
 contract = "calliope-athena"
-version = "1"
-digest = "sha256:b7e890e0bb6d268a7084c692beb571d3248837b78d1dc9e2bd846a0c7953ca35"
+version = "1781948"
+digest = "sha256:37140758c7ae65978bf43f3bc7552e4b5c3d659a99cb35fbe519741b9f56a8b5"
 
 [[produces]]
 to = "mnemosyne"
 contract = "calliope-mnemosyne"
-version = "2"
-digest = "sha256:f27c8d30536a3f49dd341b144e7cb41d7d091a4c2e3cfdea7e24b1a38cfe9c9e"
+version = "1781951"
+digest = "sha256:9935ea1b01cde8b58cba28ae03415d2a890badc822bb68adfb45dee9255fe1af"
 
 [[produces]]
 to = "ourea"
 contract = "calliope-ourea"
-version = "2"
-digest = "sha256:d9f1db821706275f567a43a629c4e72c22ac9842ec50270295c2a08e473bd056"
+version = "1781953"
+digest = "sha256:db377b59e9cebde0cc74d939c0d815d539496847d2d511edc23953e38f57976a"
 
 [[produces]]
 to = "proteus"
 contract = "calliope-proteus"
-version = "1"
-digest = "sha256:5ee52f70fd35045d47960d64d5bf56540565739a1b39c6dfee9480a14bf48b3c"
+version = "1781957"
+digest = "sha256:ecd0bd83e16f5677b841a61c18c74a6737c27ed6cd294ac2a0d3ea6e857bb844"
 
 [[consumes]]
 from = "chaos"
 contract = "chaos-calliope"
-version = "2"
-digest = "sha256:f6f84aa36df8e86c8a81e7fe30f9994699133b14af78defd37585b1ee08475e5"
+version = "1781977"
+digest = "sha256:590fa3dd84ff7ab87d317ee7d2f787e8215822e8fa20b69a9eba491ef5c81935"
 
 [[consumes]]
 from = "themis"
 contract = "themis-calliope"
-version = "1"
-digest = "sha256:5a83ac3954c89d93fd4e671f9702565b6ec05f3bde691518bc1a51b81b7b83e9"
+version = "1782147"
+digest = "sha256:c6966b00aeac5ae4cecf7cef15400b66b662b38a28d2b55a134a603401a2002d"
