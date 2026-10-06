@@ -40,7 +40,12 @@ import type { BodyClient } from "../types.js";
 import type { ContainerFacet } from "../container-write.js";
 import type { DocumentStore } from "../document-store.js";
 import type { RevisionStore } from "../revision-store.js";
-import { backendKind, initBackend, makeBackend } from "./backend.js";
+import {
+  backendKind,
+  initBackend,
+  makeBackend,
+  prepareBackend,
+} from "./backend.js";
 import { createServer } from "./server.js";
 import type { ChaosFacet } from "../chaos-client.js";
 import type { TagStore } from "../tag-store.js";
@@ -309,7 +314,7 @@ async function main(): Promise<void> {
   const kind = backendKind();
   const port = resolvePort();
   const host = process.env.HOST ?? "0.0.0.0";
-  const backend = makeBackend(kind);
+  const backend = await prepareBackend(kind);
   await initBackend(backend);
   // Stream of Consciousness pass 4: ONE producer for the process (the
   // servers are per-request; the broker connection is not).
