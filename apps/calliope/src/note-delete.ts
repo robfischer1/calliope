@@ -271,20 +271,23 @@ async function plan(
         blobs.add(e.value);
       }
     }
-    for (const e of holders) {
-      // The note's own membership edge is already in `out`.
-      if (e.predicate === TREE_MEMBER && e.subject === id) continue;
-      retract.push(e);
-    }
+    for (const e of holders) retract.push(e);
   }
   deletion.blobs = [...blobs].sort((a, b) => Number(a) - Number(b));
 
-  return {
-    deletion,
-    ops: retract.map((e) =>
-      opRemove(e.subject, e.predicate, targetOf(e), e.graph || undefined),
-    ),
-  };
+  // A fact reached twice (the note's own membership, read from both ends)
+  // is retracted once.
+  const ops = new Map<string, ChaosOp>();
+  for (const e of retract) {
+    const op = opRemove(
+      e.subject,
+      e.predicate,
+      targetOf(e),
+      e.graph || undefined,
+    );
+    ops.set(JSON.stringify(op), op);
+  }
+  return { deletion, ops: [...ops.values()] };
 }
 
 function validate(ids: string[]): DeleteNotesError | null {

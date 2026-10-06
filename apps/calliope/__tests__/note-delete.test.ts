@@ -193,8 +193,12 @@ describe("delete_note — the verb", () => {
       (await r.dial.edges(target)).some((e) => e.predicate === "hasType"),
     ).toBe(true);
     expect(await blocks(r.mcp, a)).toEqual([]);
-    // Every retraction is pinned to the scope the fact lives in.
+    // Every retraction is pinned to the scope the fact lives in, and the
+    // membership, read from both ends, is retracted once.
     const last = r.dial.admits.at(-1);
+    expect(last?.ops.filter((o) => o.predicate === "tree_member")).toHaveLength(
+      1,
+    );
     expect(last?.scope).toBe(SCOPE);
     expect(
       last?.ops.every(
