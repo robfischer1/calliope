@@ -895,6 +895,8 @@ export class FixtureChaosDial implements ChaosDial {
     value: string;
     domain: NodeEdge["domain"];
     added: boolean;
+    /** The scope token the fact was asserted or retracted in. */
+    graph: string;
   }[] = [];
   #txSeq = 0;
   /** The fixture's transaction author (the door's are themis-resolved). */
@@ -902,8 +904,6 @@ export class FixtureChaosDial implements ChaosDial {
   private readonly byName = new Map<string, string>();
   private readonly labels = new Map<string, string>();
   private readonly nodeEdges = new Map<string, NodeEdge[]>();
-  /** s␟p␟value → the scope the fact was asserted in (placedEdges). */
-  private readonly factGraph = new Map<string, string>();
   private seq = 0;
   /** When set, every admit refuses with these violations. */
   refuseWith: unknown[] | null = null;
@@ -967,10 +967,6 @@ export class FixtureChaosDial implements ChaosDial {
         };
         list.push(edge);
         this.nodeEdges.set(from, list);
-        this.factGraph.set(
-          `${from}\u001f${edge.predicate}\u001f${edge.value}`,
-          scopeHash(scope),
-        );
         this.factLog.push({
           tx,
           s: from,
@@ -978,6 +974,7 @@ export class FixtureChaosDial implements ChaosDial {
           value: edge.value,
           domain: edge.domain,
           added: true,
+          graph: scopeHash(scope),
         });
       } else if (op.op === "removeEdge") {
         const from = resolveRef(op.from_id);
@@ -1001,6 +998,7 @@ export class FixtureChaosDial implements ChaosDial {
             value: removed.value,
             domain: removed.domain,
             added: false,
+            graph: scopeHash(scope),
           });
         }
       }
@@ -1033,32 +1031,33 @@ export class FixtureChaosDial implements ChaosDial {
     return Promise.resolve();
   }
 
-  #placed(s: string, e: NodeEdge): PlacedEdge {
-    return {
-      subject: s,
-      predicate: e.predicate,
-      value: e.value,
-      isNode: e.isNode,
-      domain: e.domain,
-      graph:
-        this.factGraph.get(`${s}\u001f${e.predicate}\u001f${e.value}`) ?? "",
-    };
+  /** The current facts, replayed off the log — each with its scope. */
+  #placed(keep: (f: PlacedEdge) => boolean): PlacedEdge[] {
+    const live = new Map<string, PlacedEdge>();
+    for (const f of this.factLog) {
+      const key = JSON.stringify([f.s, f.predicate, f.value]);
+      if (!f.added) {
+        live.delete(key);
+        continue;
+      }
+      live.set(key, {
+        subject: f.s,
+        predicate: f.predicate,
+        value: f.value,
+        isNode: f.domain === "node",
+        domain: f.domain,
+        graph: f.graph,
+      });
+    }
+    return [...live.values()].filter(keep);
   }
 
   placedEdges(token: string): Promise<PlacedEdge[]> {
-    return Promise.resolve(
-      (this.nodeEdges.get(token) ?? []).map((e) => this.#placed(token, e)),
-    );
+    return Promise.resolve(this.#placed((f) => f.subject === token));
   }
 
   referrers(token: string): Promise<PlacedEdge[]> {
-    const out: PlacedEdge[] = [];
-    for (const [s, list] of this.nodeEdges) {
-      for (const e of list) {
-        if (e.isNode && e.value === token) out.push(this.#placed(s, e));
-      }
-    }
-    return Promise.resolve(out);
+    return Promise.resolve(this.#placed((f) => f.isNode && f.value === token));
   }
 
   quadsFrom(

@@ -135,8 +135,8 @@ export function isDeleteNotesError(
 interface Plan {
   deletion: NoteDeletion;
   ops: ChaosOp[];
-  /** One key per retracted fact, for cross-note dedupe. */
-  keys: string[];
+  /** Removes the note's tag-mirror rows; absent without a tag store. */
+  untag?: () => Promise<unknown>;
 }
 
 type Dial = ChaosDial & Required<Pick<ChaosDial, "placedEdges" | "referrers">>;
@@ -148,10 +148,6 @@ function bump(counts: Record<string, number>, predicate: string): void {
 function targetOf(e: PlacedEdge): EdgeTarget {
   if (e.domain === "blob") return { toBlob: e.value };
   return e.isNode ? { toNode: e.value } : { toLiteral: e.value };
-}
-
-function factKey(e: PlacedEdge): string {
-  return [e.subject, e.predicate, e.domain, e.value, e.graph].join("\u001f");
 }
 
 const semantic = (edges: PlacedEdge[]): PlacedEdge[] =>
@@ -226,7 +222,7 @@ async function plan(
   const out = semantic(all);
   if (out.length === 0) {
     deletion.status = "not_found";
-    return { deletion, ops: [], keys: [] };
+    return { deletion, ops: [] };
   }
   const refusal = await guard(dial, id, out, all);
   if (refusal !== null) return refusal;
@@ -288,7 +284,6 @@ async function plan(
     ops: retract.map((e) =>
       opRemove(e.subject, e.predicate, targetOf(e), e.graph || undefined),
     ),
-    keys: retract.map(factKey),
   };
 }
 
@@ -382,11 +377,14 @@ export async function deleteNotes(
       refused,
     };
   }
-  for (const p of plans) {
-    if (p.deletion.status === "not_found" || tagStore === undefined) continue;
-    p.deletion.tags = (await tagStore.byNode(p.deletion.node_id)).map(
-      (r) => r.tag,
-    );
+  if (tagStore !== undefined) {
+    for (const p of plans) {
+      if (p.deletion.status === "not_found") continue;
+      const id = p.deletion.node_id;
+      const tags = (await tagStore.byNode(id)).map((r) => r.tag);
+      p.deletion.tags = tags;
+      p.untag = () => Promise.all(tags.map((t) => tagStore.remove(id, t)));
+    }
   }
   if (dryRun) {
     const notes = plans.map((p) => p.deletion);
@@ -400,11 +398,7 @@ export async function deleteNotes(
   const landed: NoteDeletion[] = [];
   for (const p of plans) {
     const deletion = p.deletion;
-    if (deletion.status === "not_found") {
-      landed.push(deletion);
-      continue;
-    }
-    const ops = p.ops.filter((_, i) => !done.has(p.keys[i] ?? ""));
+    const ops = p.ops.filter((op) => !done.has(JSON.stringify(op)));
     if (ops.length > 0) {
       const res = await dial.admit(ops, scope);
       if (!res.admitted) {
@@ -417,13 +411,9 @@ export async function deleteNotes(
       }
       if (res.tx !== undefined) deletion.tx = res.tx;
     }
-    for (const k of p.keys) done.add(k);
-    if (tagStore !== undefined) {
-      for (const tag of deletion.tags) {
-        await tagStore.remove(deletion.node_id, tag);
-      }
-    }
-    deletion.status = "deleted";
+    for (const op of p.ops) done.add(JSON.stringify(op));
+    await p.untag?.();
+    if (deletion.status !== "not_found") deletion.status = "deleted";
     landed.push(deletion);
   }
   return { dry_run: false, notes: landed, totals: totalsOf(landed) };

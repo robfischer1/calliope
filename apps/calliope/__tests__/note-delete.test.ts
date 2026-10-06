@@ -539,3 +539,284 @@ describe("deleteNotes — arguments and failure paths", () => {
     expect((await r.dial.edges(a)).length).toBeGreaterThan(0);
   });
 });
+
+describe("delete_note — the edges of each rule", () => {
+  it("only a literal hasType=Note makes a note, with the exact refusal", async () => {
+    const r = await rig();
+    const nodeTyped = await mint(r.dial, "Thing");
+    await edge(r.dial, nodeTyped, "hasType", { toNode: "Note" });
+    const wrongPredicate = await mint(r.dial, "Thing");
+    await edge(r.dial, wrongPredicate, "kindOf", { toLiteral: "Note" });
+    for (const id of [nodeTyped, wrongPredicate]) {
+      const { out } = await del(r.mcp, [id], false);
+      expect(out.refused).toEqual([
+        {
+          node_id: id,
+          error: "not_a_note",
+          detail: `${id} carries no hasType=Note edge`,
+        },
+      ]);
+    }
+  });
+
+  it("only a literal isArchived=true protects, with the exact refusal", async () => {
+    const r = await rig();
+    const archived = await note(r.mcp, "Archived");
+    await edge(r.dial, archived, "isArchived", { toLiteral: "true" });
+    const { out } = await del(r.mcp, [archived], false);
+    expect(out.refused).toEqual([
+      {
+        node_id: archived,
+        error: "protected",
+        detail: `${archived} is in the frozen archive (isArchived=true)`,
+      },
+    ]);
+    const nodeValued = await note(r.mcp, "NodeValued");
+    await edge(r.dial, nodeValued, "isArchived", { toNode: "true" });
+    const otherPredicate = await note(r.mcp, "Other");
+    await edge(r.dial, otherPredicate, "done", { toLiteral: "true" });
+    const ok = await del(r.mcp, [nodeValued, otherPredicate], false);
+    expect(ok.isError).toBe(false);
+  });
+
+  it("asks the dictionary for owners only when the note has one", async () => {
+    const r = await rig();
+    const a = await note(r.mcp, "A");
+    let asked = 0;
+    const resolve = r.dial.resolveNodes.bind(r.dial);
+    r.dial.resolveNodes = (tokens) => {
+      asked += 1;
+      return resolve(tokens);
+    };
+    await del(r.mcp, [a]);
+    expect(asked).toBe(0);
+    await edge(r.dial, a, "ownedBy", { toNode: "0f".repeat(32) });
+    await del(r.mcp, [a]);
+    expect(asked).toBe(1);
+  });
+
+  it("names every stray child in the has_children refusal", async () => {
+    const r = await rig();
+    const parent = await note(r.mcp, "Parent");
+    const c1 = await note(r.mcp, "C1", { parent });
+    const c2 = await note(r.mcp, "C2", { parent });
+    const { out } = await del(r.mcp, [parent, c1], false);
+    expect(out.refused).toEqual([
+      {
+        node_id: parent,
+        error: "has_children",
+        detail: `${parent} is the parent of 1 note(s) outside this call (${c2})`,
+      },
+    ]);
+    const both = await del(r.mcp, [parent], false);
+    expect(both.out.refused?.[0]?.detail).toBe(
+      `${parent} is the parent of 2 note(s) outside this call (${c1}, ${c2})`,
+    );
+  });
+
+  it("an edge onto a slot from a non-container goes with the slot", async () => {
+    const r = await rig();
+    const a = await note(r.mcp, "A");
+    await addBlock(r.mcp, a, "commented");
+    const [s] = await blocks(r.mcp, a);
+    if (s === undefined) throw new Error("no block");
+    const comment = await mint(r.dial, "Comment");
+    await edge(r.dial, comment, "annotates", { toNode: s.slot });
+    // Blob-domain and literal facts on the slot that are NOT its content.
+    await r.dial.admit(
+      [
+        opAdd(s.slot, "attachment", { toBlob: "999" }),
+        opAdd(s.slot, "tree_content", { toLiteral: "77" }),
+      ],
+      SCOPE,
+    );
+    const { out } = await del(r.mcp, [a], false);
+    expect(out.notes[0]).toMatchObject({
+      blocks: 1,
+      shared_blocks: 0,
+      blobs: [s.blobId],
+    });
+    expect(await r.dial.edges(comment)).toEqual([]);
+    expect(await r.dial.edges(s.slot)).toEqual([]);
+    const ops = r.dial.admits.at(-1)?.ops ?? [];
+    expect(ops).toContainEqual(
+      expect.objectContaining({
+        from_id: s.slot,
+        predicate: "tree_content",
+        to_blob: s.blobId,
+        to_literal: null,
+        to_node: null,
+      }),
+    );
+    expect(ops).toContainEqual(
+      expect.objectContaining({
+        from_id: comment,
+        predicate: "annotates",
+        to_node: s.slot,
+      }),
+    );
+  });
+
+  it("reports blob ids in numeric order", async () => {
+    const r = await rig();
+    for (let i = 0; i < 8; i += 1) await r.blobs.mint(`burn ${String(i)}`);
+    const other = await note(r.mcp, "Other");
+    await addBlock(r.mcp, other, "nine"); // blob 9
+    const a = await note(r.mcp, "A");
+    await addBlock(r.mcp, a, "ten"); // blob 10, first slot
+    await addBlock(r.mcp, a, "nine"); // blob 9, second slot
+    const { out } = await del(r.mcp, [a]);
+    expect(out.notes[0]?.blobs).toEqual(["9", "10"]);
+  });
+
+  it("totals sum across the batch and a shared fact is retracted once", async () => {
+    const r = await rig();
+    const parent = await note(r.mcp, "Parent");
+    const child = await note(r.mcp, "Child", { parent });
+    const keeper = await note(r.mcp, "Keeper");
+    for (const n of [parent, child]) {
+      await addBlock(r.mcp, n, `shared of ${n}`);
+      const [s] = await blocks(r.mcp, n);
+      await edge(r.dial, keeper, "tree_member", { toNode: s?.slot ?? "" });
+    }
+    const before = r.dial.admits.length;
+    const { out } = await del(r.mcp, [parent, child], false);
+    expect(out.totals).toEqual({
+      deleted: 2,
+      not_found: 0,
+      edges_out: {
+        hasName: 2,
+        hasType: 2,
+        parent: 2,
+        tree_member: 2,
+      },
+      edges_in: { parent: 1 },
+      blocks: 0,
+      shared_blocks: 2,
+      blobs_referenced: 0,
+      blobs_deleted: 0,
+      tag_rows: 0,
+    });
+    const parentOps = r.dial.admits
+      .slice(before)
+      .flatMap((a) => a.ops)
+      .filter((o) => o.from_id === child && o.predicate === "parent");
+    expect(parentOps).toHaveLength(1);
+  });
+
+  it("a not_found note reports nothing, even with a stale mirror row", async () => {
+    const r = await rig();
+    const a = await note(r.mcp, "A");
+    await del(r.mcp, [a], false);
+    await r.tags.upsert(a, "#stale", "inline");
+    const { out } = await del(r.mcp, [a], false);
+    expect(out.notes).toEqual([
+      {
+        node_id: a,
+        status: "not_found",
+        edges_out: {},
+        edges_in: {},
+        blocks: 0,
+        shared_blocks: 0,
+        blobs: [],
+        tags: [],
+      },
+    ]);
+  });
+
+  it("a gate that names no transaction leaves tx off the report", async () => {
+    const r = await rig();
+    const a = await note(r.mcp, "A");
+    const admit = r.dial.admit.bind(r.dial);
+    r.dial.admit = async (ops, scope) => {
+      const res = await admit(ops, scope);
+      return { admitted: res.admitted, minted: res.minted, violations: [] };
+    };
+    const { out } = await del(r.mcp, [a], false);
+    expect(out.notes[0]?.status).toBe("deleted");
+    expect("tx" in (out.notes[0] ?? {})).toBe(false);
+  });
+});
+
+describe("delete_note's published surface", () => {
+  it("carries its title, description, annotations and schema", async () => {
+    const { mcp } = await rig();
+    const { tools } = await mcp.listTools();
+    const tool = tools.find((t) => t.name === "delete_note");
+    expect(tool?.title).toBe("Delete notes (retract every current fact)");
+    expect(tool?.description).toBe(
+      "Take Note nodes off the notes graph: every current outbound and " +
+        "inbound fact, each block slot's facts, and the tag-mirror rows. " +
+        "History keeps the retracted facts; blobs are left to the census. " +
+        "dry_run defaults to TRUE and reports what would go (edges by " +
+        "predicate, blocks, blobs, tags). Takes up to 100 ids. Refuses the " +
+        "whole call, writing nothing, on a non-Note, a protected note " +
+        "(archived, or claimed by another star) or a parent of a note " +
+        "outside the call. A note already gone answers not_found.",
+    );
+    expect(tool?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    });
+    const props = tool?.inputSchema.properties as Record<
+      string,
+      {
+        description?: string;
+        minItems?: number;
+        maxItems?: number;
+        items?: { pattern?: string };
+      }
+    >;
+    expect(props.ids).toMatchObject({
+      description: "Note node tokens.",
+      minItems: 1,
+      maxItems: 100,
+      items: { pattern: "^[0-9a-f]{64}$" },
+    });
+    expect(props.dry_run?.description).toBe("Default true. false deletes.");
+    expect(tool?.inputSchema.required).toEqual(["ids"]);
+  });
+
+  it("refuses malformed ids at the schema", async () => {
+    const { mcp } = await rig();
+    for (const ids of [
+      [],
+      ["XY".repeat(32)],
+      [`${"a".repeat(64)}0`],
+      [`0${"a".repeat(64)}`],
+    ]) {
+      const res = await mcp
+        .callTool({ name: "delete_note", arguments: { ids } })
+        .then(
+          (x) => x.isError === true,
+          () => true,
+        );
+      expect(res, JSON.stringify(ids)).toBe(true);
+    }
+  });
+
+  it("answers in text: the dry run, the real run and a refusal", async () => {
+    const r = await rig();
+    const a = await note(r.mcp, "A", { tags: ["t"] });
+    await addBlock(r.mcp, a, "x");
+    const text = async (args: Record<string, unknown>) => {
+      const res = await r.mcp.callTool({
+        name: "delete_note",
+        arguments: args,
+      });
+      return (res.content as { text: string }[]).map((c) => c.text);
+    };
+    expect(await text({ ids: [a] })).toEqual([
+      "would delete 1 note(s), 0 not found, 1 block(s), 1 tag row(s).",
+    ]);
+    expect(await text({ ids: [a], dry_run: false })).toEqual([
+      "deleted 1 note(s), 0 not found, 1 block(s), 1 tag row(s).",
+    ]);
+    const other = await mint(r.dial, "Thing");
+    await edge(r.dial, other, "x", { toLiteral: "y" });
+    expect(await text({ ids: [other] })).toEqual([
+      "refused: 1 of 1 id(s) refused; nothing was written",
+    ]);
+  });
+});

@@ -19,6 +19,7 @@ const G = "cc".repeat(32);
 
 interface Call {
   url: string;
+  id: number;
   name: string;
   args: Record<string, unknown>;
 }
@@ -32,10 +33,12 @@ beforeEach(() => {
   reply = null;
   globalThis.fetch = ((url: string, init?: { body?: string }) => {
     const body = JSON.parse(init?.body ?? "{}") as {
+      id: number;
       params: { name: string; arguments: Record<string, unknown> };
     };
     calls.push({
       url,
+      id: body.id,
       name: body.params.name,
       args: body.params.arguments,
     });
@@ -133,6 +136,7 @@ describe("LiveChaosDial.placedEdges", () => {
     expect(calls).toEqual([
       {
         url: "http://chaos:8206/mcp",
+        id: 1,
         name: "materialize_edges",
         args: { node: NODE, full: true },
       },
@@ -176,6 +180,7 @@ describe("LiveChaosDial.referrers", () => {
     expect(calls).toEqual([
       {
         url: "http://chaos:8206/mcp",
+        id: 1,
         name: "quads_to",
         args: { objects: [NODE], full: true },
       },
