@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   bodyOwners,
   contentHashOfBody,
+  enumerateMoirae,
   sectionNodes,
   type EdgeNode,
 } from "../src/mcp/migrate.js";
@@ -72,5 +73,31 @@ describe("parity hash", () => {
 
   it("empty body hashes stably", () => {
     expect(contentHashOfBody([])).toBe(contentHashOfBody([]));
+  });
+});
+
+describe("enumerateMoirae — graph_edges as a bare array or the F17 {items} object", () => {
+  const dial = (reply: unknown) => {
+    const calls: [string, Record<string, unknown>][] = [];
+    const live = {
+      rpc: (verb: string, args: Record<string, unknown>) => {
+        calls.push([verb, args]);
+        return Promise.resolve(reply);
+      },
+    };
+    return { live: live as never, calls };
+  };
+
+  it("reads both shapes the same, asking graph_edges for moirae", async () => {
+    const bare = dial(NODES);
+    const wrapped = dial({ items: NODES });
+    expect(await enumerateMoirae(bare.live)).toEqual(NODES);
+    expect(await enumerateMoirae(wrapped.live)).toEqual(NODES);
+    expect(wrapped.calls).toEqual([["graph_edges", { graph: "moirae" }]]);
+  });
+
+  it("answers empty on a null or unrecognised reply", async () => {
+    expect(await enumerateMoirae(dial(null).live)).toEqual([]);
+    expect(await enumerateMoirae(dial({ rows: NODES }).live)).toEqual([]);
   });
 });

@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   LiveChaosDial,
+  chaosRows,
   graphToken,
   opRemove,
   placedGraph,
@@ -210,6 +211,56 @@ describe("LiveChaosDial.referrers", () => {
   it("answers empty on a non-array reply", async () => {
     reply = { rows: [] };
     expect(await live().referrers(NODE)).toEqual([]);
+  });
+});
+
+describe("chaos list reads — the bare array and the F17 {items} object", () => {
+  const TOKEN = "dd".repeat(32);
+  const QUAD = {
+    s: OTHER,
+    predicate: "related",
+    o: NODE,
+    o_domain: "node",
+    g: G,
+  };
+
+  it("chaosRows reads both shapes and nothing else", () => {
+    expect(chaosRows([1])).toEqual([1]);
+    expect(chaosRows({ items: [1] })).toEqual([1]);
+    expect(chaosRows({ items: [] })).toEqual([]);
+    expect(chaosRows({ items: [1], more: 2 })).toBeNull();
+    expect(chaosRows({ rows: [] })).toBeNull();
+    expect(chaosRows(null)).toBeNull();
+  });
+
+  it("findByValue reads a wrapped answer like a bare one", async () => {
+    reply = [TOKEN];
+    const bare = await live().findByValue("notes", "hasType", "Note");
+    reply = { items: [TOKEN] };
+    const wrapped = await live().findByValue("notes", "hasType", "Note");
+    expect(bare).toEqual([TOKEN]);
+    expect(wrapped).toEqual(bare);
+    reply = { items: [] };
+    expect(await live().findByValue("notes", "hasType", "Note")).toEqual([]);
+  });
+
+  it("findByValue keeps only tokens, and answers empty on any other reply", async () => {
+    reply = { items: [TOKEN, "not-a-token"] };
+    expect(await live().findByValue("notes", "hasType", "Note")).toEqual([
+      TOKEN,
+    ]);
+    reply = { rows: [TOKEN] };
+    expect(await live().findByValue("notes", "hasType", "Note")).toEqual([]);
+    reply = null;
+    expect(await live().findByValue("notes", "hasType", "Note")).toEqual([]);
+  });
+
+  it("referrers reads a wrapped quads_to answer like a bare one", async () => {
+    reply = [QUAD];
+    const bare = await live().referrers(NODE);
+    reply = { items: [QUAD] };
+    expect(await live().referrers(NODE)).toEqual(bare);
+    expect(bare).toHaveLength(1);
   });
 });
 

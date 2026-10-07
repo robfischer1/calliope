@@ -41,6 +41,7 @@ import {
 } from "../urania-client.js";
 import type { UraniaOp } from "../urania-client.js";
 import { PgBodyClient } from "../pg-client.js";
+import { chaosRows } from "../chaos-client.js";
 import { LiveUraniaCapture } from "./live-capture.js";
 
 const MOIRAE = "moirae";
@@ -68,10 +69,8 @@ async function enumerateMoirae(live: LiveUraniaCapture): Promise<EdgeNode[]> {
       rpc(verb: string, args: Record<string, unknown>): Promise<unknown>;
     }
   ).rpc.bind(live);
-  const rows = (await rpc("graph_edges", {
-    graph: MOIRAE,
-  })) as EdgeNode[] | null;
-  return rows ?? [];
+  const rows = chaosRows(await rpc("graph_edges", { graph: MOIRAE }));
+  return (rows ?? []) as EdgeNode[];
 }
 
 function bodyOwners(nodes: readonly EdgeNode[]): string[] {
@@ -253,5 +252,5 @@ if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
   });
 }
 
-export { contentHashOfBody, bodyOwners, sectionNodes };
+export { contentHashOfBody, bodyOwners, sectionNodes, enumerateMoirae };
 export type { EdgeNode };
