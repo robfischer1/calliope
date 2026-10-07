@@ -252,5 +252,5 @@ if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
   });
 }
 
-export { contentHashOfBody, bodyOwners, sectionNodes };
+export { contentHashOfBody, bodyOwners, sectionNodes, enumerateMoirae };
 export type { EdgeNode };

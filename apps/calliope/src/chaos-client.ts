@@ -57,11 +57,9 @@ const HEX64 = /^[0-9a-f]{64}$/;
  */
 export function chaosRows(raw: unknown): unknown[] | null {
   if (Array.isArray(raw)) return raw as unknown[];
-  if (raw !== null && typeof raw === "object") {
-    const items = (raw as { items?: unknown }).items;
-    if (Object.keys(raw).length === 1 && Array.isArray(items)) {
-      return items as unknown[];
-    }
+  const items = (raw as { items?: unknown } | null)?.items;
+  if (Array.isArray(items) && Object.keys(raw as object).length === 1) {
+    return items as unknown[];
   }
   return null;
 }

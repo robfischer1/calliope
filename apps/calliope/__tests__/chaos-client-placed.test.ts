@@ -244,6 +244,17 @@ describe("chaos list reads — the bare array and the F17 {items} object", () =>
     expect(await live().findByValue("notes", "hasType", "Note")).toEqual([]);
   });
 
+  it("findByValue keeps only tokens, and answers empty on any other reply", async () => {
+    reply = { items: [TOKEN, "not-a-token"] };
+    expect(await live().findByValue("notes", "hasType", "Note")).toEqual([
+      TOKEN,
+    ]);
+    reply = { rows: [TOKEN] };
+    expect(await live().findByValue("notes", "hasType", "Note")).toEqual([]);
+    reply = null;
+    expect(await live().findByValue("notes", "hasType", "Note")).toEqual([]);
+  });
+
   it("referrers reads a wrapped quads_to answer like a bare one", async () => {
     reply = [QUAD];
     const bare = await live().referrers(NODE);
