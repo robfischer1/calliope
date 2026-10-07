@@ -21,10 +21,16 @@ import { FixtureTagStore } from "../src/tag-store.js";
 
 class RecordingPublisher implements NotePublisher {
   published: NoteProjection[] = [];
+  retracted: string[] = [];
   refuse = false;
   publish(projection: NoteProjection): Promise<boolean> {
     if (this.refuse) return Promise.resolve(false);
     this.published.push(projection);
+    return Promise.resolve(true);
+  }
+  retract(node: string): Promise<boolean> {
+    if (this.refuse) return Promise.resolve(false);
+    this.retracted.push(node);
     return Promise.resolve(true);
   }
 }
@@ -194,5 +200,104 @@ describe("the write verbs publish the note (pass 4)", () => {
     await Promise.all([server.connect(st), mcp.connect(ct)]);
     const node = await dissolve(mcp);
     expect(node).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("the delete verbs keep the index in step (eros)", () => {
+  async function call(
+    mcp: Client,
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const result = await mcp.callTool({ name, arguments: args });
+    expect(result.isError).toBeFalsy();
+    return result.structuredContent as Record<string, unknown>;
+  }
+
+  it("suppress retracts the note; a dry run retracts nothing", async () => {
+    const { mcp, publisher } = await rig();
+    const node = await dissolve(mcp);
+    await call(mcp, "delete_note", { ids: [node] });
+    expect(publisher.retracted).toEqual([]);
+    await call(mcp, "delete_note", { ids: [node], dry_run: false });
+    expect(publisher.retracted).toEqual([node]);
+    expect(publisher.published).toHaveLength(1);
+  });
+
+  it("an already-suppressed note is retracted again (heals a stale row)", async () => {
+    const { mcp, publisher } = await rig();
+    const node = await dissolve(mcp);
+    await call(mcp, "delete_note", { ids: [node], dry_run: false });
+    const again = await call(mcp, "delete_note", {
+      ids: [node],
+      dry_run: false,
+    });
+    expect((again.notes as { status: string }[]).map((n) => n.status)).toEqual([
+      "already_suppressed",
+    ]);
+    expect(publisher.retracted).toEqual([node, node]);
+  });
+
+  it("restore publishes the note back, with its body", async () => {
+    const { mcp, publisher } = await rig();
+    const node = await dissolve(mcp);
+    await call(mcp, "delete_note", { ids: [node], dry_run: false });
+    await call(mcp, "restore_note", { ids: [node] });
+    expect(publisher.published).toHaveLength(2);
+    expect(publisher.published[1]?.node).toBe(node);
+    expect(publisher.published[1]?.body).toBe("# Idea\n\nfirst thought #alpha");
+    // A note that was never suppressed is not published by restore.
+    await call(mcp, "restore_note", { ids: [node] });
+    expect(publisher.published).toHaveLength(2);
+  });
+
+  it("purge retracts the note; a dry purge retracts nothing", async () => {
+    const { mcp, publisher } = await rig();
+    const node = await dissolve(mcp);
+    await call(mcp, "delete_note", { ids: [node], purge: true });
+    expect(publisher.retracted).toEqual([]);
+    await call(mcp, "delete_note", {
+      ids: [node],
+      purge: true,
+      dry_run: false,
+    });
+    expect(publisher.retracted).toEqual([node]);
+    // Purged: no facts left, so a second purge answers not_found and
+    // retracts again — idempotent at the index.
+    await call(mcp, "delete_note", {
+      ids: [node],
+      purge: true,
+      dry_run: false,
+    });
+    expect(publisher.retracted).toEqual([node, node]);
+  });
+
+  it("a write to a suppressed note retracts instead of publishing", async () => {
+    const { mcp, publisher } = await rig();
+    const node = await dissolve(mcp);
+    await call(mcp, "delete_note", { ids: [node], dry_run: false });
+    const written = await call(mcp, "write_container", {
+      container: node,
+      ops: [{ op: "add", text: "a later thought", position: "z0" }],
+    });
+    expect(written.noop).toBe(false);
+    expect(publisher.published).toHaveLength(1);
+    expect(publisher.retracted).toEqual([node, node]);
+  });
+
+  it("without a publisher the delete verbs still answer", async () => {
+    const dial = new FixtureChaosDial();
+    const server = createServer(new FixtureBodyClient(), {
+      chaos: { dial, scope: "notes" },
+      containers: { blobs: new FixtureBlobStore(), dial },
+      tags: new FixtureTagStore(),
+    });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const mcp = new Client({ name: "test", version: "0" });
+    await Promise.all([server.connect(st), mcp.connect(ct)]);
+    const node = await dissolve(mcp);
+    await call(mcp, "delete_note", { ids: [node], dry_run: false });
+    const restored = await call(mcp, "restore_note", { ids: [node] });
+    expect((restored.totals as { restored: number }).restored).toBe(1);
   });
 });

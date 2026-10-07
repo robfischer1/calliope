@@ -25,6 +25,7 @@ import {
   makeConsciousnessPublisher,
   makeConsciousnessTransport,
   noteEvent,
+  noteKey,
   recordSourceId,
   resetConsciousnessMetrics,
   styxRef,
@@ -212,9 +213,49 @@ describe("ConsciousnessPublisher", () => {
     );
     expect(consciousnessMetrics()).toEqual({
       calliope_consciousness_published_total: 2,
+      calliope_consciousness_retracted_total: 0,
       calliope_consciousness_publish_failed_total: 0,
       calliope_consciousness_publisher_wired: 1,
     });
+  });
+
+  it("retracts with a tombstone on the row's own compaction key", async () => {
+    const transport = new FakeTransport();
+    const publisher = new ConsciousnessPublisher(transport, { now: () => NOW });
+    expect(await publisher.retract(NODE)).toBe(true);
+    expect(transport.produced).toEqual([
+      {
+        topic: CONSCIOUSNESS_TOPIC,
+        key: "calliope_notes:3541846425442797356",
+        value: null,
+      },
+    ]);
+    // The key a publish writes is the key a tombstone forgets — eros reaps
+    // by it (TombstoneIdentity), so drift here would orphan the row.
+    expect(noteKey(NODE)).toBe(wireKey(noteEvent(full, NOW)));
+    expect(consciousnessMetrics()).toEqual({
+      calliope_consciousness_published_total: 0,
+      calliope_consciousness_retracted_total: 1,
+      calliope_consciousness_publish_failed_total: 0,
+      calliope_consciousness_publisher_wired: 1,
+    });
+  });
+
+  it("a refused retraction is counted, never thrown", async () => {
+    const stderr = spyOnStderr();
+    try {
+      const transport = new FakeTransport();
+      transport.fail = true;
+      const publisher = new ConsciousnessPublisher(transport);
+      expect(await publisher.retract(NODE)).toBe(false);
+      expect(await publisher.retract("not-a-token")).toBe(false);
+      expect(consciousnessMetrics()).toMatchObject({
+        calliope_consciousness_retracted_total: 0,
+        calliope_consciousness_publish_failed_total: 2,
+      });
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   it("defaults `now` to the wall clock when the caller supplies none", async () => {

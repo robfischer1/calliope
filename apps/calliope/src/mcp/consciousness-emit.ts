@@ -63,6 +63,7 @@ import {
   createKafkaTransport,
   produce,
   record,
+  tombstone,
   TOPIC_CONSCIOUSNESS,
   wireKey as contractWireKey,
   type ConsciousnessEvent,
@@ -110,9 +111,14 @@ export interface NoteProjection {
   schemaType?: string;
 }
 
-/** What the server hangs off its write verbs. */
+/** What the server hangs off its write verbs. `retract` is the other half:
+ *  a suppressed or purged note leaves the index by a TOMBSTONE on its row's
+ *  compaction key, which eros's consumer reaps (`TombstoneIdentity`), and a
+ *  restore brings it back by an ordinary `publish`. Without it the index kept
+ *  serving every note `delete_note` hid. */
 export interface NotePublisher {
   publish(projection: NoteProjection): Promise<boolean>;
+  retract(node: string): Promise<boolean>;
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -187,6 +193,13 @@ export function wireKey(event: ConsciousnessEvent): string | null {
   return contractWireKey(CONSCIOUSNESS_TOPIC, event);
 }
 
+/** The compaction key of *node*'s row — `calliope_notes:<source_id>`, the
+ *  same key {@link wireKey} answers for any event about that note, so a
+ *  tombstone on it forgets exactly the row a publish wrote. */
+export function noteKey(node: string): string {
+  return `${NOTES_SOURCE_TABLE}:${String(recordSourceId(styxRef(node)))}`;
+}
+
 /** The JSON value `produce`/`record` would put on the wire for `event` —
  *  schema defaults filled, validated, `source_id` as a raw integer literal.
  *  Exposed for tests that want the bytes without a transport. `null` only
@@ -201,6 +214,7 @@ export function wireValue(event: ConsciousnessEvent): string | null {
 // ---------------------------------------------------------------------------
 
 let published = 0;
+let retracted = 0;
 let failed = 0;
 let wired = 0;
 
@@ -208,6 +222,7 @@ let wired = 0;
 export function consciousnessMetrics(): Record<string, number> {
   return {
     calliope_consciousness_published_total: published,
+    calliope_consciousness_retracted_total: retracted,
     calliope_consciousness_publish_failed_total: failed,
     calliope_consciousness_publisher_wired: wired,
   };
@@ -216,6 +231,7 @@ export function consciousnessMetrics(): Record<string, number> {
 /** Zero the counters (tests). */
 export function resetConsciousnessMetrics(): void {
   published = 0;
+  retracted = 0;
   failed = 0;
   wired = 0;
 }
@@ -265,6 +281,21 @@ export class ConsciousnessPublisher implements NotePublisher {
       return false;
     }
     published += 1;
+    return true;
+  }
+
+  /** Tombstone one note's row; never throws. Returns whether the broker
+   *  took it. A tombstone for a row eros never held reaps nothing, so this
+   *  is safe to repeat (an `already_suppressed` note is retracted again,
+   *  which heals a row a pre-tombstone suppress left behind). */
+  async retract(node: string): Promise<boolean> {
+    try {
+      await tombstone(this.#transport, CONSCIOUSNESS_TOPIC, noteKey(node));
+    } catch (err) {
+      this.#fail(node, err);
+      return false;
+    }
+    retracted += 1;
     return true;
   }
 
