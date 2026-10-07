@@ -1155,18 +1155,22 @@ export class FixtureChaosDial implements ChaosDial {
     return Promise.resolve([...txs.values()].sort((a, b) => a.tx - b.tx));
   }
 
+  /** The scoped LITERAL point lookup, as the door answers it: only literal
+   *  facts asserted in `scope` (by name or by token) match. */
   findByValue(
-    _scope: string,
+    scope: string,
     predicate: string,
     value: string,
   ): Promise<string[]> {
-    const out: string[] = [];
-    for (const [token, list] of this.nodeEdges) {
-      if (list.some((e) => e.predicate === predicate && e.value === value)) {
-        out.push(token);
-      }
-    }
-    return Promise.resolve(out.sort());
+    const scopes = new Set([scopeHash(scope), graphToken(scope)]);
+    const hits = this.#placed(
+      (f) =>
+        !f.isNode &&
+        f.predicate === predicate &&
+        f.value === value &&
+        scopes.has(f.graph),
+    ).map((f) => f.subject);
+    return Promise.resolve([...new Set(hits)].sort());
   }
 
   /** Test helper: pre-register a node as if it existed on the dictionary. */

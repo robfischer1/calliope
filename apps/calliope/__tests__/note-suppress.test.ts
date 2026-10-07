@@ -597,6 +597,51 @@ describe("the marker", () => {
   });
 });
 
+describe("a door whose placed edges carry no graph (the live shape)", () => {
+  it("suppress, re-suppress and restore still decide by the scoped lookup", async () => {
+    const r = await rig();
+    const a = await note(r.mcp, "A");
+    const full = r.dial;
+    // MEASURED 2026-10-07: materialize_edges full answered graph "" for
+    // every fact on a live note.
+    const live: ChaosDial = {
+      admit: (o, s) => full.admit(o, s),
+      findByName: (k, l) => full.findByName(k, l),
+      resolveNodes: (t) => full.resolveNodes(t),
+      edges: (t) => full.edges(t),
+      registerGraph: (n) => full.registerGraph(n),
+      quadsFrom: (s, at, p, g) => full.quadsFrom(s, at, p, g),
+      resolveScalars: (h) => full.resolveScalars(h),
+      history: (s, f, g) => full.history(s, f, g),
+      heldBlobs: (g) => full.heldBlobs(g),
+      findByValue: (s, p, v) => full.findByValue(s, p, v),
+      placedEdges: async (t) =>
+        (await full.placedEdges(t)).map((e) => ({ ...e, graph: "" })),
+      referrers: async (t) =>
+        (await full.referrers(t)).map((e) => ({ ...e, graph: "" })),
+    };
+    expect(
+      await suppressNotes(live, SCOPE, { ids: [a], dry_run: false }),
+    ).toMatchObject({ notes: [{ node_id: a, status: "suppressed" }] });
+    expect(
+      await suppressNotes(live, SCOPE, { ids: [a], dry_run: false }),
+    ).toMatchObject({ notes: [{ node_id: a, status: "already_suppressed" }] });
+    expect(await restoreNotes(live, SCOPE, { ids: [a] })).toMatchObject({
+      notes: [{ node_id: a, status: "restored" }],
+    });
+    expect(await suppressedNotes(full, SCOPE)).toEqual(new Set());
+    // The retraction is pinned to the notes scope, not to the empty graph.
+    expect(full.admits.at(-1)?.ops).toEqual([
+      opRemove(
+        a,
+        SUPPRESSED,
+        { toLiteral: SUPPRESSED_VALUE },
+        scopeHash(SCOPE),
+      ),
+    ]);
+  });
+});
+
 describe("suppressNotes / restoreNotes — arguments and failure paths", () => {
   const ID = "ab".repeat(32);
 
