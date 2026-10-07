@@ -49,6 +49,23 @@ const TIMEOUT_MS = 30_000;
 const HEX64 = /^[0-9a-f]{64}$/;
 
 /** Coerce an unknown wire field to string (typeof-narrowed, never [object]). */
+/**
+ * The rows of a chaos list read. chaos answered a bare array until stellar-core
+ * F17 made every MCP answer an object-rooted one (`{items: [...]}`); a reader
+ * takes both, so it survives either side of the star's rollout. Null when the
+ * reply is neither (an error body, a scalar) — the caller's own empty answer.
+ */
+export function chaosRows(raw: unknown): unknown[] | null {
+  if (Array.isArray(raw)) return raw as unknown[];
+  if (raw !== null && typeof raw === "object") {
+    const items = (raw as { items?: unknown }).items;
+    if (Object.keys(raw).length === 1 && Array.isArray(items)) {
+      return items as unknown[];
+    }
+  }
+  return null;
+}
+
 function asStr(v: unknown): string {
   if (typeof v === "string") return v;
   if (typeof v === "number" || typeof v === "boolean") return String(v);
@@ -598,10 +615,11 @@ export class LiveChaosDial implements ChaosDial {
       predicate,
       value,
     });
-    if (!Array.isArray(raw)) {
+    const rows = chaosRows(raw);
+    if (rows === null) {
       return [];
     }
-    return raw.map(asStr).filter((t) => HEX64.test(t));
+    return rows.map(asStr).filter((t) => HEX64.test(t));
   }
 
   async edges(token: string): Promise<NodeEdge[]> {
@@ -664,9 +682,10 @@ export class LiveChaosDial implements ChaosDial {
       objects: [token],
       full: true,
     });
-    if (!Array.isArray(raw)) return [];
+    const rows = chaosRows(raw);
+    if (rows === null) return [];
     const out: PlacedEdge[] = [];
-    for (const row of raw as Record<string, unknown>[]) {
+    for (const row of rows as Record<string, unknown>[]) {
       if (row.o_domain !== "node" || asStr(row.o) !== token) continue;
       out.push({
         subject: asStr(row.s),
