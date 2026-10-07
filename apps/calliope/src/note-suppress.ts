@@ -15,9 +15,17 @@
  * and the value, scoped to the notes graph, so "hidden but kept" reads the
  * same across the graph. It is NOT `isArchived`: that is the phdb
  * migration's protection predicate, owned by another writer, and an
- * archived note is one delete_note refuses outright. Because the marker is
- * scoped, a node's `suppressed` fact in ANY other graph (a buried memory)
- * is never read as a suppressed note, and restore never retracts it.
+ * archived note is one delete_note refuses outright.
+ *
+ * WHETHER A NOTE IS SUPPRESSED is answered by the scoped index lookup
+ * ({@link suppressedNotes}: `find_by_value(scope, suppressed, true)`), the
+ * same read every listing filters by — never by the `graph` a placed edge
+ * reports. MEASURED 2026-10-07: chaos's `materialize_edges full` answered
+ * `graph: ""` for every fact on a live note, so a check comparing that
+ * field to the notes scope read a just-suppressed note as not_suppressed
+ * and restore could not clear it. A node's `suppressed` fact in any other
+ * graph (a buried memory) is outside the lookup, so it is never read as a
+ * suppressed note, and restore never retracts it.
  *
  * Every listing calliope serves (list_by_tag, list_tags counts, search,
  * look) drops the notes {@link suppressedNotes} answers. Reads by the
@@ -54,26 +62,6 @@ export async function suppressedNotes(
   scope: string,
 ): Promise<Set<string>> {
   return new Set(await dial.findByValue(scope, SUPPRESSED, SUPPRESSED_VALUE));
-}
-
-/** True when `edges` carry the marker asserted in `scope`. */
-function marked(
-  edges: readonly {
-    predicate: string;
-    value: string;
-    isNode: boolean;
-    graph: string;
-  }[],
-  scope: string,
-): boolean {
-  const home = graphToken(scope);
-  return edges.some(
-    (e) =>
-      e.predicate === SUPPRESSED &&
-      !e.isNode &&
-      e.value === SUPPRESSED_VALUE &&
-      e.graph === home,
-  );
 }
 
 export interface NoteSuppression {
@@ -120,6 +108,7 @@ export async function suppressNotes(
   const dryRun = input.dry_run !== false;
   const batch = new Set(input.ids);
 
+  const hidden = await suppressedNotes(dial, scope);
   const notes: NoteSuppression[] = [];
   const refused: DeleteRefusal[] = [];
   for (const id of input.ids) {
@@ -131,9 +120,7 @@ export async function suppressNotes(
     } else {
       notes.push({
         node_id: id,
-        status: marked(checked.out, scope)
-          ? "already_suppressed"
-          : "would_suppress",
+        status: hidden.has(id) ? "already_suppressed" : "would_suppress",
       });
     }
   }
@@ -208,6 +195,7 @@ export async function restoreNotes(
   if (!needsPlacedReads(dial)) return UNSUPPORTED;
 
   const home = graphToken(scope);
+  const hidden = await suppressedNotes(dial, scope);
   const notes: NoteRestore[] = [];
   const refused: DeleteRefusal[] = [];
   const ops: ChaosOp[] = [];
@@ -223,7 +211,7 @@ export async function restoreNotes(
       refused.push(refusal);
       continue;
     }
-    if (!marked(out, scope)) {
+    if (!hidden.has(id)) {
       notes.push({ node_id: id, status: "not_suppressed" });
       continue;
     }

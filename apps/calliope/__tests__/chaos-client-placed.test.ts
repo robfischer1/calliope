@@ -9,6 +9,7 @@ import {
   LiveChaosDial,
   graphToken,
   opRemove,
+  placedGraph,
   scopeHash,
 } from "../src/chaos-client.js";
 import { LocalChaosDial, toCaptureOps } from "../src/local-admit.js";
@@ -143,6 +144,17 @@ describe("LiveChaosDial.placedEdges", () => {
     ]);
   });
 
+  it("keeps an empty graph empty, so a retraction rides the batch scope", async () => {
+    reply = {
+      edges: [{ predicate: "hasName", value: "A", is_node: false, graph: "" }],
+    };
+    const [edge] = await live().placedEdges(NODE);
+    expect(edge?.graph).toBe("");
+    expect(placedGraph("")).toBe("");
+    expect(placedGraph("notes")).toBe(scopeHash("notes"));
+    expect(placedGraph(G)).toBe(G);
+  });
+
   it("answers empty on a reply without edges", async () => {
     reply = { nope: true };
     expect(await live().placedEdges(NODE)).toEqual([]);
@@ -185,6 +197,14 @@ describe("LiveChaosDial.referrers", () => {
         args: { objects: [NODE], full: true },
       },
     ]);
+  });
+
+  it("keeps an empty g empty", async () => {
+    reply = [
+      { s: OTHER, predicate: "related", o: NODE, o_domain: "node", g: "" },
+    ];
+    const [edge] = await live().referrers(NODE);
+    expect(edge?.graph).toBe("");
   });
 
   it("answers empty on a non-array reply", async () => {
