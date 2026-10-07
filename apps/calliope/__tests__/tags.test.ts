@@ -167,6 +167,22 @@ describe("TagStore.carriers", () => {
       ["#we"],
     );
   });
+
+  it("PgTagStore counts distinct tags without the excluded carriers", async () => {
+    const query = vi.fn(() =>
+      Promise.resolve({ rows: [{ tag: "#a", count: "2" }] }),
+    );
+    const store = new PgTagStore({ query } as unknown as Pool);
+    const sql =
+      "SELECT tag, COUNT(*)::text AS count FROM note_tags " +
+      "WHERE NOT (node_id = ANY($1::text[])) GROUP BY tag ORDER BY tag";
+    expect(await store.distinct(new Set(["n9"]))).toEqual([
+      { tag: "#a", count: 2 },
+    ]);
+    expect(query).toHaveBeenLastCalledWith(sql, [["n9"]]);
+    await store.distinct();
+    expect(query).toHaveBeenLastCalledWith(sql, [[]]);
+  });
 });
 
 describe("FixtureTagStore", () => {
@@ -234,6 +250,10 @@ describe("FixtureTagStore", () => {
     expect(await store.distinct()).toEqual([
       { tag: "#a", count: 1 },
       { tag: "#b", count: 1 },
+    ]);
+    // An excluded carrier is not counted; a tag only it carries is absent.
+    expect(await store.distinct(new Set(["n2"]))).toEqual([
+      { tag: "#a", count: 1 },
     ]);
   });
 });

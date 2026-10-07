@@ -23,7 +23,9 @@ export interface TagStore {
   byNode(nodeId: string): Promise<TagRow[]>;
   upsert(nodeId: string, tag: string, source: TagRow["source"]): Promise<void>;
   remove(nodeId: string, tag: string): Promise<void>;
-  distinct(): Promise<TagCount[]>;
+  /** The distinct tags with carrier counts, not counting the `exclude`d
+   *  carriers (the suppressed notes); a tag only they carry is absent. */
+  distinct(exclude?: ReadonlySet<string>): Promise<TagCount[]>;
   /** The nodes holding a mirror row for `tag`. */
   carriers(tag: string): Promise<string[]>;
 }
@@ -75,9 +77,11 @@ export class PgTagStore implements TagStore {
     );
   }
 
-  async distinct(): Promise<TagCount[]> {
+  async distinct(exclude?: ReadonlySet<string>): Promise<TagCount[]> {
     const res = await this.pool.query<{ tag: string; count: string }>(
-      "SELECT tag, COUNT(*)::text AS count FROM note_tags GROUP BY tag ORDER BY tag",
+      "SELECT tag, COUNT(*)::text AS count FROM note_tags " +
+        "WHERE NOT (node_id = ANY($1::text[])) GROUP BY tag ORDER BY tag",
+      [[...(exclude ?? [])]],
     );
     return res.rows.map((r) => ({ tag: r.tag, count: Number(r.count) }));
   }
@@ -127,9 +131,10 @@ export class FixtureTagStore implements TagStore {
     );
   }
 
-  distinct(): Promise<TagCount[]> {
+  distinct(exclude?: ReadonlySet<string>): Promise<TagCount[]> {
     const counts = new Map<string, number>();
-    for (const m of this.rows.values()) {
+    for (const [nodeId, m] of this.rows) {
+      if (exclude?.has(nodeId) === true) continue;
       for (const tag of m.keys()) {
         counts.set(tag, (counts.get(tag) ?? 0) + 1);
       }

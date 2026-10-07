@@ -40,6 +40,7 @@ import {
   normalizeTag,
 } from "../tags.js";
 import type { TagCount, TagStore } from "../tag-store.js";
+import { suppressedNotes, visible } from "../note-suppress.js";
 import type { FocusRegister } from "../focus-register.js";
 import type { BodyPointer } from "../types.js";
 
@@ -603,20 +604,32 @@ export async function sweepArchivedTags(
   return { archived: ids.length, carriers, rows, tags: [...tags].sort() };
 }
 
-/** `list_by_tag(tag)` — the graph's indexed point lookup, server-side. */
+/** `list_by_tag(tag)` — the graph's indexed point lookup, server-side,
+ *  minus the suppressed notes unless `includeSuppressed` (a tag rename must
+ *  still reach a hidden note, so its tags are right when it is restored). */
 export async function listByTag(
   dial: ChaosDial,
   scope: string,
   tag: string,
+  includeSuppressed: boolean,
 ): Promise<{ tag: string; node_ids: string[] }> {
   const norm = normalizeTag(tag);
-  const node_ids = await dial.findByValue(scope, HAS_TAG, norm);
-  return { tag: norm, node_ids };
+  const [ids, hidden] = await Promise.all([
+    dial.findByValue(scope, HAS_TAG, norm),
+    includeSuppressed
+      ? Promise.resolve(new Set<string>())
+      : suppressedNotes(dial, scope),
+  ]);
+  return { tag: norm, node_ids: visible(ids, hidden, (id) => id) };
 }
 
-/** `list_tags()` — the distinct set with counts (the mirror's enumeration). */
-export async function listTags(store: TagStore): Promise<{ tags: TagCount[] }> {
-  return { tags: await store.distinct() };
+/** `list_tags()` — the distinct set with counts (the mirror's enumeration),
+ *  not counting the `hidden` (suppressed) notes. */
+export async function listTags(
+  store: TagStore,
+  hidden?: ReadonlySet<string>,
+): Promise<{ tags: TagCount[] }> {
+  return { tags: await store.distinct(hidden) };
 }
 
 /**
@@ -762,10 +775,13 @@ async function resolvePointerAgainstBody(
 export async function look(
   client: BodyClient,
   register: FocusRegister,
+  hidden: ReadonlySet<string> = new Set(),
 ): Promise<LookResult> {
+  // A suppressed note is off every listing, the attention pointer included:
+  // a focus on it reads as no focus, and its pins drop out.
   const entry = register.current();
   const focus =
-    entry === null
+    entry === null || hidden.has(entry.pointer.node)
       ? null
       : await resolvePointerAgainstBody(
           client,
@@ -774,6 +790,7 @@ export async function look(
         );
   const pins: ResolvedPin[] = [];
   for (const pin of register.pins()) {
+    if (hidden.has(pin.pointer.node)) continue;
     const resolved = await resolvePointerAgainstBody(
       client,
       pin.pointer,

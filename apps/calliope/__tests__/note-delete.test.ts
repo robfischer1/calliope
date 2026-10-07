@@ -95,7 +95,11 @@ async function del(
 ): Promise<{ isError: boolean; out: DeleteNotesResult & DeleteNotesError }> {
   const res = await mcp.callTool({
     name: "delete_note",
-    arguments: { ids, ...(dryRun !== undefined ? { dry_run: dryRun } : {}) },
+    arguments: {
+      ids,
+      purge: true,
+      ...(dryRun !== undefined ? { dry_run: dryRun } : {}),
+    },
   });
   return {
     isError: res.isError === true,
@@ -747,16 +751,21 @@ describe("delete_note's published surface", () => {
     const { mcp } = await rig();
     const { tools } = await mcp.listTools();
     const tool = tools.find((t) => t.name === "delete_note");
-    expect(tool?.title).toBe("Delete notes (retract every current fact)");
+    expect(tool?.title).toBe("Delete notes (suppress; purge on request)");
     expect(tool?.description).toBe(
-      "Take Note nodes off the notes graph: every current outbound and " +
-        "inbound fact, each block slot's facts, and the tag-mirror rows. " +
-        "History keeps the retracted facts; blobs are left to the census. " +
-        "dry_run defaults to TRUE and reports what would go (edges by " +
-        "predicate, blocks, blobs, tags). Takes up to 100 ids. Refuses the " +
-        "whole call, writing nothing, on a non-Note, a protected note " +
+      "Take Note nodes off every listing. By default (purge=false) a " +
+        "note is SUPPRESSED: it keeps every fact and gains the literal " +
+        "suppressed=true, which hides it from list_by_tag, list_tags, " +
+        "search and look; read_container by its own id still answers, and " +
+        "restore_note undoes it. A note already suppressed answers " +
+        "already_suppressed. purge=true instead retracts every current " +
+        "outbound and inbound fact, each block slot's facts, and the " +
+        "tag-mirror rows; history keeps the retracted facts and blobs are " +
+        "left to the census. dry_run defaults to TRUE and reports what " +
+        "would change. Takes up to 100 ids. In both modes the whole call " +
+        "refuses, writing nothing, on a non-Note, a protected note " +
         "(archived, or claimed by another star) or a parent of a note " +
-        "outside the call. A note already gone answers not_found.",
+        "outside the call. A note with no current facts answers not_found.",
     );
     expect(tool?.annotations).toEqual({
       readOnlyHint: false,
@@ -778,7 +787,11 @@ describe("delete_note's published surface", () => {
       maxItems: 100,
       items: { pattern: "^[0-9a-f]{64}$" },
     });
-    expect(props.dry_run?.description).toBe("Default true. false deletes.");
+    expect(props.dry_run?.description).toBe("Default true. false writes.");
+    expect(props.purge?.description).toBe(
+      "Default false (suppress). true retracts every fact; restore " +
+        "cannot undo it.",
+    );
     expect(tool?.inputSchema.required).toEqual(["ids"]);
   });
 
@@ -811,11 +824,11 @@ describe("delete_note's published surface", () => {
       });
       return (res.content as { text: string }[]).map((c) => c.text);
     };
-    expect(await text({ ids: [a] })).toEqual([
-      "would delete 1 note(s), 0 not found, 1 block(s), 1 tag row(s).",
+    expect(await text({ ids: [a], purge: true })).toEqual([
+      "would purge 1 note(s), 0 not found, 1 block(s), 1 tag row(s).",
     ]);
-    expect(await text({ ids: [a], dry_run: false })).toEqual([
-      "deleted 1 note(s), 0 not found, 1 block(s), 1 tag row(s).",
+    expect(await text({ ids: [a], purge: true, dry_run: false })).toEqual([
+      "purged 1 note(s), 0 not found, 1 block(s), 1 tag row(s).",
     ]);
     const other = await mint(r.dial, "Thing");
     await edge(r.dial, other, "x", { toLiteral: "y" });

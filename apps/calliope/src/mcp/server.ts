@@ -35,11 +35,8 @@ import {
   writeBody,
 } from "./tools.js";
 import { dissolveContainer } from "../notes-sink.js";
-import {
-  DELETE_NOTE_MAX,
-  deleteNotes,
-  isDeleteNotesError,
-} from "../note-delete.js";
+import { registerDeleteVerbs } from "./delete-verbs.js";
+import { suppressedNotes, visible } from "../note-suppress.js";
 import {
   frontmatterOf,
   isSetPropertiesError,
@@ -145,6 +142,13 @@ export function createServer(
   // handler when the first tool lands, and the witness wraps that registration.
   if (options?.witness !== undefined)
     witnessToolCalls(server.server, options.witness);
+
+  // The suppressed notes (delete_note's default): every listing drops them.
+  // No chaos facet, no notes graph, nothing to hide.
+  const hiddenNotes = (): Promise<ReadonlySet<string>> =>
+    options?.chaos === undefined
+      ? Promise.resolve(new Set<string>())
+      : suppressedNotes(options.chaos.dial, options.chaos.scope);
 
   // Stream of Consciousness pass 4: publish the note AFTER its write landed.
   // Best-effort by construction — the publisher counts its own failures and
@@ -552,6 +556,7 @@ export function createServer(
         provider === undefined
           ? { hits: [], armsQueried: [], armsDark: ["fts", "semantic"] }
           : await provider.search(query, scope, k);
+      result.hits = visible(result.hits, await hiddenNotes(), (h) => h.id);
       const darkNote =
         result.armsDark.length > 0
           ? ` (dark: ${result.armsDark.join(", ")})`
@@ -711,7 +716,7 @@ export function createServer(
         inputSchema: {},
       },
       async () => {
-        const result = await look(client, register);
+        const result = await look(client, register, await hiddenNotes());
         return {
           content: [
             {
@@ -1162,67 +1167,7 @@ export function createServer(
       },
     );
 
-    server.registerTool(
-      "delete_note",
-      {
-        annotations: {
-          readOnlyHint: false,
-          destructiveHint: true,
-          idempotentHint: true,
-        },
-        title: "Delete notes (retract every current fact)",
-        description:
-          "Take Note nodes off the notes graph: every current outbound and " +
-          "inbound fact, each block slot's facts, and the tag-mirror rows. " +
-          "History keeps the retracted facts; blobs are left to the census. " +
-          "dry_run defaults to TRUE and reports what would go (edges by " +
-          "predicate, blocks, blobs, tags). Takes up to " +
-          `${String(DELETE_NOTE_MAX)} ids. Refuses the whole call, writing ` +
-          "nothing, on a non-Note, a protected note (archived, or claimed " +
-          "by another star) or a parent of a note outside the call. A " +
-          "note already gone answers not_found.",
-        inputSchema: {
-          ids: z
-            .array(z.string().regex(/^[0-9a-f]{64}$/))
-            .min(1)
-            .max(DELETE_NOTE_MAX)
-            .describe("Note node tokens."),
-          dry_run: z
-            .boolean()
-            .optional()
-            .describe("Default true. false deletes."),
-        },
-      },
-      async ({ ids, dry_run }) => {
-        const result = await deleteNotes(dial, scope, options.tags, {
-          ids,
-          dry_run,
-        });
-        if (isDeleteNotesError(result)) {
-          return {
-            content: [
-              { type: "text", text: `${result.error}: ${result.detail}` },
-            ],
-            structuredContent: structured(result),
-            isError: true,
-          };
-        }
-        const t = result.totals;
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                `${result.dry_run ? "would delete" : "deleted"} ` +
-                `${String(t.deleted)} note(s), ${String(t.not_found)} not ` +
-                `found, ${String(t.blocks)} block(s), ` +
-                `${String(t.tag_rows)} tag row(s).`,
-            },
-          ],
-          structuredContent: structured(result),
-        };
-      },
-    );
+    registerDeleteVerbs(server, dial, scope, options.tags);
   }
 
   if (options?.chaos !== undefined && options.tags !== undefined) {
@@ -1240,16 +1185,29 @@ export function createServer(
         description:
           "C9: the server-side tag slice — the notes-graph nodes carrying " +
           "hasTag == the (lowercase-normalized) tag, over the graph's indexed " +
-          "point lookup. Returns {tag, node_ids}.",
+          "point lookup, suppressed notes left out unless include_suppressed. " +
+          "Returns {tag, node_ids}.",
         inputSchema: {
           tag: z
             .string()
             .min(1)
             .describe("The tag (with or without the leading #)."),
+          include_suppressed: z
+            .boolean()
+            .optional()
+            .describe(
+              "Default false. true also lists suppressed notes (a tag " +
+                "rename must reach them).",
+            ),
         },
       },
-      async ({ tag }) => {
-        const result = await listByTag(dial, scope, tag);
+      async ({ tag, include_suppressed }) => {
+        const result = await listByTag(
+          dial,
+          scope,
+          tag,
+          include_suppressed === true,
+        );
         return {
           content: [
             {
@@ -1273,11 +1231,12 @@ export function createServer(
         title: "The distinct tag set",
         description:
           "C9: every tag Calliope has written, with carrier counts — the " +
-          "picker's chip source. Returns {tags: [{tag, count}]}.",
+          "picker's chip source. Suppressed notes are not counted. Returns " +
+          "{tags: [{tag, count}]}.",
         inputSchema: {},
       },
       async () => {
-        const result = await listTags(tagStore);
+        const result = await listTags(tagStore, await hiddenNotes());
         return {
           content: [
             { type: "text", text: `${String(result.tags.length)} tag(s).` },
