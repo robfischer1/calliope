@@ -6,7 +6,7 @@
  * nets to nothing publishes nothing; a publisher that refuses never fails the
  * write.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { FixtureBlobStore } from "../src/blob-store.js";
@@ -283,6 +283,57 @@ describe("the delete verbs keep the index in step (eros)", () => {
     expect(written.noop).toBe(false);
     expect(publisher.published).toHaveLength(1);
     expect(publisher.retracted).toEqual([node, node]);
+  });
+
+  it("dry runs retract nothing, whatever the ids' status", async () => {
+    const { mcp, publisher } = await rig();
+    const node = await dissolve(mcp);
+    const ghost = "cd".repeat(32);
+    await call(mcp, "delete_note", { ids: [node], dry_run: false });
+    expect(publisher.retracted).toEqual([node]);
+    // already_suppressed + not_found, dry: nothing reaches the index.
+    await call(mcp, "delete_note", { ids: [node, ghost] });
+    await call(mcp, "delete_note", { ids: [ghost], purge: true });
+    expect(publisher.retracted).toEqual([node]);
+  });
+
+  it("an id with no facts is retracted on a real suppress (heals a stale row)", async () => {
+    const { mcp, publisher } = await rig();
+    const ghost = "cd".repeat(32);
+    const out = await call(mcp, "delete_note", {
+      ids: [ghost],
+      dry_run: false,
+    });
+    expect((out.notes as { status: string }[])[0]?.status).toBe("not_found");
+    expect(publisher.retracted).toEqual([ghost]);
+  });
+
+  it("restore without a container facet publishes nothing and logs nothing", async () => {
+    const dial = new FixtureChaosDial();
+    const publisher = new RecordingPublisher();
+    const server = createServer(new FixtureBodyClient(), {
+      chaos: { dial, scope: "notes" },
+      tags: new FixtureTagStore(),
+      consciousness: publisher,
+    });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const mcp = new Client({ name: "test", version: "0" });
+    await Promise.all([server.connect(st), mcp.connect(ct)]);
+    const node = (await call(mcp, "create_note", { title: "facetless" }))
+      .node_id as string;
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      await call(mcp, "delete_note", { ids: [node], dry_run: false });
+      const restored = await call(mcp, "restore_note", { ids: [node] });
+      expect((restored.totals as { restored: number }).restored).toBe(1);
+      expect(publisher.retracted).toEqual([node]);
+      expect(publisher.published).toEqual([]);
+      expect(stderr).not.toHaveBeenCalled();
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   it("without a publisher the delete verbs still answer", async () => {
