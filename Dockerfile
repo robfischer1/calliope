@@ -15,9 +15,8 @@
 # (foundry-tools buildlane.CopiesRelease). release/ is never in the tree —
 # .gitignore refuses it.
 #
-# THE BASE is oven/bun slim plus stellar-boot (foundry/base-images/bun); its
-# ENTRYPOINT is stellar-boot, which execs this CMD — dormant until
-# CALYPSO_IDENTITY_ID is set. Renovate moves the digest.
+# THE BASE is oven/bun slim (foundry/base-images/bun); its ENTRYPOINT is empty,
+# so this CMD is PID 1. Renovate moves the digest.
 FROM registry.notusmi.com/foundry/base-images/bun:stable@sha256:4f9b16c1d9eb6659828ac4fd1a6db0e08c5d3c220530237d33c39c12c3cfc1b8
 WORKDIR /app
 # Numeric, so the host and the kubelet can resolve it without the image's

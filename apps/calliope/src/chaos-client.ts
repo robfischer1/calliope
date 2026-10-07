@@ -465,9 +465,9 @@ export class LiveChaosDial implements ChaosDial {
    * The workload identity, held for the process's whole life.
    *
    * ⚑ HELD, NEVER RE-FETCHED PER CALL — the entire point of the library it
-   * comes from. `stellar-boot` writes svid.0.pem ONCE at boot and nothing
-   * rotates it, while the SVID TTL is 24h, so a credential read off disk is a
-   * one-day fuse. `X509Source` subscribes to the agent's streaming feed and
+   * comes from. The retired stellar-boot wrote svid.0.pem ONCE at boot and
+   * nothing rotated it, while the SVID TTL is 24h, so a credential read off disk
+   * is a one-day fuse. `X509Source` subscribes to the agent's streaming feed and
    * swaps the credential underneath us; `tlsFetchOptions` reads `.current()`
    * per request, so a rotation is picked up with no restart and no caller
    * doing anything.
