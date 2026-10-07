@@ -290,9 +290,17 @@ export interface CreateNoteResult {
 
 /** `create_note` structured miss — surfaced, never thrown. */
 export interface CreateNoteError {
-  error: "bad_title" | "bad_parent" | "bad_tags" | "admit_refused";
+  error:
+    | "bad_title"
+    | "bad_parent"
+    | "bad_tags"
+    | "admit_refused"
+    | "suppressed_exists";
   detail: string;
   violations?: unknown[];
+  /** `suppressed_exists` only: the hidden note holding the title — the id
+   *  `restore_note` takes. */
+  node_id?: string;
 }
 
 /** Type guard for the miss shape. */
@@ -308,6 +316,9 @@ export const NOTE_KIND = "Note";
 /**
  * create_note(title, parent?, tags?, type?) -> { node_id, created } — the
  * C8 mint.
+ *
+ * A title held only by SUPPRESSED notes refuses `suppressed_exists` with the
+ * hidden note's id — `restore_note` is the way back; nothing is minted.
  *
  * Reuse-first (the F2 identity contract: `createNode` never dedups, so the
  * name is looked up before any mint — `(Note, title)` IS the idempotency key);
@@ -387,9 +398,24 @@ export async function createNote(
 
   const standing = await dial.findByName(NOTE_KIND, title);
   if (standing.length > 0) {
-    const [node] = [...standing].sort();
+    // A SUPPRESSED note is never handed back: `(Note, title)` is the
+    // identity, so reusing it returned `created:false` for a note every
+    // listing hides, and minting a twin would break the key. A live holder
+    // of the title wins; a title held only by suppressed notes refuses and
+    // names the way back.
+    const hidden = await suppressedNotes(dial, scope);
+    const sorted = [...standing].sort();
+    const node = sorted.find((t) => !hidden.has(t));
     if (node === undefined) {
-      return { error: "admit_refused", detail: "empty standing set" };
+      // standing is non-empty, so every holder is hidden and [0] exists.
+      const held = String(sorted[0]);
+      return {
+        error: "suppressed_exists",
+        detail:
+          `a suppressed note already holds the title (${held}); ` +
+          "restore_note brings it back — create_note will not mint a twin",
+        node_id: held,
+      };
     }
     // Heal an interrupted mint: a dictionary row whose edge admit never
     // landed (the invisible-row trap) gets its edges re-asserted here, so
