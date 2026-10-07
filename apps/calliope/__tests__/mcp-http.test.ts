@@ -97,7 +97,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "container_history", // F5 — history IS the graph (as-of reads)
       "copy_reference",
       "create_note",
-      "delete_note", // retracts a note whole, so a bulk import can be reversed
+      "delete_note", // suppresses (default) or purges, so an import can be reversed
       "dissolve_note",
       "export_note",
       "file_revisions", // stays [Rob, F12] — frozen archive, read-only
@@ -106,6 +106,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "look",
       "materialize_note",
       "read_container", // F5 — the ordered tree read
+      "restore_note", // clears a suppression [Rob, 2026-10-06: delete = suppress]
       "revision_deltas", // stays [Rob, F12] — frozen archive, read-only
       "search", // Findability F2 — licensed by its Exposes row `search(query, scope)`
       "set_properties", // a note's frontmatter as graph edges
@@ -140,9 +141,11 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       // replaces a named predicate's value set (and retract: removes), so
       // it can take a value away: destructive, and a re-run converges
       set_properties: [false, true, true],
-      // retracts every current fact of a note; a re-delete answers
-      // not_found, so a re-run converges
+      // suppresses (or, purge=true, retracts) a note; a re-run answers
+      // already_suppressed / not_found, so it converges
       delete_note: [false, true, true],
+      // retracts only the marker it finds; a re-run answers not_suppressed
+      restore_note: [false, false, true],
       // the ONE write path (F4/F12): a save whose ops all net out writes
       // nothing, but the verb itself is not idempotent (adds mint slots)
       write_container: [false, false, false],

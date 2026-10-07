@@ -1,7 +1,10 @@
 /**
- * delete_note — take a Note off the notes graph, so a bulk import can be
- * reversed. `dissolve_note` only adds a generation and `write_container`
- * can only empty a body; neither removes the note.
+ * delete_note's PURGE mode (`purge=true`) — take a Note off the notes
+ * graph, so a bulk import can be reversed. The verb's default is the
+ * suppress mode (`note-suppress.ts`), which hides a note and keeps every
+ * fact; this file is the retraction, and the protection rule both share.
+ * `dissolve_note` only adds a generation and `write_container` can only
+ * empty a body; neither removes the note.
  *
  * THE STORE'S RETRACTION MODEL. chaos is an append-only datom log; a
  * deletion is the retraction of every CURRENT fact, and the log keeps
@@ -126,9 +129,7 @@ export interface DeleteNotesError {
   notes?: NoteDeletion[];
 }
 
-export function isDeleteNotesError(
-  r: DeleteNotesResult | DeleteNotesError,
-): r is DeleteNotesError {
+export function isDeleteNotesError(r: object): r is DeleteNotesError {
   return "error" in r;
 }
 
@@ -139,7 +140,8 @@ interface Plan {
   untag?: () => Promise<unknown>;
 }
 
-type Dial = ChaosDial & Required<Pick<ChaosDial, "placedEdges" | "referrers">>;
+export type Dial = ChaosDial &
+  Required<Pick<ChaosDial, "placedEdges" | "referrers">>;
 
 function bump(counts: Record<string, number>, predicate: string): void {
   counts[predicate] = (counts[predicate] ?? 0) + 1;
@@ -154,7 +156,7 @@ const semantic = (edges: PlacedEdge[]): PlacedEdge[] =>
   edges.filter((e) => !SYSTEM_PREDICATES.has(e.predicate));
 
 /** Why `out` (a node's semantic outbound facts) may not be deleted. */
-async function guard(
+export async function guard(
   dial: Dial,
   id: string,
   out: PlacedEdge[],
@@ -201,6 +203,50 @@ async function guard(
   return null;
 }
 
+/** A note that passed the protection rule: its current semantic facts. */
+export interface Checked {
+  /** Outbound semantic facts. */
+  out: PlacedEdge[];
+  /** Outbound facts with the system edges (the owner check reads them). */
+  all: PlacedEdge[];
+  /** Inbound semantic facts. */
+  inbound: PlacedEdge[];
+}
+
+/**
+ * The protection rule, shared by every mode of delete_note (purge and
+ * suppress): read one id and decide, before anything is written, whether
+ * this call may touch it. `null` is not_found (no current semantic fact).
+ * A refusal is a non-Note, a protected note (archived, or claimed by
+ * another star), or the parent of a note outside `batch`.
+ */
+export async function checkNote(
+  dial: Dial,
+  id: string,
+  batch: ReadonlySet<string>,
+): Promise<Checked | DeleteRefusal | null> {
+  const all = await dial.placedEdges(id);
+  const out = semantic(all);
+  if (out.length === 0) return null;
+  const refusal = await guard(dial, id, out, all);
+  if (refusal !== null) return refusal;
+
+  const inbound = semantic(await dial.referrers(id));
+  const strays = inbound.filter(
+    (e) => e.predicate === "parent" && !batch.has(e.subject),
+  );
+  if (strays.length > 0) {
+    return {
+      node_id: id,
+      error: "has_children",
+      detail:
+        `${id} is the parent of ${String(strays.length)} note(s) outside ` +
+        `this call (${strays.map((e) => e.subject).join(", ")})`,
+    };
+  }
+  return { out, all, inbound };
+}
+
 /** Read one note and compose its retraction. A refusal or not_found
  *  composes nothing. */
 async function plan(
@@ -218,28 +264,13 @@ async function plan(
     blobs: [],
     tags: [],
   };
-  const all = await dial.placedEdges(id);
-  const out = semantic(all);
-  if (out.length === 0) {
+  const checked = await checkNote(dial, id, batch);
+  if (checked === null) {
     deletion.status = "not_found";
     return { deletion, ops: [] };
   }
-  const refusal = await guard(dial, id, out, all);
-  if (refusal !== null) return refusal;
-
-  const inbound = semantic(await dial.referrers(id));
-  const strays = inbound.filter(
-    (e) => e.predicate === "parent" && !batch.has(e.subject),
-  );
-  if (strays.length > 0) {
-    return {
-      node_id: id,
-      error: "has_children",
-      detail:
-        `${id} is the parent of ${String(strays.length)} note(s) outside ` +
-        `this call (${strays.map((e) => e.subject).join(", ")})`,
-    };
-  }
+  if ("error" in checked) return checked;
+  const { out, inbound } = checked;
 
   const retract: PlacedEdge[] = [];
   for (const e of out) {
@@ -290,7 +321,7 @@ async function plan(
   return { deletion, ops: [...ops.values()] };
 }
 
-function validate(ids: string[]): DeleteNotesError | null {
+export function validate(ids: string[]): DeleteNotesError | null {
   if (ids.length === 0) {
     return { error: "bad_arguments", detail: "ids is empty" };
   }

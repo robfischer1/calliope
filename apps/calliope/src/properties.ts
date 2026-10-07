@@ -78,6 +78,9 @@ export const RESERVED_PREDICATES: ReadonlySet<string> = new Set([
   "comments_on",
   "isArchived",
   "ownedBy",
+  // delete_note's hide marker: set and cleared only by delete_note /
+  // restore_note, so a frontmatter key can never hide a note by accident.
+  "suppressed",
 ]);
 
 /** One value: a literal string, or a node token (a resolved wikilink). */

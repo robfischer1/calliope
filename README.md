@@ -120,22 +120,36 @@ The container surface (the ONE write path):
 The note-native verbs (C8/F10): `create_note`, `dissolve_note`,
 `export_note`, `materialize_note`, `set_properties` (a note's frontmatter
 as graph edges; the source YAML rides back out through `export_note` and
-`materialize_note`), `delete_note` (see below). Findability: `search`, `list_tags`,
+`materialize_note`), `delete_note` / `restore_note` (see below). Findability: `search`, `list_tags`,
 `list_by_tag`, `copy_reference`. Attention: `look`, `unpin`. The frozen
 git-for-ideas archive (read-only): `file_revisions`, `revision_deltas`.
 
-`delete_note(ids[], dry_run = true)` takes up to 100 Notes off the graph,
-so a bulk import can be reversed. chaos is an append-only log and the gate
-carries `removeEdge`, not `deleteNode`, so a delete retracts every current
-fact pinned to the scope it lives in: the note's outbound and inbound
-edges, each block slot's facts (only the membership when another container
-shares the slot), and the note's tag-mirror rows. History still
-reconstructs the note; system edges (`ownedBy`, `hasKind`) and blobs stay,
-blobs being the census's to reap. The dry run reports edges by predicate,
-blocks, blobs and tags. The whole call refuses, writing nothing, on a
-non-Note, a protected note (`isArchived=true`, or claimed by a star other
-than calliope) or the parent of a note outside the call; a note already
-gone answers `not_found`.
+`delete_note(ids[], dry_run = true, purge = false)` takes up to 100 Notes
+off every listing. Two modes (Rob's ruling, 2026-10-06: a delete hides,
+nothing purges unless asked, nothing erases the log):
+
+- **suppress** (the default) asserts one literal, `suppressed = "true"`,
+  in the notes scope — the same "hidden, kept" predicate mnemosyne's
+  `bury` writes on a memory. The note keeps every fact. `list_by_tag`
+  (unless `include_suppressed`), `list_tags` counts, `search` and `look`
+  drop it; `read_container` and the other by-id reads still answer, so it
+  can be inspected. A second suppress answers `already_suppressed`.
+  `restore_note(ids[])` retracts the marker and nothing else; a note never
+  suppressed answers `not_suppressed`. `suppressed` is reserved, so
+  `set_properties` (a frontmatter key) can never hide a note.
+- **purge** (`purge = true`) retracts every current fact pinned to the
+  scope it lives in — chaos is an append-only log and the gate carries
+  `removeEdge`, not `deleteNode`: the note's outbound and inbound edges,
+  each block slot's facts (only the membership when another container
+  shares the slot), and the note's tag-mirror rows. History still
+  reconstructs the note; system edges (`ownedBy`, `hasKind`) and blobs
+  stay, blobs being the census's to reap. `restore_note` cannot undo it.
+
+Both modes share the protection rule: the whole call refuses, writing
+nothing, on a non-Note, a protected note (`isArchived=true`, or claimed by
+a star other than calliope) or the parent of a note outside the call; a
+note with no current facts answers `not_found`. The dry run reports what
+would change.
 
 **Retired by the F12 cut (2026-08-16)** — the body family (`read_body`,
 `write_body`, `has_body`, `read_body_revisions`, `read_body_at`), the
