@@ -597,6 +597,26 @@ describe("the marker", () => {
   });
 });
 
+describe("the fixture's scoped lookup", () => {
+  it("answers sorted, deduplicated, literal-only, in the asked scope", async () => {
+    const dial = new FixtureChaosDial();
+    const lo = "01".repeat(32);
+    const hi = "fe".repeat(32);
+    await edge(dial, hi, SUPPRESSED, { toLiteral: SUPPRESSED_VALUE });
+    await edge(dial, lo, SUPPRESSED, { toLiteral: SUPPRESSED_VALUE });
+    await edge(dial, hi, "other", { toLiteral: SUPPRESSED_VALUE });
+    expect(await dial.findByValue(SCOPE, SUPPRESSED, SUPPRESSED_VALUE)).toEqual(
+      [lo, hi],
+    );
+    expect(
+      await dial.findByValue(scopeHash(SCOPE), SUPPRESSED, SUPPRESSED_VALUE),
+    ).toEqual([lo, hi]);
+    expect(
+      await dial.findByValue("elsewhere", SUPPRESSED, SUPPRESSED_VALUE),
+    ).toEqual([]);
+  });
+});
+
 describe("a door whose placed edges carry no graph (the live shape)", () => {
   it("suppress, re-suppress and restore still decide by the scoped lookup", async () => {
     const r = await rig();
