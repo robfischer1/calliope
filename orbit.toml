@@ -36,8 +36,8 @@ digest = "sha256:ecd0bd83e16f5677b841a61c18c74a6737c27ed6cd294ac2a0d3ea6e857bb84
 [[consumes]]
 from = "chaos"
 contract = "chaos-calliope"
-version = "1781977"
-digest = "sha256:590fa3dd84ff7ab87d317ee7d2f787e8215822e8fa20b69a9eba491ef5c81935"
+version = "1819219"
+digest = "sha256:20387646619b14cfe48cec1cb8ff486625ecf00c5599b922a1440ac4839de1f1"
 
 [[consumes]]
 from = "themis"
