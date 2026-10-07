@@ -40,13 +40,38 @@ function answer(text: string, result: object, isError = false): Answer {
   };
 }
 
-/** Register delete_note + restore_note on `server`. */
+/** How the delete verbs keep the search index (eros, over the
+ *  `consciousness` stream) in step with the graph. Both never throw. */
+export interface IndexSync {
+  /** Tombstone the note's row: it leaves the index. */
+  retract(node: string): Promise<void>;
+  /** Re-publish the note from the graph: its row comes back. */
+  publish(node: string): Promise<void>;
+}
+
+/** Register delete_note + restore_note on `server`. After a real (not dry)
+ *  run, every id the call leaves hidden or gone (suppressed, already
+ *  suppressed, purged, or with no facts at all) is retracted from the index,
+ *  and every note restore brought back is published again — the graph write
+ *  first, the index after it. Retracting the already-gone ids too is what
+ *  heals a row a delete made before this sync existed left behind: a
+ *  tombstone for a row the index never held reaps nothing. */
 export function registerDeleteVerbs(
   server: McpServer,
   dial: ChaosDial,
   scope: string,
   tags: TagStore | undefined,
+  index: IndexSync,
 ): void {
+  const each = async (
+    nodes: { node_id: string; status: string }[],
+    statuses: readonly string[],
+    act: (node: string) => Promise<void>,
+  ): Promise<void> => {
+    for (const n of nodes) {
+      if (statuses.includes(n.status)) await act(n.node_id);
+    }
+  };
   server.registerTool(
     "delete_note",
     {
@@ -89,6 +114,13 @@ export function registerDeleteVerbs(
         if (isDeleteNotesError(result)) {
           return answer(`${result.error}: ${result.detail}`, result, true);
         }
+        if (!result.dry_run) {
+          await each(
+            result.notes,
+            ["suppressed", "already_suppressed", "not_found"],
+            (n) => index.retract(n),
+          );
+        }
         const t = result.totals;
         return answer(
           `${result.dry_run ? "would suppress" : "suppressed"} ` +
@@ -101,6 +133,11 @@ export function registerDeleteVerbs(
       const result = await deleteNotes(dial, scope, tags, { ids, dry_run });
       if (isDeleteNotesError(result)) {
         return answer(`${result.error}: ${result.detail}`, result, true);
+      }
+      if (!result.dry_run) {
+        await each(result.notes, ["deleted", "not_found"], (n) =>
+          index.retract(n),
+        );
       }
       const t = result.totals;
       return answer(
@@ -138,6 +175,7 @@ export function registerDeleteVerbs(
       if (isDeleteNotesError(result)) {
         return answer(`${result.error}: ${result.detail}`, result, true);
       }
+      await each(result.notes, ["restored"], (n) => index.publish(n));
       const t = result.totals;
       return answer(
         `restored ${String(t.restored)} note(s), ` +

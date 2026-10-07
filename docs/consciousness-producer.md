@@ -18,6 +18,24 @@ extractor. The private `calliope-notes` stream is retired (see below).
 | `source_ref` | `styx://<node>` |
 | key | `calliope_notes:<source_id>` — the compaction key |
 
+## Taking a note out, and putting it back
+
+The stream is compacted on the key above, so a note leaves the index by a
+**tombstone** on that key (a null value), which eros's consumer reaps
+(`TombstoneIdentity` → every chunk of the row).
+
+| Verb | Index effect |
+| :--- | :--- |
+| `delete_note` (suppress, real run) | tombstone for each `suppressed`, `already_suppressed` and `not_found` id |
+| `delete_note` with `purge=true` (real run) | tombstone for each `deleted` and `not_found` id |
+| `restore_note` | a full event for each `restored` note, so its row returns |
+| a write to a note that is still suppressed | tombstone, never a publish |
+| any dry run | nothing |
+
+Retracting the already-gone ids is deliberate: a tombstone for a row eros never
+held reaps nothing, and it heals rows left by deletes made before this sync.
+The heartbeat counts tombstones as `calliope_consciousness_retracted_total`.
+
 ## `metadata` — the vocabulary
 
 A key is **absent when the note has nothing for it** — never an empty string or list.
@@ -43,6 +61,7 @@ reads them — which is why they are written down here rather than discovered.
 ## Not publishing is visible
 
 The heartbeat carries `calliope_consciousness_published_total`,
+`calliope_consciousness_retracted_total`,
 `calliope_consciousness_publish_failed_total` and
 `calliope_consciousness_publisher_wired` (1 when a producer exists). A refusal
 never fails the write; it is counted and logged on the 1-2-5 series. Publishing is

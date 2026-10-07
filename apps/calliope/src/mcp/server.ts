@@ -162,6 +162,13 @@ export function createServer(
   ): Promise<void> => {
     if (consciousness === undefined) return;
     try {
+      // A write to a SUPPRESSED note must not put it back in the index: the
+      // marker outlives the write, so the row stays retracted until
+      // restore_note publishes it again.
+      if ((await hiddenNotes()).has(node)) {
+        await consciousness.retract(node);
+        return;
+      }
       const projection = await projectNote(facet, node, extras);
       if (projection !== undefined) await consciousness.publish(projection);
     } catch (err) {
@@ -1169,7 +1176,15 @@ export function createServer(
       },
     );
 
-    registerDeleteVerbs(server, dial, scope, options.tags);
+    const facet = options.containers;
+    registerDeleteVerbs(server, dial, scope, options.tags, {
+      retract: async (node) => {
+        await consciousness?.retract(node);
+      },
+      publish: async (node) => {
+        if (facet !== undefined) await publishNote(facet, node);
+      },
+    });
   }
 
   if (options?.chaos !== undefined && options.tags !== undefined) {
