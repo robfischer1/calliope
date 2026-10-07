@@ -779,6 +779,18 @@ describe("the listings' published surface", () => {
         "point lookup, suppressed notes left out unless include_suppressed. " +
         "Returns {tag, node_ids}.",
     );
+    expect(tools.find((t) => t.name === "create_note")?.description).toBe(
+      "C8: mint a Note-kind identity node on the notes graph through the " +
+        "gated two-admit path (createNode, then hasName/hasType/parent " +
+        "edges), auto-parenting to the invisible 'Notes' root when no " +
+        "parent is named — orphan-safe, idempotent on (Note, title), with " +
+        "heal-on-reuse for interrupted mints. tags[] is accepted and " +
+        "forward-carried (the hasTag write is C9's). Returns {node_id, " +
+        "created}; misses are structured (bad_title / bad_parent / " +
+        "bad_tags / admit_refused / suppressed_exists — the title " +
+        "belongs to a suppressed note, whose id it names; restore_note " +
+        "brings it back).",
+    );
     expect(tools.find((t) => t.name === "list_tags")?.description).toBe(
       "C9: every tag Calliope has written, with carrier counts — the " +
         "picker's chip source. Suppressed notes are not counted. Returns " +
@@ -890,6 +902,33 @@ describe("create_note never hands back a suppressed note", () => {
     expect(await createNote(dial, SCOPE, { title: "Twin" })).toEqual({
       node_id,
       created: false,
+    });
+  });
+
+  it("reuses the LOWEST live holder, and refuses naming the lowest hidden one", async () => {
+    const dial = new FixtureChaosDial();
+    const low = "01".repeat(32);
+    const high = "fe".repeat(32);
+    for (const t of [low, high]) {
+      dial.seed("Note", "Pair", t);
+      await dial.admit([opAdd(t, "hasName", { toLiteral: "Pair" })], SCOPE);
+    }
+    const byName = dial.findByName.bind(dial);
+    dial.findByName = async (kind, label) =>
+      label === "Pair" ? [high, low] : byName(kind, label);
+    expect(await createNote(dial, SCOPE, { title: "Pair" })).toEqual({
+      node_id: low,
+      created: false,
+    });
+    await dial.admit(
+      [low, high].map((t) =>
+        opAdd(t, SUPPRESSED, { toLiteral: SUPPRESSED_VALUE }),
+      ),
+      SCOPE,
+    );
+    expect(await createNote(dial, SCOPE, { title: "Pair" })).toMatchObject({
+      error: "suppressed_exists",
+      node_id: low,
     });
   });
 
