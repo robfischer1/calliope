@@ -153,7 +153,8 @@ export interface NodeEdge {
  * One current fact touching a node, with the scope it was asserted in —
  * what a retraction must pin to. Outbound: `subject` is the node itself.
  * Inbound: `subject` is the referrer and `value` the node (always a node
- * edge). `graph` is 64-hex.
+ * edge). `graph` is 64-hex, or "" when the door named no scope for the
+ * fact — then a retraction rides the batch's own scope.
  */
 export interface PlacedEdge {
   subject: string;
@@ -167,6 +168,18 @@ export interface PlacedEdge {
 /** A scope the wire answered by name or by token, as the 64-hex token. */
 export function graphToken(graph: string): string {
   return HEX64.test(graph) ? graph : scopeHash(graph);
+}
+
+/**
+ * The scope a placed read answered, as a token — or "" when it answered
+ * none. MEASURED 2026-10-07: chaos's `materialize_edges full` answered
+ * `graph: ""` for every fact on a live note, and hashing that empty name
+ * pinned each purge retraction to sha256(""), a scope the facts never
+ * lived in. An empty answer stays empty, so the retraction falls back to
+ * the batch's scope.
+ */
+export function placedGraph(graph: string): string {
+  return graph === "" ? "" : graphToken(graph);
 }
 
 /** The dial surface `create_note` needs — fixture-implementable. */
@@ -640,7 +653,7 @@ export class LiveChaosDial implements ChaosDial {
             : isNode
               ? ("node" as const)
               : ("scalar" as const),
-        graph: graphToken(asStr(e.graph)),
+        graph: placedGraph(asStr(e.graph)),
       };
     });
   }
@@ -661,7 +674,7 @@ export class LiveChaosDial implements ChaosDial {
         value: token,
         isNode: true,
         domain: "node",
-        graph: graphToken(asStr(row.g)),
+        graph: placedGraph(asStr(row.g)),
       });
     }
     return out;
