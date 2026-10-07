@@ -611,7 +611,7 @@ export async function listByTag(
   dial: ChaosDial,
   scope: string,
   tag: string,
-  includeSuppressed = false,
+  includeSuppressed: boolean,
 ): Promise<{ tag: string; node_ids: string[] }> {
   const norm = normalizeTag(tag);
   const [ids, hidden] = await Promise.all([

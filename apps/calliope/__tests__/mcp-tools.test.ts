@@ -281,7 +281,7 @@ describe("the tag path (C9)", () => {
       store,
     );
     if (isCreateNoteError(a) || isCreateNoteError(b)) throw new Error("create");
-    const byTag = await listByTag(dial, SCOPE, "X");
+    const byTag = await listByTag(dial, SCOPE, "X", false);
     expect(byTag.tag).toBe("#x");
     expect(byTag.node_ids.sort()).toEqual([a.node_id, b.node_id].sort());
     expect(await listTags(store)).toEqual({

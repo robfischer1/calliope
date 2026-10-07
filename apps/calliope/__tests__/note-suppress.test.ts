@@ -686,6 +686,51 @@ describe("suppressNotes / restoreNotes — arguments and failure paths", () => {
   });
 });
 
+describe("no tx is reported when nothing was written", () => {
+  it("suppress dry run, already-suppressed and not_suppressed carry no tx key", async () => {
+    const r = await rig();
+    const a = await note(r.mcp, "A");
+    const dry = await suppressNotes(r.dial, SCOPE, { ids: [a] });
+    expect(Object.keys(dry)).not.toContain("tx");
+    const notYet = await restoreNotes(r.dial, SCOPE, { ids: [a] });
+    expect(Object.keys(notYet)).not.toContain("tx");
+    await suppressNotes(r.dial, SCOPE, { ids: [a], dry_run: false });
+    const again = await suppressNotes(r.dial, SCOPE, {
+      ids: [a],
+      dry_run: false,
+    });
+    expect(Object.keys(again)).not.toContain("tx");
+  });
+});
+
+describe("the listings' published surface", () => {
+  it("list_by_tag and list_tags say suppressed notes are left out", async () => {
+    const { mcp } = await rig();
+    const { tools } = await mcp.listTools();
+    expect(tools.find((t) => t.name === "list_by_tag")?.description).toBe(
+      "C9: the server-side tag slice — the notes-graph nodes carrying " +
+        "hasTag == the (lowercase-normalized) tag, over the graph's indexed " +
+        "point lookup, suppressed notes left out unless include_suppressed. " +
+        "Returns {tag, node_ids}.",
+    );
+    expect(tools.find((t) => t.name === "list_tags")?.description).toBe(
+      "C9: every tag Calliope has written, with carrier counts — the " +
+        "picker's chip source. Suppressed notes are not counted. Returns " +
+        "{tags: [{tag, count}]}.",
+    );
+  });
+
+  it("search answers on a server built with no options at all", async () => {
+    const server = createServer(new FixtureBodyClient());
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const mcp = new Client({ name: "test", version: "0" });
+    await Promise.all([server.connect(st), mcp.connect(ct)]);
+    const res = await call(mcp, "search", { query: "q" });
+    expect(res.isError).toBe(false);
+    expect(res.out.hits).toEqual([]);
+  });
+});
+
 describe("restore_note's published surface", () => {
   it("carries its title, description, annotations and schema", async () => {
     const { mcp } = await rig();
