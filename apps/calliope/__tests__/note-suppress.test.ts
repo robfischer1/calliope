@@ -25,6 +25,7 @@ import {
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { FocusRegister } from "../src/focus-register.js";
 import { createServer } from "../src/mcp/server.js";
+import { createNote } from "../src/mcp/tools.js";
 import {
   restoreNotes,
   SUPPRESSED,
@@ -778,6 +779,18 @@ describe("the listings' published surface", () => {
         "point lookup, suppressed notes left out unless include_suppressed. " +
         "Returns {tag, node_ids}.",
     );
+    expect(tools.find((t) => t.name === "create_note")?.description).toBe(
+      "C8: mint a Note-kind identity node on the notes graph through the " +
+        "gated two-admit path (createNode, then hasName/hasType/parent " +
+        "edges), auto-parenting to the invisible 'Notes' root when no " +
+        "parent is named — orphan-safe, idempotent on (Note, title), with " +
+        "heal-on-reuse for interrupted mints. tags[] is accepted and " +
+        "forward-carried (the hasTag write is C9's). Returns {node_id, " +
+        "created}; misses are structured (bad_title / bad_parent / " +
+        "bad_tags / admit_refused / suppressed_exists — the title " +
+        "belongs to a suppressed note, whose id it names; restore_note " +
+        "brings it back).",
+    );
     expect(tools.find((t) => t.name === "list_tags")?.description).toBe(
       "C9: every tag Calliope has written, with carrier counts — the " +
         "picker's chip source. Suppressed notes are not counted. Returns " +
@@ -836,5 +849,100 @@ describe("restore_note's published surface", () => {
     const res = await restore(r.mcp, [a]);
     expect(res.text).toBe("restored 1 note(s), 0 not suppressed, 0 not found.");
     expect(res.out.tx).toBeTypeOf("number");
+  });
+});
+
+describe("create_note never hands back a suppressed note", () => {
+  it("refuses suppressed_exists, naming the hidden note and restore_note", async () => {
+    const r = await rig();
+    const a = await note(r.mcp, "Gone");
+    await suppress(r.mcp, [a]);
+    const before = r.dial.admits.length;
+    const res = await call(r.mcp, "create_note", { title: "Gone" });
+    expect(res.isError).toBe(true);
+    expect(res.out).toMatchObject({ error: "suppressed_exists", node_id: a });
+    expect(res.text).toContain("suppressed_exists");
+    expect(res.text).toContain("restore_note");
+    expect(res.text).toContain(a);
+    // Nothing minted, nothing healed: the identity stays the one node.
+    expect(r.dial.admits.length).toBe(before);
+    expect(await r.dial.findByName("Note", "Gone")).toEqual([a]);
+  });
+
+  it("after restore_note the title reuses the note again", async () => {
+    const r = await rig();
+    const a = await note(r.mcp, "Back");
+    await suppress(r.mcp, [a]);
+    await restore(r.mcp, [a]);
+    const res = await call(r.mcp, "create_note", { title: "Back" });
+    expect(res.isError).toBe(false);
+    expect(res.out).toEqual({ node_id: a, created: false });
+  });
+
+  it("a live holder of the title wins over a suppressed twin that sorts first", async () => {
+    const dial = new FixtureChaosDial();
+    const live = await createNote(dial, SCOPE, { title: "Twin" });
+    expect(live).toMatchObject({ created: true });
+    const { node_id } = live as { node_id: string };
+    const hidden = "00".repeat(32);
+    dial.seed("Note", "Twin", hidden);
+    // The fixture keeps one token per (kind, label); the door answers every
+    // holder, so the twin is answered here.
+    const byName = dial.findByName.bind(dial);
+    dial.findByName = async (kind, label) =>
+      label === "Twin" ? [node_id, hidden] : byName(kind, label);
+    await dial.admit(
+      [
+        opAdd(hidden, "hasName", { toLiteral: "Twin" }),
+        opAdd(hidden, SUPPRESSED, { toLiteral: SUPPRESSED_VALUE }),
+      ],
+      SCOPE,
+    );
+    expect([hidden, node_id].sort()[0]).toBe(hidden);
+    expect(await createNote(dial, SCOPE, { title: "Twin" })).toEqual({
+      node_id,
+      created: false,
+    });
+  });
+
+  it("reuses the LOWEST live holder, and refuses naming the lowest hidden one", async () => {
+    const dial = new FixtureChaosDial();
+    const low = "01".repeat(32);
+    const high = "fe".repeat(32);
+    for (const t of [low, high]) {
+      dial.seed("Note", "Pair", t);
+      await dial.admit([opAdd(t, "hasName", { toLiteral: "Pair" })], SCOPE);
+    }
+    const byName = dial.findByName.bind(dial);
+    dial.findByName = async (kind, label) =>
+      label === "Pair" ? [high, low] : byName(kind, label);
+    expect(await createNote(dial, SCOPE, { title: "Pair" })).toEqual({
+      node_id: low,
+      created: false,
+    });
+    await dial.admit(
+      [low, high].map((t) =>
+        opAdd(t, SUPPRESSED, { toLiteral: SUPPRESSED_VALUE }),
+      ),
+      SCOPE,
+    );
+    expect(await createNote(dial, SCOPE, { title: "Pair" })).toMatchObject({
+      error: "suppressed_exists",
+      node_id: low,
+    });
+  });
+
+  it("a marker in another scope does not hide the note from create_note", async () => {
+    const dial = new FixtureChaosDial();
+    const first = await createNote(dial, SCOPE, { title: "Elsewhere" });
+    const { node_id } = first as { node_id: string };
+    await dial.admit(
+      [opAdd(node_id, SUPPRESSED, { toLiteral: SUPPRESSED_VALUE })],
+      "memories",
+    );
+    expect(await createNote(dial, SCOPE, { title: "Elsewhere" })).toEqual({
+      node_id,
+      created: false,
+    });
   });
 });

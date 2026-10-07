@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
-import { FixtureChaosDial } from "../src/chaos-client.js";
+import { FixtureChaosDial, opAdd } from "../src/chaos-client.js";
 import { FixtureTagStore } from "../src/tag-store.js";
 import {
   dissolveContainer,
@@ -123,6 +123,25 @@ describe("sinkNoteVersion (F6)", () => {
         body_text: "x",
       }),
     ).rejects.toThrow(NotesSinkError);
+  });
+
+  it("a suppressed note's path refuses suppressed_exists; the hidden body is untouched", async () => {
+    const { client, dial, tags } = rig();
+    const v1 = await sinkNoteVersion(client, dial, SCOPE, tags, {
+      source_path: "Notes/hidden.md",
+      body_text: "v1",
+    });
+    await dial.admit(
+      [opAdd(v1.node_id, "suppressed", { toLiteral: "true" })],
+      SCOPE,
+    );
+    await expect(
+      sinkNoteVersion(client, dial, SCOPE, tags, {
+        source_path: "Notes/hidden.md",
+        body_text: "v2",
+      }),
+    ).rejects.toThrow(/suppressed_exists/);
+    expect((await client.readBody(v1.node_id))[0]?.text).toBe("v1");
   });
 
   it("dissolveContainer promotes a multi-block container with tags + provenance (F9)", async () => {

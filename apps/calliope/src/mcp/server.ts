@@ -1067,7 +1067,9 @@ export function createServer(
           "heal-on-reuse for interrupted mints. tags[] is accepted and " +
           "forward-carried (the hasTag write is C9's). Returns {node_id, " +
           "created}; misses are structured (bad_title / bad_parent / " +
-          "bad_tags / admit_refused).",
+          "bad_tags / admit_refused / suppressed_exists — the title " +
+          "belongs to a suppressed note, whose id it names; restore_note " +
+          "brings it back).",
         inputSchema: {
           title: z
             .string()
