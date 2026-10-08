@@ -90,24 +90,37 @@ import { createNote, isCreateNoteError } from "../src/mcp/tools.js";
 const SCOPE = "notes";
 
 describe("create_note — the note-native mint (C8)", () => {
-  it("mints via two admits: createNode, then hasName/hasType/parent", async () => {
+  it("mints in ONE admit: createNode with hasName/hasType/parent beside it", async () => {
     const dial = new FixtureChaosDial();
     const result = await createNote(dial, SCOPE, { title: "My Note" });
     expect(isCreateNoteError(result)).toBe(false);
     if (isCreateNoteError(result)) return;
     expect(result.created).toBe(true);
-    // admits: root mint (2: create+edges) then the note mint (2: create+edges)
-    expect(dial.admits).toHaveLength(4);
-    const noteEdges = dial.admits[3];
-    expect(noteEdges?.ops.map((o) => o.predicate)).toEqual([
+    // admits: root mint (2: create+edges), then the note mint (1: all of it).
+    // The Note floor (hasName) must ride the createNode (chaos#14929).
+    expect(dial.admits).toHaveLength(3);
+    const mint = dial.admits[2];
+    expect(mint?.ops.map((o) => o.op)).toEqual([
+      "createNode",
+      "addEdge",
+      "addEdge",
+      "addEdge",
+    ]);
+    expect(mint?.ops.slice(1).map((o) => o.predicate)).toEqual([
       "hasName",
       "hasType",
       "parent",
     ]);
-    const parentOp = noteEdges?.ops[2];
+    const parentOp = mint?.ops[3];
     const root = await dial.findByName(NOTE_ROOT_KIND, NOTE_ROOT_LABEL);
     expect(parentOp?.to_node).toBe(root[0]);
-    expect(noteEdges?.scope).toBe(SCOPE);
+    expect(mint?.scope).toBe(SCOPE);
+    const edges = await dial.edges(result.node_id);
+    expect(edges.map((e) => e.predicate)).toEqual([
+      "hasName",
+      "hasType",
+      "parent",
+    ]);
   });
 
   it("is idempotent: an identical re-run answers the standing node, no new admits", async () => {
@@ -149,8 +162,8 @@ describe("create_note — the note-native mint (C8)", () => {
     if (isCreateNoteError(result)) throw new Error("create failed");
     const edges = await dial.edges(result.node_id);
     expect(edges.find((e) => e.predicate === "parent")?.value).toBe(parent);
-    // no root ensure ran: only the note's own two admits
-    expect(dial.admits).toHaveLength(2);
+    // no root ensure ran: only the seeded parent's seed and the note's one admit
+    expect(dial.admits).toHaveLength(1);
   });
 
   it("rejects a malformed and an unknown parent as bad_args", async () => {
@@ -179,7 +192,7 @@ describe("create_note — the note-native mint (C8)", () => {
     );
   });
 
-  it("refuses the mint, the edge batch and the heal with admit_refused", async () => {
+  it("refuses the mint and the heal with admit_refused", async () => {
     const dial = new FixtureChaosDial();
     const parent = await createNote(dial, SCOPE, { title: "P" });
     if (isCreateNoteError(parent)) throw new Error(parent.detail);
@@ -217,24 +230,6 @@ describe("create_note — the note-native mint (C8)", () => {
         detail: "the gate refused the mint",
       });
     }
-
-    // the edge batch after a good mint
-    let calls = 0;
-    dial.admit = (ops, scope) => {
-      calls += 1;
-      return calls === 1 ? real(ops, scope) : refuse();
-    };
-    const edges = await createNote(dial, SCOPE, {
-      title: "G",
-      parent: parent.node_id,
-    });
-    expect(edges).toMatchObject({
-      code: "admit_refused",
-      violations: ["no"],
-    });
-    expect(isCreateNoteError(edges) && edges.detail).toContain(
-      "the gate refused the edge batch for ",
-    );
 
     // the heal of a dictionary row that never got its edges
     dial.admit = real;
