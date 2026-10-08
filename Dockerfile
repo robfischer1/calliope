@@ -4,7 +4,7 @@
 #
 # THE BUNDLE IS NOT BUILT HERE. The push's Gate builds it once (foundry-tools
 # ts:release) ON THIS SAME BASE: `bun install --frozen-lockfile`, then the
-# steps the record names (tools.build.release — `bun
+# the repo's package.json release script (`bun
 # apps/calliope/scripts/bundle.ts release`), which bundle the streamable-HTTP
 # entry and its dependencies into one bun-target file, release/server.js. No
 # node_modules ship. Through the script rather than `bun build` inline: the
