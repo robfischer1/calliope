@@ -248,4 +248,24 @@ describe("F17 batch 2a — calliope's output schemas", () => {
       expect(description, file).not.toContain("{error, detail}");
     }
   });
+
+  it("pins the unpin answer and the not_found wording of the miss verbs", async () => {
+    const mcp = await rig();
+    const ok = await mcp.callTool({
+      name: "unpin",
+      arguments: { pin_id: "pin-1" },
+    });
+    expect(ok.isError).toBeFalsy();
+    expect(ok.content).toEqual([{ type: "text", text: "unpinned pin-1" }]);
+    const { tools } = await mcp.listTools();
+    const desc = (n: string) => tools.find((t) => t.name === n)?.description;
+    expect(desc("unpin")).toContain("answers a not_found refusal;");
+    expect(desc("export_note")).toContain("a miss is a not_found refusal.");
+    expect(desc("materialize_note")).toContain(
+      "A miss is a not_found refusal.",
+    );
+    expect(desc("copy_reference")).toContain(
+      "Unknown node → a not_found refusal.",
+    );
+  });
 });

@@ -83,6 +83,7 @@ import {
   FixtureChaosDial,
   NOTE_ROOT_KIND,
   NOTE_ROOT_LABEL,
+  opCreate,
 } from "../src/chaos-client.js";
 import { createNote, isCreateNoteError } from "../src/mcp/tools.js";
 
@@ -170,8 +171,77 @@ describe("create_note — the note-native mint (C8)", () => {
     const dial = new FixtureChaosDial();
     const t = await createNote(dial, SCOPE, { title: "   " });
     expect(isCreateNoteError(t) && t.code).toBe("bad_args");
+    expect(isCreateNoteError(t) && t.detail).toBe("title must be non-empty");
     const g = await createNote(dial, SCOPE, { title: "ok", tags: ["a", " "] });
     expect(isCreateNoteError(g) && g.code).toBe("bad_args");
+    expect(isCreateNoteError(g) && g.detail).toBe(
+      "tags must be non-empty strings",
+    );
+  });
+
+  it("refuses the mint, the edge batch and the heal with admit_refused", async () => {
+    const dial = new FixtureChaosDial();
+    const parent = await createNote(dial, SCOPE, { title: "P" });
+    if (isCreateNoteError(parent)) throw new Error(parent.detail);
+    const real = dial.admit.bind(dial);
+    const refuse = () =>
+      Promise.resolve({ admitted: false, minted: [], violations: ["no"] });
+
+    // the mint itself
+    dial.admit = refuse;
+    const mint = await createNote(dial, SCOPE, {
+      title: "M",
+      parent: parent.node_id,
+    });
+    expect(mint).toEqual({
+      code: "admit_refused",
+      detail: "the gate refused the mint",
+      violations: ["no"],
+    });
+
+    // an admit that lands nothing minted is a refused mint too
+    dial.admit = () =>
+      Promise.resolve({ admitted: true, minted: [], violations: [] });
+    const empty = await createNote(dial, SCOPE, {
+      title: "E",
+      parent: parent.node_id,
+    });
+    expect(empty).toMatchObject({
+      code: "admit_refused",
+      detail: "the gate refused the mint",
+    });
+
+    // the edge batch after a good mint
+    let calls = 0;
+    dial.admit = (ops, scope) => {
+      calls += 1;
+      return calls === 1 ? real(ops, scope) : refuse();
+    };
+    const edges = await createNote(dial, SCOPE, {
+      title: "G",
+      parent: parent.node_id,
+    });
+    expect(edges).toMatchObject({
+      code: "admit_refused",
+      violations: ["no"],
+    });
+    expect(isCreateNoteError(edges) && edges.detail).toContain(
+      "the gate refused the edge batch for ",
+    );
+
+    // the heal of a dictionary row that never got its edges
+    dial.admit = real;
+    const minted = await dial.admit([opCreate("Note", "H")], SCOPE);
+    expect(minted.admitted).toBe(true);
+    dial.admit = refuse;
+    const heal = await createNote(dial, SCOPE, {
+      title: "H",
+      parent: parent.node_id,
+    });
+    expect(heal).toMatchObject({ code: "admit_refused", violations: ["no"] });
+    expect(isCreateNoteError(heal) && heal.detail).toContain(
+      "the gate refused the healing edge batch for ",
+    );
   });
 
   it("surfaces a gate refusal with its violations, verbatim", async () => {
