@@ -317,9 +317,9 @@ export const NOTE_KIND = "Note";
  *
  * Reuse-first (the F2 identity contract: `createNode` never dedups, so the
  * name is looked up before any mint — `(Note, title)` IS the idempotency key);
- * on a miss, the two-admit mint (createNode → `minted[0]`, then the edge
- * batch: `hasName`, `hasType` (input.type, default "Note"), `parent`) on
- * the notes scope. A parentless note parents to the ensured "Notes" root —
+ * on a miss, the one-batch mint (createNode plus the edges `hasName`,
+ * `hasType` (input.type, default "Note"), `parent`, the edges addressing the
+ * node by its batch-local label) on the notes scope. A parentless note parents to the ensured "Notes" root —
  * orphan-safety
  * regardless of caller. `tags` is validated and otherwise inert (C9 wires the
  * `hasTag` write). No section rows mint — the body is the node's (empty)
@@ -443,25 +443,20 @@ export async function createNote(
     return parent;
   }
 
-  const mint = await dial.admit([opCreate(NOTE_KIND, title)], scope);
+  // ONE batch: the createNode and its edges. The title is the batch-local
+  // mint reference (themis resolves a non-empty createNode label for later
+  // ops in the same batch, as tree.ts slotBirthOps does), so the Note floor
+  // (hasName) lands in the same transaction as the node (chaos#14929).
+  const mint = await dial.admit(
+    [opCreate(NOTE_KIND, title), ...edgeBatch(title, parent)],
+    scope,
+  );
   const token = mint.minted.length === 1 ? mint.minted[0] : undefined;
   if (!mint.admitted || token === undefined) {
     return {
       code: "admit_refused",
       detail: "the gate refused the mint",
       violations: mint.violations,
-    };
-  }
-
-  const edges = await dial.admit(edgeBatch(token, parent), scope);
-  if (!edges.admitted) {
-    return {
-      code: "admit_refused",
-      detail:
-        `the gate refused the edge batch for ${token} — the node is a ` +
-        "dictionary row without its edges; an identical re-run heals it " +
-        "(the reuse path re-asserts the missing edges)",
-      violations: edges.violations,
     };
   }
 
