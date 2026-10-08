@@ -19,14 +19,6 @@ import { RequestLog, witnessSink } from "@forge/stellar-core-ts";
 import type { WitnessSink } from "@forge/stellar-core-ts";
 import { SOURCE_STAR } from "./consciousness-emit.js";
 
-/**
- * The verb prefix the gateway namespaces this star under — its fleet record's
- * `verb_prefix` (foundry-dies `fleet/stars/calliope/data.json`), NOT the star's
- * name. The two agree today; the record is the authority, and the wire form of
- * every verb is derived from it, so a rename of one must not drag the other.
- */
-export const VERB_PREFIX = "calliope";
-
 /** A request log and what to release when the process ends. */
 export interface Witness {
   readonly log: RequestLog;
@@ -49,7 +41,6 @@ export function makeWitness(
   });
   return {
     log: new RequestLog(SOURCE_STAR, {
-      verbPrefix: VERB_PREFIX,
       sink: sink.sink,
     }),
     close: () => sink.close(),

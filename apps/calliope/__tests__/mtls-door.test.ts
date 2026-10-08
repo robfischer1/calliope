@@ -23,7 +23,6 @@ import type {
   DoorSource,
   MtlsDoor,
 } from "../src/mcp/mtls-door.js";
-import { VERB_PREFIX } from "../src/mcp/witness.js";
 import type { Witness } from "../src/mcp/witness.js";
 import { makeIdentity } from "./helpers/tls-identity.js";
 import type { TlsIdentity } from "./helpers/tls-identity.js";
@@ -52,7 +51,6 @@ function recording(): { witness: Witness; got: RequestRecord[] } {
   return {
     witness: {
       log: new RequestLog("calliope", {
-        verbPrefix: VERB_PREFIX,
         sink: (r) => {
           got.push(r);
         },
