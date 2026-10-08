@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_export_note/v1",
+  "title": "calliope_export_note \u2014 the answer",
+  "description": "The container projected to markdown: its id, the markdown and the block count. A miss (container_not_found) is an isError result. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "type": "object",
+  "properties": {
+    "container_id": {
+      "type": "string"
+    },
+    "markdown": {
+      "type": "string"
+    },
+    "block_count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "container_id",
+    "markdown",
+    "block_count"
+  ]
+}

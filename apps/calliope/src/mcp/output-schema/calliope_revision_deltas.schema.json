@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_revision_deltas/v1",
+  "title": "calliope_revision_deltas \u2014 the answer",
+  "description": "The frontmatter and link evolution of one revision as {deltas}, in stored order. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "type": "object",
+  "properties": {
+    "deltas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "revision_id": {
+            "type": "integer"
+          },
+          "op": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "predicate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "object": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "revision_id",
+          "op",
+          "subject",
+          "predicate",
+          "object"
+        ]
+      }
+    }
+  },
+  "required": [
+    "deltas"
+  ]
+}

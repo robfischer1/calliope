@@ -1,2 +1,5 @@
 # Markdown is prose, not code — keep it out of the prettier gate.
 *.md
+
+# Byte-identical copies of foundry-dies/schema/tool-output (digest-gated contracts).
+apps/calliope/src/mcp/output-schema/

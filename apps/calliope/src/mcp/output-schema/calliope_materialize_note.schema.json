@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_materialize_note/v1",
+  "title": "calliope_materialize_note \u2014 the answer",
+  "description": "Everything the local window needs to write the file: the blocks in order, the tags and the provenance attributes, plus the verbatim frontmatter when one was set. A miss (container_not_found) is an isError result. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "type": "object",
+  "properties": {
+    "container_id": {
+      "type": "string"
+    },
+    "frontmatter": {
+      "type": "string"
+    },
+    "blocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "orderKey": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "orderKey"
+        ]
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "container_id",
+    "blocks",
+    "tags",
+    "provenance"
+  ]
+}
