@@ -19,6 +19,7 @@ import {
 import { restoreNotes, suppressNotes } from "../note-suppress.js";
 import type { TagStore } from "../tag-store.js";
 import { outputSchemaOf } from "./output-schemas.js";
+import { refusalResult } from "../refusal.js";
 
 const ids = z
   .array(z.string().regex(/^[0-9a-f]{64}$/))
@@ -114,7 +115,7 @@ export function registerDeleteVerbs(
       if (purge !== true) {
         const result = await suppressNotes(dial, scope, { ids, dry_run });
         if (isDeleteNotesError(result)) {
-          return answer(`${result.error}: ${result.detail}`, result, true);
+          return refusalResult(result);
         }
         if (!result.dry_run) {
           await each(
@@ -134,7 +135,7 @@ export function registerDeleteVerbs(
       }
       const result = await deleteNotes(dial, scope, tags, { ids, dry_run });
       if (isDeleteNotesError(result)) {
-        return answer(`${result.error}: ${result.detail}`, result, true);
+        return refusalResult(result);
       }
       if (!result.dry_run) {
         await each(result.notes, ["deleted", "not_found"], (n) =>
@@ -176,7 +177,7 @@ export function registerDeleteVerbs(
     async ({ ids }) => {
       const result = await restoreNotes(dial, scope, { ids });
       if (isDeleteNotesError(result)) {
-        return answer(`${result.error}: ${result.detail}`, result, true);
+        return refusalResult(result);
       }
       await each(result.notes, ["restored"], (n) => index.publish(n));
       const t = result.totals;

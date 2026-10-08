@@ -52,7 +52,7 @@ describe("copyReference — graph-backend form (the chaos dial)", () => {
     const r = await copyReference(dial, "00".repeat(32));
     expect(isCopyReferenceError(r)).toBe(true);
     if (!isCopyReferenceError(r)) return;
-    expect(r.error).toBe("unknown_node");
+    expect(r.code).toBe("not_found");
     expect(r.detail).toContain("resolves to no node");
   });
 });

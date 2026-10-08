@@ -283,18 +283,13 @@ describe("write_container runs the inline-tag reconcile", () => {
       },
     });
     expect(res.isError).toBe(true);
-    expect(res.structuredContent).toEqual({
-      error: "admit_refused",
-      violations: ["no"],
-    });
+    const detail =
+      "write_container: the gate refused the batch " +
+      "(minted blobs remain as orphans for the census; no tree change " +
+      'landed) (violations: ["no"])';
+    expect(res.structuredContent).toEqual({ code: "admit_refused", detail });
     expect(res.content).toEqual([
-      {
-        type: "text",
-        text:
-          "admit_refused: write_container: the gate refused the batch " +
-          "(minted blobs remain as orphans for the census; no tree change " +
-          "landed)",
-      },
+      { type: "text", text: `admit_refused: ${detail}` },
     ]);
   });
 

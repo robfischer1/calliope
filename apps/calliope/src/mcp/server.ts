@@ -63,6 +63,7 @@ import { containerBodies } from "../container-body.js";
 import { runBlobCensus } from "../blob-census.js";
 import type { TagStore } from "../tag-store.js";
 import { outputSchemaOf } from "./output-schemas.js";
+import { refuse, refusalResult } from "../refusal.js";
 import type { SearchProvider, SearchResponse } from "../search-types.js";
 
 /**
@@ -758,25 +759,17 @@ export function createServer(
         description:
           "029/F6: clear one deliberate pin by its pin_id (as answered in " +
           "look's pins[]). The conversational 'clear pin 2'. Unknown id " +
-          "answers a structured unknown_pin miss; live focus is untouched.",
+          "answers a not_found refusal; live focus is untouched.",
         inputSchema: {
           pin_id: z.string().min(1).describe("The pin to remove."),
         },
       },
       ({ pin_id }) => {
         const result = unpin(register, pin_id);
-        const missed = "error" in result;
+        if ("code" in result) return Promise.resolve(refusalResult(result));
         return Promise.resolve({
-          content: [
-            {
-              type: "text",
-              text: missed
-                ? `${result.error}: ${result.detail}`
-                : `unpinned ${result.pin_id}`,
-            },
-          ],
+          content: [{ type: "text", text: `unpinned ${result.pin_id}` }],
           structuredContent: structured(result),
-          ...(missed ? { isError: true } : {}),
         });
       },
     );
@@ -914,7 +907,7 @@ export function createServer(
           "EXPORT here, never the interchange format or the source of " +
           "truth. Handle: container_id, or source_path (the note's " +
           "identity name). Returns { container_id, markdown, block_count }; " +
-          "a miss is container_not_found.",
+          "a miss is a not_found refusal.",
         inputSchema: {
           container_id: z.string().optional().describe("The note's node id."),
           source_path: z
@@ -932,16 +925,7 @@ export function createServer(
         // A missing handle never reaches a read — the miss is decided
         // before the body is asked for, so the no-handle path performs no
         // dial read at all (pinned by the container-body suite).
-        const miss = (detail: string) => ({
-          content: [
-            { type: "text" as const, text: `container_not_found: ${detail}` },
-          ],
-          structuredContent: structured({
-            error: "container_not_found",
-            detail,
-          }),
-          isError: true,
-        });
+        const miss = (detail: string) => refuse("not_found", detail);
         if (nodeId === undefined) {
           return miss(
             container_id ??
@@ -990,8 +974,8 @@ export function createServer(
           "F9: the inverse of Dissolve — one read serving everything the " +
           "local window needs to write the file: the blocks in order, the " +
           "tags, and the provenance attributes. Handle: container_id, or " +
-          "source_path (the note's identity name). A miss is a structured " +
-          "container_not_found.",
+          "source_path (the note's identity name). A miss is a " +
+          "not_found refusal.",
         inputSchema: {
           container_id: z.string().optional().describe("The note's node id."),
           source_path: z
@@ -1008,18 +992,12 @@ export function createServer(
         }
         const edges = nodeId === undefined ? [] : await dial.edges(nodeId);
         if (nodeId === undefined || edges.length === 0) {
-          const miss = {
-            error: "container_not_found",
-            detail:
-              container_id ??
+          return refuse(
+            "not_found",
+            container_id ??
               source_path ??
               "materialize_note needs a container_id or a source_path",
-          };
-          return {
-            content: [{ type: "text", text: `${miss.error}: ${miss.detail}` }],
-            structuredContent: structured(miss),
-            isError: true,
-          };
+          );
         }
         const body = await bodies.readBody(nodeId);
         const tags = edges
@@ -1083,8 +1061,8 @@ export function createServer(
           "parent is named — orphan-safe, idempotent on (Note, title), with " +
           "heal-on-reuse for interrupted mints. tags[] is accepted and " +
           "forward-carried (the hasTag write is C9's). Returns {node_id, " +
-          "created}; misses are structured (bad_title / bad_parent / " +
-          "bad_tags / admit_refused / suppressed_exists — the title " +
+          "created}; refusals (bad_args / " +
+          "admit_refused / suppressed_exists — the title " +
           "belongs to a suppressed note, whose id it names; restore_note " +
           "brings it back).",
         inputSchema: {
@@ -1126,15 +1104,7 @@ export function createServer(
           },
           options.tags,
         );
-        if (isCreateNoteError(result)) {
-          return {
-            content: [
-              { type: "text", text: `${result.error}: ${result.detail}` },
-            ],
-            structuredContent: structured(result),
-            isError: true,
-          };
-        }
+        if (isCreateNoteError(result)) return refusalResult(result);
         return {
           content: [
             {
@@ -1162,7 +1132,7 @@ export function createServer(
           "wikilink plus the resolvable address, `[[<title>]] (<node id>)`. " +
           "The title is the node's graph name; the id half is the full node " +
           "token (the address of record — resolvable by read_body et al.). " +
-          "Unknown node → structured { error: 'unknown_node' }.",
+          "Unknown node → a not_found refusal.",
         inputSchema: {
           node_id: z
             .string()
@@ -1171,15 +1141,7 @@ export function createServer(
       },
       async ({ node_id }) => {
         const result = await copyReference(dial, node_id);
-        if (isCopyReferenceError(result)) {
-          return {
-            content: [
-              { type: "text", text: `${result.error}: ${result.detail}` },
-            ],
-            structuredContent: structured(result),
-            isError: true,
-          };
-        }
+        if (isCopyReferenceError(result)) return refusalResult(result);
         return {
           content: [{ type: "text", text: result.compound }],
           structuredContent: structured(result),
@@ -1298,9 +1260,8 @@ export function createServer(
           "kept verbatim as one literal so export_note can reproduce it. " +
           "retract:true removes exactly the named values (the revert form). " +
           "Idempotent — a re-run is a read. Returns {node_id, added, " +
-          "removed, tags_added, tags_removed, tags_skipped, tx?}; misses are " +
-          "structured (not_a_note / bad_predicate / bad_value / bad_target / " +
-          "admit_refused).",
+          "removed, tags_added, tags_removed, tags_skipped, tx?}; refusals " +
+          "are not_a_note / bad_args / admit_refused.",
         inputSchema: {
           container_id: z
             .string()
@@ -1328,15 +1289,7 @@ export function createServer(
       },
       async (args) => {
         const result = await setProperties(dial, scope, tagStore, args);
-        if (isSetPropertiesError(result)) {
-          return {
-            content: [
-              { type: "text", text: `${result.error}: ${result.detail}` },
-            ],
-            structuredContent: structured(result),
-            isError: true,
-          };
-        }
+        if (isSetPropertiesError(result)) return refusalResult(result);
         return {
           content: [
             {
@@ -1428,44 +1381,25 @@ export function createServer(
       },
       async ({ container, ops, slot, replacements, tenant }) => {
         const graph = tenant ?? "notes";
-        const refuse = (error: string, detail: string) => ({
-          content: [{ type: "text" as const, text: `${error}: ${detail}` }],
-          structuredContent: structured({ error, detail }),
-          isError: true,
-        });
         const exactlyOne = "send exactly one of ops or replacements";
         try {
           let result: Record<string, unknown> & { noop: boolean };
           let text: string;
           if (replacements !== undefined) {
-            if (ops !== undefined) return refuse("bad_arguments", exactlyOne);
+            if (ops !== undefined) return refuse("bad_args", exactlyOne);
             const patched = await patchContainer(
               facet,
               { container, slot, replacements },
               graph,
             );
-            if (isPatchError(patched)) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `${patched.error}: ${patched.detail}`,
-                  },
-                ],
-                structuredContent: structured(patched),
-                isError: true,
-              };
-            }
+            if (isPatchError(patched)) return refusalResult(patched);
             result = { ...patched };
             text = patched.noop
               ? "noop: the replacements changed nothing"
               : `patched ${String(patched.slots_changed.length)} block(s) in tx ${String(patched.tx)}`;
           } else if (ops !== undefined) {
             if (slot !== undefined) {
-              return refuse(
-                "bad_arguments",
-                "slot applies only to replacements",
-              );
+              return refuse("bad_args", "slot applies only to replacements");
             }
             const saved = await writeContainer(facet, container, ops, graph);
             result = { ...saved };
@@ -1473,7 +1407,7 @@ export function createServer(
               ? "noop: every op netted out"
               : `applied ${String(saved.applied.length)} op(s)`;
           } else {
-            return refuse("bad_arguments", exactlyOne);
+            return refuse("bad_args", exactlyOne);
           }
           let tagOutcome = {};
           if (!result.noop && graph === "notes") {
@@ -1487,14 +1421,11 @@ export function createServer(
           };
         } catch (err) {
           if (err instanceof ChaosClientError) {
-            return {
-              content: [{ type: "text", text: `${err.code}: ${err.message}` }],
-              structuredContent: structured({
-                error: err.code,
-                violations: err.violations,
-              }),
-              isError: true,
-            };
+            return refusalResult({
+              code: err.code,
+              detail: err.message,
+              violations: err.violations,
+            });
           }
           throw err;
         }

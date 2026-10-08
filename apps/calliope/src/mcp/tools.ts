@@ -232,7 +232,7 @@ export interface BlockResult {
 /** `read_block` structured miss — surfaced, never thrown (a read miss is an
  *  answer, not a fault; write-path staleness still throws `stale_section`). */
 export interface BlockMiss {
-  error: "block_not_found";
+  code: "not_found";
   detail: string;
 }
 
@@ -290,12 +290,7 @@ export interface CreateNoteResult {
 
 /** `create_note` structured miss — surfaced, never thrown. */
 export interface CreateNoteError {
-  error:
-    | "bad_title"
-    | "bad_parent"
-    | "bad_tags"
-    | "admit_refused"
-    | "suppressed_exists";
+  code: "bad_args" | "admit_refused" | "suppressed_exists";
   detail: string;
   violations?: unknown[];
   /** `suppressed_exists` only: the hidden note holding the title — the id
@@ -307,7 +302,7 @@ export interface CreateNoteError {
 export function isCreateNoteError(
   r: CreateNoteResult | CreateNoteError,
 ): r is CreateNoteError {
-  return "error" in r;
+  return "code" in r;
 }
 
 /** The kind + type label a minted note carries. */
@@ -344,16 +339,16 @@ export async function createNote(
   // set_properties, and the notes DocumentStore listing.
   const hasType = input.type ?? NOTE_KIND;
   if (title.length === 0) {
-    return { error: "bad_title", detail: "title must be non-empty" };
+    return { code: "bad_args", detail: "title must be non-empty" };
   }
   if (input.tags?.some((t) => t.trim() === "")) {
-    return { error: "bad_tags", detail: "tags must be non-empty strings" };
+    return { code: "bad_args", detail: "tags must be non-empty strings" };
   }
   // F11: hex-color-shaped tokens are junk on the explicit path too.
   const junk = input.tags?.find((t) => isJunkTag(normalizeTag(t)));
   if (junk !== undefined) {
     return {
-      error: "bad_tags",
+      code: "bad_args",
       detail: `tag ${junk} is hex-color-shaped (rejected by the F11 hygiene rule)`,
     };
   }
@@ -366,7 +361,7 @@ export async function createNote(
       } catch (err) {
         if (err instanceof ChaosClientError && err.code === "admit_refused") {
           return {
-            error: "admit_refused",
+            code: "admit_refused",
             detail: err.message,
             violations: err.violations,
           };
@@ -376,14 +371,14 @@ export async function createNote(
     }
     if (!isNodeToken(input.parent)) {
       return {
-        error: "bad_parent",
+        code: "bad_args",
         detail: "parent must be a 64-hex node token",
       };
     }
     const known = await dial.resolveNodes([input.parent]);
     if (!(input.parent in known)) {
       return {
-        error: "bad_parent",
+        code: "bad_args",
         detail: `parent ${input.parent} is not on the node dictionary`,
       };
     }
@@ -410,7 +405,7 @@ export async function createNote(
       // standing is non-empty, so every holder is hidden and [0] exists.
       const held = String(sorted[0]);
       return {
-        error: "suppressed_exists",
+        code: "suppressed_exists",
         detail:
           `a suppressed note already holds the title (${held}); ` +
           "restore_note brings it back — create_note will not mint a twin",
@@ -429,7 +424,7 @@ export async function createNote(
       const healed = await dial.admit(edgeBatch(node, parent), scope);
       if (!healed.admitted) {
         return {
-          error: "admit_refused",
+          code: "admit_refused",
           detail: `the gate refused the healing edge batch for ${node}`,
           violations: healed.violations,
         };
@@ -449,18 +444,11 @@ export async function createNote(
   }
 
   const mint = await dial.admit([opCreate(NOTE_KIND, title)], scope);
-  if (!mint.admitted || mint.minted.length !== 1) {
+  const token = mint.minted.length === 1 ? mint.minted[0] : undefined;
+  if (!mint.admitted || token === undefined) {
     return {
-      error: "admit_refused",
+      code: "admit_refused",
       detail: "the gate refused the mint",
-      violations: mint.violations,
-    };
-  }
-  const [token] = mint.minted;
-  if (token === undefined) {
-    return {
-      error: "admit_refused",
-      detail: "the gate admitted but returned no minted token",
       violations: mint.violations,
     };
   }
@@ -468,7 +456,7 @@ export async function createNote(
   const edges = await dial.admit(edgeBatch(token, parent), scope);
   if (!edges.admitted) {
     return {
-      error: "admit_refused",
+      code: "admit_refused",
       detail:
         `the gate refused the edge batch for ${token} — the node is a ` +
         "dictionary row without its edges; an identical re-run heals it " +
@@ -675,7 +663,7 @@ export interface CompoundReference {
 
 /** `copy_reference` structured miss — surfaced, never thrown. */
 export interface CopyReferenceError {
-  error: "unknown_node";
+  code: "not_found";
   detail: string;
 }
 
@@ -683,7 +671,7 @@ export interface CopyReferenceError {
 export function isCopyReferenceError(
   r: CompoundReference | CopyReferenceError,
 ): r is CopyReferenceError {
-  return "error" in r;
+  return "code" in r;
 }
 
 /**
@@ -715,7 +703,7 @@ export async function copyReference(
   const title = known[nodeId];
   if (title === undefined) {
     return {
-      error: "unknown_node",
+      code: "not_found",
       detail: `${nodeId} resolves to no node on the notes graph`,
     };
   }
@@ -829,7 +817,7 @@ export async function look(
 
 /** `unpin` structured miss — surfaced, never thrown. */
 export interface UnpinError {
-  error: "unknown_pin";
+  code: "not_found";
   detail: string;
 }
 
@@ -840,7 +828,7 @@ export function unpin(
 ): { removed: true; pin_id: string } | UnpinError {
   if (!register.unpin(pinId)) {
     return {
-      error: "unknown_pin",
+      code: "not_found",
       detail: `${pinId} names no pin in the register`,
     };
   }

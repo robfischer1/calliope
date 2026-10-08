@@ -63,7 +63,7 @@ describe("planPatch", () => {
     const plan = planPatch(blocks, undefined, [
       { find: "#a", replace: "`#a`", expected_count: 3 },
     ]);
-    if ("error" in plan) throw new Error(plan.detail);
+    if ("code" in plan) throw new Error(plan.detail);
     expect(plan.counts).toEqual([{ expected: 3, found: 3 }]);
     expect(plan.changed).toEqual([
       {
@@ -80,7 +80,7 @@ describe("planPatch", () => {
     const plan = planPatch(blocks, S2, [
       { find: "#a", replace: "#b", expected_count: 1 },
     ]);
-    if ("error" in plan) throw new Error(plan.detail);
+    if ("code" in plan) throw new Error(plan.detail);
     expect(plan.changed.map((c) => c.slot)).toEqual([S2]);
   });
 
@@ -89,7 +89,7 @@ describe("planPatch", () => {
       { find: "x", replace: "yy", expected_count: 1 },
       { find: "y", replace: "z", expected_count: 2 },
     ]);
-    if ("error" in plan) throw new Error(plan.detail);
+    if ("code" in plan) throw new Error(plan.detail);
     expect(plan.changed[0]?.text).toBe("zz");
     expect(plan.counts).toEqual([
       { expected: 1, found: 1 },
@@ -103,8 +103,8 @@ describe("planPatch", () => {
       { find: "#a", replace: "#b", expected_count: 2 },
       { find: "absent", replace: "", expected_count: 1 },
     ]);
-    expect("error" in plan && plan.error).toBe("count_mismatch");
-    if (!("error" in plan)) return;
+    expect("code" in plan && plan.code).toBe("count_mismatch");
+    if (!("code" in plan)) return;
     expect(plan.counts).toEqual([
       { expected: 1, found: 1 },
       { expected: 2, found: 3 },
@@ -119,7 +119,7 @@ describe("planPatch", () => {
     const plan = planPatch(blocks, undefined, [
       { find: "absent", replace: "x", expected_count: 0 },
     ]);
-    if ("error" in plan) throw new Error(plan.detail);
+    if ("code" in plan) throw new Error(plan.detail);
     expect(plan.changed).toEqual([]);
   });
 
@@ -127,7 +127,7 @@ describe("planPatch", () => {
     const plan = planPatch(blocks, undefined, [
       { find: "one", replace: "one", expected_count: 1 },
     ]);
-    if ("error" in plan) throw new Error(plan.detail);
+    if ("code" in plan) throw new Error(plan.detail);
     expect(plan.changed).toEqual([]);
   });
 
@@ -141,9 +141,9 @@ describe("planPatch", () => {
     };
     const r = [{ find: "#a", replace: "#b", expected_count: 3 }];
     const all = planPatch([...blocks.slice(0, 2), gone], undefined, r);
-    if ("error" in all) throw new Error(all.detail);
+    if ("code" in all) throw new Error(all.detail);
     expect(all.changed.map((c) => c.slot)).toEqual([S1, S2]);
-    expect(planPatch([gone], S3, r)).toMatchObject({ error: "dangling_slot" });
+    expect(planPatch([gone], S3, r)).toMatchObject({ code: "dangling_slot" });
   });
 
   it("a block with text but no blob id is not a target", () => {
@@ -156,9 +156,9 @@ describe("planPatch", () => {
     };
     const r = [{ find: "#a", replace: "#b", expected_count: 3 }];
     const all = planPatch([...blocks.slice(0, 2), odd], undefined, r);
-    if ("error" in all) throw new Error(all.detail);
+    if ("code" in all) throw new Error(all.detail);
     expect(all.changed.map((c) => c.slot)).toEqual([S1, S2]);
-    expect(planPatch([odd], S3, r)).toMatchObject({ error: "dangling_slot" });
+    expect(planPatch([odd], S3, r)).toMatchObject({ code: "dangling_slot" });
   });
 
   it("refuses an empty find, an empty container, an unknown slot and a dangling slot", () => {
@@ -169,19 +169,19 @@ describe("planPatch", () => {
         { find: "", replace: "b", expected_count: 0 },
       ]),
     ).toEqual({
-      error: "empty_find",
+      code: "bad_args",
       detail: "replacement 1 has an empty find",
     });
     expect(planPatch([], undefined, r)).toEqual({
-      error: "empty_container",
+      code: "empty_container",
       detail: "the container has no blocks",
     });
     expect(planPatch(blocks, "f".repeat(64), r)).toEqual({
-      error: "bad_slot",
+      code: "bad_args",
       detail: `${"f".repeat(64)} is not in the container`,
     });
     expect(planPatch(blocks, S3, r)).toEqual({
-      error: "dangling_slot",
+      code: "dangling_slot",
       detail: `${S3} names an absent blob; there is no text to patch`,
     });
   });
@@ -250,7 +250,7 @@ describe("patchContainer", () => {
       container: doc,
       replacements: [{ find: "⬜", replace: "- [ ]", expected_count: 2 }],
     });
-    expect(isPatchError(res) && res.error).toBe("count_mismatch");
+    expect(isPatchError(res) && res.code).toBe("count_mismatch");
     expect(dial.admits.length).toBe(admits);
     expect(blobs.size).toBe(size);
   });
@@ -300,7 +300,7 @@ async function rig() {
 }
 
 interface Out {
-  error?: string;
+  code?: string;
   noop?: boolean;
   tx?: number;
   counts?: unknown;
@@ -353,9 +353,10 @@ describe("write_container with replacements", () => {
       },
     });
     expect(res.isError).toBe(true);
-    const out = res.structuredContent as Out;
-    expect(out.error).toBe("count_mismatch");
-    expect(out.counts).toEqual([{ expected: 5, found: 1 }]);
+    expect(res.structuredContent).toEqual({
+      code: "count_mismatch",
+      detail: "replacement 0: expected 5, found 1",
+    });
     expect(res.content).toEqual([
       {
         type: "text",
@@ -414,8 +415,8 @@ describe("write_container with replacements", () => {
     });
     expect(res.isError).toBe(true);
     expect(res.structuredContent).toEqual({
-      error: "admit_refused",
-      violations: ["nope"],
+      code: "admit_refused",
+      detail: expect.stringContaining('(violations: ["nope"])') as string,
     });
   });
 
@@ -497,7 +498,7 @@ describe("write_container with replacements", () => {
       });
       expect(res.isError, JSON.stringify(args)).toBe(true);
       // Refused at the schema, before the handler: a handler miss
-      // (empty_container / bad_slot) would carry structured content.
+      // (empty_container / bad_args) would carry structured content.
       expect(res.structuredContent, JSON.stringify(args)).toBeUndefined();
     }
   });
@@ -519,9 +520,9 @@ describe("write_container with replacements", () => {
         arguments: args,
       });
       expect(res.isError, JSON.stringify(args)).toBe(true);
-      expect(res.structuredContent).toEqual({ error: "bad_arguments", detail });
+      expect(res.structuredContent).toEqual({ code: "bad_args", detail });
       expect(res.content).toEqual([
-        { type: "text", text: `bad_arguments: ${detail}` },
+        { type: "text", text: `bad_args: ${detail}` },
       ]);
     }
     // Nothing was written: the one block still reads as seeded.
@@ -589,7 +590,7 @@ describe("write_container with replacements", () => {
       },
     });
     expect(res.isError).toBe(true);
-    expect((res.structuredContent as Out).error).toBe("empty_container");
+    expect((res.structuredContent as Out).code).toBe("empty_container");
   });
 
   it("the ops path still saves, nets out, and reconciles tags", async () => {

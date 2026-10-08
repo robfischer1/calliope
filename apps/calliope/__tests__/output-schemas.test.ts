@@ -202,21 +202,70 @@ describe("F17 batch 2a — calliope's output schemas", () => {
     expect([...seen].sort()).toEqual([...VERBS].sort());
   });
 
-  it("leaves a refusal an isError {error, detail}, unvalidated by the schema", async () => {
+  it("answers every refusal as an isError {code, detail}, nothing else", async () => {
     const mcp = await rig();
-    const r = await mcp.callTool({
-      name: "copy_reference",
-      arguments: { node_id: "f".repeat(64) },
+    const refusals: [string, Record<string, unknown>, string][] = [
+      ["copy_reference", { node_id: "f".repeat(64) }, "not_found"],
+      ["export_note", { source_path: "nope" }, "not_found"],
+      ["materialize_note", { source_path: "nope" }, "not_found"],
+      ["unpin", { pin_id: "never" }, "not_found"],
+      ["create_note", { title: "T", parent: "a".repeat(64) }, "bad_args"],
+      [
+        "set_properties",
+        { container_id: "e".repeat(64), properties: [] },
+        "not_a_note",
+      ],
+      [
+        "write_container",
+        {
+          container: "c".repeat(64),
+          ops: [{ op: "add", text: "x", position: "a0" }],
+          replacements: [{ find: "a", replace: "b", expected_count: 0 }],
+        },
+        "bad_args",
+      ],
+    ];
+    for (const [name, args, code] of refusals) {
+      const r = await mcp.callTool({ name, arguments: args });
+      expect(r.isError, name).toBe(true);
+      expect(Object.keys(r.structuredContent as object).sort(), name).toEqual([
+        "code",
+        "detail",
+      ]);
+      expect(r.structuredContent, name).toMatchObject({ code });
+    }
+  });
+
+  it("describes no refusal in a schema, and names the fleet form where it says so", () => {
+    for (const file of readdirSync(SCHEMA_DIR)) {
+      if (!file.endsWith(".schema.json")) continue;
+      const { description } = JSON.parse(
+        readFileSync(new URL(file, SCHEMA_DIR), "utf8"),
+      ) as { description: string };
+      expect(description, file).toContain(
+        "isError result {code, detail} (refusal.schema.json)",
+      );
+      expect(description, file).not.toContain("{error, detail}");
+    }
+  });
+
+  it("pins the unpin answer and the not_found wording of the miss verbs", async () => {
+    const mcp = await rig();
+    const ok = await mcp.callTool({
+      name: "unpin",
+      arguments: { pin_id: "pin-1" },
     });
-    expect(r.isError).toBe(true);
-    expect(r.structuredContent).toMatchObject({ error: "unknown_node" });
-    const miss = await mcp.callTool({
-      name: "export_note",
-      arguments: { source_path: "nope" },
-    });
-    expect(miss.isError).toBe(true);
-    expect(miss.structuredContent).toMatchObject({
-      error: "container_not_found",
-    });
+    expect(ok.isError).toBeFalsy();
+    expect(ok.content).toEqual([{ type: "text", text: "unpinned pin-1" }]);
+    const { tools } = await mcp.listTools();
+    const desc = (n: string) => tools.find((t) => t.name === n)?.description;
+    expect(desc("unpin")).toContain("answers a not_found refusal;");
+    expect(desc("export_note")).toContain("a miss is a not_found refusal.");
+    expect(desc("materialize_note")).toContain(
+      "A miss is a not_found refusal.",
+    );
+    expect(desc("copy_reference")).toContain(
+      "Unknown node → a not_found refusal.",
+    );
   });
 });
