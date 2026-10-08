@@ -22,7 +22,8 @@
     "test": "turbo run test",
     "format": "prettier --write \"**/*.{ts,tsx,json,css}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,json,css}\"",
-    "gate": "bun run format:check && turbo run lint typecheck test build"
+    "gate": "bun run format:check && turbo run lint typecheck test build",
+    "release": "bun apps/calliope/scripts/bundle.ts release"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
