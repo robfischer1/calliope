@@ -199,17 +199,24 @@ describe("create_note — the note-native mint (C8)", () => {
       violations: ["no"],
     });
 
-    // an admit that lands nothing minted is a refused mint too
-    dial.admit = () =>
-      Promise.resolve({ admitted: true, minted: [], violations: [] });
-    const empty = await createNote(dial, SCOPE, {
-      title: "E",
-      parent: parent.node_id,
-    });
-    expect(empty).toMatchObject({
-      code: "admit_refused",
-      detail: "the gate refused the mint",
-    });
+    // a refused admit is a refused mint even when it names a token; an admit
+    // that lands none, or two, is one too
+    for (const [admitted, minted] of [
+      [false, ["t".repeat(64)]],
+      [true, []],
+      [true, ["a".repeat(64), "b".repeat(64)]],
+    ] as const) {
+      dial.admit = () =>
+        Promise.resolve({ admitted, minted: [...minted], violations: [] });
+      const bad = await createNote(dial, SCOPE, {
+        title: "E",
+        parent: parent.node_id,
+      });
+      expect(bad).toMatchObject({
+        code: "admit_refused",
+        detail: "the gate refused the mint",
+      });
+    }
 
     // the edge batch after a good mint
     let calls = 0;

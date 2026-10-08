@@ -444,8 +444,8 @@ export async function createNote(
   }
 
   const mint = await dial.admit([opCreate(NOTE_KIND, title)], scope);
-  const [token] = mint.minted;
-  if (!mint.admitted || mint.minted.length !== 1 || token === undefined) {
+  const token = mint.minted.length === 1 ? mint.minted[0] : undefined;
+  if (!mint.admitted || token === undefined) {
     return {
       code: "admit_refused",
       detail: "the gate refused the mint",
