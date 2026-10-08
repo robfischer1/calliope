@@ -9,7 +9,7 @@ import { RequestLog } from "@forge/stellar-core-ts";
 import type { RequestRecord } from "@forge/stellar-core-ts";
 import { createCalliopeHttpServer } from "../src/mcp/http.js";
 import { createServer } from "../src/mcp/server.js";
-import { VERB_PREFIX, makeWitness } from "../src/mcp/witness.js";
+import { makeWitness } from "../src/mcp/witness.js";
 import { bareClient } from "./helpers/bare-client.js";
 import type { Witness } from "../src/mcp/witness.js";
 import { makeIdentity } from "./helpers/tls-identity.js";
@@ -37,7 +37,6 @@ function recording(): {
   const got: RequestRecord[] = [];
   let closed = 0;
   const log = new RequestLog("calliope", {
-    verbPrefix: VERB_PREFIX,
     sink: (r) => {
       got.push(r);
     },
@@ -114,7 +113,7 @@ afterEach(async () => {
 });
 
 describe("the served route leaves one record per tools/call", () => {
-  it("a read-only call leaves exactly one record: unidentified, path unknown, native", async () => {
+  it("a read-only call leaves exactly one record: unidentified, path unknown", async () => {
     const { witness, got } = recording();
     const url = await listen(witnessedServer(witness));
     await post(url, callEnvelope(1, "list_tags"));
@@ -124,18 +123,19 @@ describe("the served route leaves one record per tools/call", () => {
       verb: "list_tags",
       caller_class: "unidentified",
       path: "unknown",
-      wire_form: "native",
       outcome: "ok",
     });
     expect(Object.keys(got[0] ?? {})).not.toContain("caller_identity");
   });
 
-  it("the wire form follows the fleet record's verb prefix", async () => {
+  it("a prefixed name is recorded as served: the star holds no prefix", async () => {
     const { witness, got } = recording();
     const url = await listen(witnessedServer(witness));
     await post(url, callEnvelope(1, "calliope_list_tags"));
-    expect(got[0]?.wire_form).toBe("prefixed");
-    expect(VERB_PREFIX).toBe("calliope");
+    expect(got[0]).toMatchObject({
+      star: "calliope",
+      verb: "calliope_list_tags",
+    });
   });
 
   it("initialize and tools/list leave none; two calls leave two", async () => {
@@ -323,7 +323,6 @@ describe("makeWitness", () => {
       ).toHaveLength(1);
       const recordLine = lines.find((l) => l.includes("msg=request_log"));
       expect(recordLine).toContain('\\"verb\\":\\"calliope_x\\"');
-      expect(recordLine).toContain('\\"wire_form\\":\\"prefixed\\"');
       await w.close();
     } finally {
       spy.mockRestore();
