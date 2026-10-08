@@ -94,7 +94,7 @@ describe("a Memory-typed node is not a note", () => {
       container_id: node_id,
       properties: [],
     });
-    expect(res).toMatchObject({ error: "not_a_note" });
+    expect(res).toMatchObject({ code: "not_a_note" });
   });
 
   it("the hasType=Note extent (the notes listing) leaves it out", async () => {

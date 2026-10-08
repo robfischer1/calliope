@@ -66,14 +66,14 @@ import {
 } from "../src/mcp/tools.js";
 
 describe("create_note rejects hex-shaped tags (F11)", () => {
-  it("returns bad_tags for a hex-color-shaped explicit tag", async () => {
+  it("returns bad_args for a hex-color-shaped explicit tag", async () => {
     const dial = new F11Dial();
     const res = await f11CreateNote(dial, "notes", {
       title: "Tagged note",
       tags: ["#a6d189"],
     });
     expect(f11IsErr(res)).toBe(true);
-    if (f11IsErr(res)) expect(res.error).toBe("bad_tags");
+    if (f11IsErr(res)) expect(res.code).toBe("bad_args");
   });
 });
 
@@ -152,26 +152,26 @@ describe("create_note — the note-native mint (C8)", () => {
     expect(dial.admits).toHaveLength(2);
   });
 
-  it("rejects a malformed and an unknown parent as bad_parent", async () => {
+  it("rejects a malformed and an unknown parent as bad_args", async () => {
     const dial = new FixtureChaosDial();
     const malformed = await createNote(dial, SCOPE, {
       title: "X",
       parent: "not-hex",
     });
-    expect(isCreateNoteError(malformed) && malformed.error).toBe("bad_parent");
+    expect(isCreateNoteError(malformed) && malformed.code).toBe("bad_args");
     const unknown = await createNote(dial, SCOPE, {
       title: "X",
       parent: "aa".repeat(32),
     });
-    expect(isCreateNoteError(unknown) && unknown.error).toBe("bad_parent");
+    expect(isCreateNoteError(unknown) && unknown.code).toBe("bad_args");
   });
 
   it("rejects an empty title and empty tags", async () => {
     const dial = new FixtureChaosDial();
     const t = await createNote(dial, SCOPE, { title: "   " });
-    expect(isCreateNoteError(t) && t.error).toBe("bad_title");
+    expect(isCreateNoteError(t) && t.code).toBe("bad_args");
     const g = await createNote(dial, SCOPE, { title: "ok", tags: ["a", " "] });
-    expect(isCreateNoteError(g) && g.error).toBe("bad_tags");
+    expect(isCreateNoteError(g) && g.code).toBe("bad_args");
   });
 
   it("surfaces a gate refusal with its violations, verbatim", async () => {
@@ -180,7 +180,7 @@ describe("create_note — the note-native mint (C8)", () => {
     const result = await createNote(dial, SCOPE, { title: "Refused" });
     expect(isCreateNoteError(result)).toBe(true);
     if (!isCreateNoteError(result)) return;
-    expect(result.error).toBe("admit_refused");
+    expect(result.code).toBe("admit_refused");
     expect(result.violations).toEqual([
       { shape: "Note", missing: ["hasName"] },
     ]);

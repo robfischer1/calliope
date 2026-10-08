@@ -100,7 +100,7 @@ export interface NoteDeletion {
 
 export interface DeleteRefusal {
   node_id: string;
-  error: "not_a_note" | "protected" | "has_children";
+  code: "not_a_note" | "protected" | "has_children";
   detail: string;
 }
 
@@ -121,7 +121,7 @@ export interface DeleteNotesResult {
 }
 
 export interface DeleteNotesError {
-  error: "bad_arguments" | "unsupported" | "refused" | "admit_refused";
+  code: "bad_args" | "unsupported" | "batch_refused" | "admit_refused";
   detail: string;
   refused?: DeleteRefusal[];
   violations?: unknown[];
@@ -130,7 +130,7 @@ export interface DeleteNotesError {
 }
 
 export function isDeleteNotesError(r: object): r is DeleteNotesError {
-  return "error" in r;
+  return "code" in r;
 }
 
 interface Plan {
@@ -169,7 +169,7 @@ export async function guard(
   ) {
     return {
       node_id: id,
-      error: "not_a_note",
+      code: "not_a_note",
       detail: `${id} carries no hasType=${NOTE_TYPE} edge`,
     };
   }
@@ -180,7 +180,7 @@ export async function guard(
   ) {
     return {
       node_id: id,
-      error: "protected",
+      code: "protected",
       detail: `${id} is in the frozen archive (isArchived=true)`,
     };
   }
@@ -194,7 +194,7 @@ export async function guard(
       if (label !== undefined && !DELETABLE_OWNERS.has(label)) {
         return {
           node_id: id,
-          error: "protected",
+          code: "protected",
           detail: `${id} is owned by ${label}, not calliope`,
         };
       }
@@ -238,7 +238,7 @@ export async function checkNote(
   if (strays.length > 0) {
     return {
       node_id: id,
-      error: "has_children",
+      code: "has_children",
       detail:
         `${id} is the parent of ${String(strays.length)} note(s) outside ` +
         `this call (${strays.map((e) => e.subject).join(", ")})`,
@@ -269,7 +269,7 @@ async function plan(
     deletion.status = "not_found";
     return { deletion, ops: [] };
   }
-  if ("error" in checked) return checked;
+  if ("code" in checked) return checked;
   const { out, inbound } = checked;
 
   const retract: PlacedEdge[] = [];
@@ -323,11 +323,11 @@ async function plan(
 
 export function validate(ids: string[]): DeleteNotesError | null {
   if (ids.length === 0) {
-    return { error: "bad_arguments", detail: "ids is empty" };
+    return { code: "bad_args", detail: "ids is empty" };
   }
   if (ids.length > DELETE_NOTE_MAX) {
     return {
-      error: "bad_arguments",
+      code: "bad_args",
       detail: `${String(ids.length)} ids; one call takes at most ${String(DELETE_NOTE_MAX)}`,
     };
   }
@@ -335,12 +335,12 @@ export function validate(ids: string[]): DeleteNotesError | null {
   for (const id of ids) {
     if (!TOKEN_RE.test(id)) {
       return {
-        error: "bad_arguments",
+        code: "bad_args",
         detail: `${id} is not a 64-hex node token`,
       };
     }
     if (seen.has(id)) {
-      return { error: "bad_arguments", detail: `${id} is repeated` };
+      return { code: "bad_args", detail: `${id} is repeated` };
     }
     seen.add(id);
   }
@@ -389,7 +389,7 @@ export async function deleteNotes(
   if (invalid !== null) return invalid;
   if (dial.placedEdges === undefined || dial.referrers === undefined) {
     return {
-      error: "unsupported",
+      code: "unsupported",
       detail: "this backend's dial cannot read placed edges",
     };
   }
@@ -401,12 +401,12 @@ export async function deleteNotes(
   const refused: DeleteRefusal[] = [];
   for (const id of input.ids) {
     const p = await plan(placed, id, batch);
-    if ("error" in p) refused.push(p);
+    if ("code" in p) refused.push(p);
     else plans.push(p);
   }
   if (refused.length > 0) {
     return {
-      error: "refused",
+      code: "batch_refused",
       detail: `${String(refused.length)} of ${String(input.ids.length)} id(s) refused; nothing was written`,
       refused,
     };
@@ -437,7 +437,7 @@ export async function deleteNotes(
       const res = await dial.admit(ops, scope);
       if (!res.admitted) {
         return {
-          error: "admit_refused",
+          code: "admit_refused",
           detail: `the gate refused the retraction of ${deletion.node_id}`,
           violations: res.violations,
           notes: landed,

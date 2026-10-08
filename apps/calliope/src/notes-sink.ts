@@ -147,7 +147,7 @@ async function landContainer(
   );
   if (isCreateNoteError(minted)) {
     throw new NotesSinkError(
-      `notes-sink: ${minted.error}: ${minted.detail}`,
+      `notes-sink: ${minted.code}: ${minted.detail}`,
       minted.violations ?? [],
     );
   }

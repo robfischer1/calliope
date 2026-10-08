@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_blob_census/v1",
   "title": "calliope_blob_census \u2014 the answer",
-  "description": "The blob census report: whether every rostered tenant graph reported, how many blob ids the logs hold, and the ids newly marked, reaped or dangling. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "description": "The blob census report: whether every rostered tenant graph reported, how many blob ids the logs hold, and the ids newly marked, reaped or dangling. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml.",
   "type": "object",
   "properties": {
     "complete": {

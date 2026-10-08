@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_write_container/v1",
   "title": "calliope_write_container \u2014 the answer",
-  "description": "One container save. noop says nothing was written. An ops save also answers applied, minted and blobIds; a replacements save answers container, counts and slots_changed; a notes-tenant save adds the inline-tag outcome (tags, or tags_error when the reconcile failed). Refusals (count_mismatch, bad_arguments, admit and chaos codes) are isError results. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "description": "One container save. noop says nothing was written. An ops save also answers applied, minted and blobIds; a replacements save answers container, counts and slots_changed; a notes-tenant save adds the inline-tag outcome (tags, or tags_error when the reconcile failed). A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml.",
   "type": "object",
   "properties": {
     "noop": {

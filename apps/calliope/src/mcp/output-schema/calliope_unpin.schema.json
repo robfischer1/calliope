@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_unpin/v1",
   "title": "calliope_unpin \u2014 the answer",
-  "description": "The pin that was cleared. An unknown pin id (unknown_pin) is an isError result. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "description": "The pin that was cleared. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml.",
   "type": "object",
   "properties": {
     "removed": {

@@ -56,19 +56,14 @@ export interface PatchResult {
 }
 
 export interface PatchError {
-  error:
-    | "empty_container"
-    | "bad_slot"
-    | "dangling_slot"
-    | "empty_find"
-    | "count_mismatch";
+  code: "empty_container" | "bad_args" | "dangling_slot" | "count_mismatch";
   detail: string;
   /** Present on count_mismatch: every replacement's tally. */
   counts?: PatchCount[];
 }
 
 export function isPatchError(v: PatchResult | PatchError): v is PatchError {
-  return "error" in v;
+  return "code" in v;
 }
 
 /** Non-overlapping literal occurrences of `find` in `text`. */
@@ -109,13 +104,13 @@ export function planPatch(
   for (const [i, r] of replacements.entries()) {
     if (r.find === "") {
       return {
-        error: "empty_find",
+        code: "bad_args",
         detail: `replacement ${String(i)} has an empty find`,
       };
     }
   }
   if (blocks.length === 0) {
-    return { error: "empty_container", detail: "the container has no blocks" };
+    return { code: "empty_container", detail: "the container has no blocks" };
   }
   let targets: Target[];
   if (slot === undefined) {
@@ -125,12 +120,12 @@ export function planPatch(
   } else {
     const hit = blocks.find((b) => b.slot === slot);
     if (hit === undefined) {
-      return { error: "bad_slot", detail: `${slot} is not in the container` };
+      return { code: "bad_args", detail: `${slot} is not in the container` };
     }
     targets = asTarget(hit);
     if (targets.length === 0) {
       return {
-        error: "dangling_slot",
+        code: "dangling_slot",
         detail: `${slot} names an absent blob; there is no text to patch`,
       };
     }
@@ -151,7 +146,7 @@ export function planPatch(
     .filter(({ c }) => c.found !== c.expected);
   if (misses.length > 0) {
     return {
-      error: "count_mismatch",
+      code: "count_mismatch",
       detail: misses
         .map(
           ({ c, i }) =>
@@ -177,7 +172,7 @@ export async function patchContainer(
 ): Promise<PatchResult | PatchError> {
   const { blocks } = await readContainer(facet, input.container);
   const plan = planPatch(blocks, input.slot, input.replacements);
-  if ("error" in plan) return plan;
+  if ("code" in plan) return plan;
   // A plan that changed nothing still goes through the save: writeContainer
   // answers an empty op list as a noop without opening a transaction.
   const ops: ContainerOp[] = plan.changed.map((t) => ({

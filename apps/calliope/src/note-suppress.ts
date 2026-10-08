@@ -87,7 +87,7 @@ function needsPlacedReads(dial: ChaosDial): dial is Dial {
 }
 
 const UNSUPPORTED: DeleteNotesError = {
-  error: "unsupported",
+  code: "unsupported",
   detail: "this backend's dial cannot read placed edges",
 };
 
@@ -115,7 +115,7 @@ export async function suppressNotes(
     const checked = await checkNote(dial, id, batch);
     if (checked === null) {
       notes.push({ node_id: id, status: "not_found" });
-    } else if ("error" in checked) {
+    } else if ("code" in checked) {
       refused.push(checked);
     } else {
       notes.push({
@@ -126,7 +126,7 @@ export async function suppressNotes(
   }
   if (refused.length > 0) {
     return {
-      error: "refused",
+      code: "batch_refused",
       detail: `${String(refused.length)} of ${String(input.ids.length)} id(s) refused; nothing was written`,
       refused,
     };
@@ -143,7 +143,7 @@ export async function suppressNotes(
     );
     if (!res.admitted) {
       return {
-        error: "admit_refused",
+        code: "admit_refused",
         detail: "the gate refused the suppression; nothing was written",
         violations: res.violations,
       };
@@ -220,7 +220,7 @@ export async function restoreNotes(
   }
   if (refused.length > 0) {
     return {
-      error: "refused",
+      code: "batch_refused",
       detail: `${String(refused.length)} of ${String(input.ids.length)} id(s) refused; nothing was written`,
       refused,
     };
@@ -230,7 +230,7 @@ export async function restoreNotes(
     const res = await dial.admit(ops, scope);
     if (!res.admitted) {
       return {
-        error: "admit_refused",
+        code: "admit_refused",
         detail: "the gate refused the restore; nothing was written",
         violations: res.violations,
       };

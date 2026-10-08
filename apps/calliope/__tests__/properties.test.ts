@@ -25,7 +25,7 @@ async function note(
 }
 
 function ok(r: Awaited<ReturnType<typeof setProperties>>): SetPropertiesResult {
-  if (isSetPropertiesError(r)) throw new Error(`${r.error}: ${r.detail}`);
+  if (isSetPropertiesError(r)) throw new Error(`${r.code}: ${r.detail}`);
   return r;
 }
 
@@ -368,7 +368,7 @@ describe("set_properties — frontmatter as edges", () => {
       container_id: "cd".repeat(32),
       properties: [{ predicate: "p", values: [{ literal: "v" }] }],
     });
-    expect(isSetPropertiesError(r) && r.error).toBe("not_a_note");
+    expect(isSetPropertiesError(r) && r.code).toBe("not_a_note");
     expect(dial.admits).toHaveLength(0);
   });
 
@@ -386,7 +386,7 @@ describe("set_properties — frontmatter as edges", () => {
         container_id: "cd".repeat(32),
         properties: [{ predicate, values: [{ literal: "v" }] }],
       });
-      expect(isSetPropertiesError(r) && r.error).toBe("bad_predicate");
+      expect(isSetPropertiesError(r) && r.code).toBe("bad_args");
     }
     expect(RESERVED_PREDICATES.has(FRONTMATTER)).toBe(true);
     expect(RESERVED_PREDICATES.has("hasTag")).toBe(true);
@@ -400,14 +400,12 @@ describe("set_properties — frontmatter as edges", () => {
       container_id: id,
       properties: [{ predicate: "p", values: [{ literal: "" }] }],
     });
-    expect(isSetPropertiesError(empty) && empty.error).toBe("bad_value");
+    expect(isSetPropertiesError(empty) && empty.code).toBe("bad_args");
     const malformed = await setProperties(dial, SCOPE, undefined, {
       container_id: id,
       properties: [{ predicate: "p", values: [{ node: "nothex" }] }],
     });
-    expect(isSetPropertiesError(malformed) && malformed.error).toBe(
-      "bad_target",
-    );
+    expect(isSetPropertiesError(malformed) && malformed.code).toBe("bad_args");
   });
 
   it("refuses a node target missing from the dictionary", async () => {
@@ -420,7 +418,7 @@ describe("set_properties — frontmatter as edges", () => {
         { predicate: "childOf", values: [{ node: "ef".repeat(32) }] },
       ],
     });
-    expect(isSetPropertiesError(r) && r.error).toBe("bad_target");
+    expect(isSetPropertiesError(r) && r.code).toBe("bad_args");
     expect(isSetPropertiesError(r) && r.detail).toContain("ef".repeat(32));
     expect(dial.admits.length).toBe(before);
   });
@@ -433,7 +431,7 @@ describe("set_properties — frontmatter as edges", () => {
       container_id: id,
       properties: [{ predicate: "p", values: [{ literal: "v" }] }],
     });
-    expect(isSetPropertiesError(r) && r.error).toBe("admit_refused");
+    expect(isSetPropertiesError(r) && r.code).toBe("admit_refused");
     expect(isSetPropertiesError(r) && r.violations).toEqual([
       { reason: "shape" },
     ]);
@@ -568,7 +566,7 @@ describe("set_properties over MCP, and the round trip through export", () => {
         text: `not_a_note: ${"cd".repeat(32)} carries no hasType=Note edge`,
       },
     ]);
-    expect((r.structuredContent as { error: string }).error).toBe("not_a_note");
+    expect((r.structuredContent as { code: string }).code).toBe("not_a_note");
   });
 });
 
@@ -629,7 +627,7 @@ describe("set_properties — exact refusals and quiet paths", () => {
       container_id: id,
       properties: [{ predicate: "p", values: [{ literal: "v" }] }],
     });
-    expect(isSetPropertiesError(r) && r.error).toBe("not_a_note");
+    expect(isSetPropertiesError(r) && r.code).toBe("not_a_note");
   });
 
   it("asks the dictionary only when a node value is set", async () => {
@@ -817,9 +815,8 @@ describe("set_properties' published surface", () => {
         "kept verbatim as one literal so export_note can reproduce it. " +
         "retract:true removes exactly the named values (the revert form). " +
         "Idempotent — a re-run is a read. Returns {node_id, added, " +
-        "removed, tags_added, tags_removed, tags_skipped, tx?}; misses are " +
-        "structured (not_a_note / bad_predicate / bad_value / bad_target / " +
-        "admit_refused).",
+        "removed, tags_added, tags_removed, tags_skipped, tx?}; refusals " +
+        "are not_a_note / bad_args / admit_refused.",
     );
     const props = tool?.inputSchema.properties as Record<
       string,

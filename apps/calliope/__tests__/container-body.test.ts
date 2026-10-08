@@ -167,7 +167,7 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
     expect(after.slice(0, 2).map((b) => b.id)).toEqual(before.map((b) => b.id));
   });
 
-  it("a miss is still container_not_found, not a table error", async () => {
+  it("a miss is still not_found, not a table error", async () => {
     const { mcp } = await rig();
     const miss = await mcp.callTool({
       name: "materialize_note",
@@ -175,10 +175,10 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
     });
     expect(miss.isError).toBe(true);
     expect(miss.structuredContent).toMatchObject({
-      error: "container_not_found",
+      code: "not_found",
     });
     // export_note: no handle at all, an unknown path, an unknown id — every
-    // miss is the structured container_not_found, never a body-client call.
+    // miss is the structured not_found, never a body-client call.
     for (const args of [
       {},
       { source_path: "never/dissolved.md" },
@@ -187,7 +187,7 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
       const res = await mcp.callTool({ name: "export_note", arguments: args });
       expect(res.isError).toBe(true);
       expect(res.structuredContent).toMatchObject({
-        error: "container_not_found",
+        code: "not_found",
       });
     }
   });
@@ -203,14 +203,14 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
     const res = await mcp.callTool({ name: "export_note", arguments: {} });
     expect(res.isError).toBe(true);
     expect(res.structuredContent).toEqual({
-      error: "container_not_found",
+      code: "not_found",
       detail: "export_note needs a container_id or a source_path",
     });
     // The text half carries the same miss, for a caller reading prose only.
     expect(res.content).toEqual([
       {
         type: "text",
-        text: "container_not_found: export_note needs a container_id or a source_path",
+        text: "not_found: export_note needs a container_id or a source_path",
       },
     ]);
     expect(reads).toEqual([]);
@@ -221,7 +221,7 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
       arguments: { container_id: unknown },
     });
     expect(res2.structuredContent).toEqual({
-      error: "container_not_found",
+      code: "not_found",
       detail: unknown,
     });
     expect(reads).toContain(unknown);
