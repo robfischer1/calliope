@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_delete_note/v1",
+  "title": "calliope_delete_note \u2014 the answer",
+  "description": "What a delete did or, on a dry run, would do. mode says which report this is: suppress (the default) answers per-note suppress statuses and totals {suppressed, already_suppressed, not_found}; purge answers per-note deletion plans and totals {deleted, not_found, edges_out, edges_in, blocks, shared_blocks, blobs_referenced, blobs_deleted, tag_rows}. A refusal (bad_arguments, unsupported, refused, admit_refused) is an isError result. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "type": "object",
+  "properties": {
+    "mode": {
+      "enum": [
+        "suppress",
+        "purge"
+      ]
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "node_id": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "would_suppress",
+                  "suppressed",
+                  "already_suppressed",
+                  "not_found"
+                ]
+              }
+            },
+            "required": [
+              "node_id",
+              "status"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "node_id": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "would_delete",
+                  "deleted",
+                  "not_found"
+                ]
+              },
+              "edges_out": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "edges_in": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "blocks": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "shared_blocks": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "blobs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "tx": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "node_id",
+              "status",
+              "edges_out",
+              "edges_in",
+              "blocks",
+              "shared_blocks",
+              "blobs",
+              "tags"
+            ]
+          }
+        ]
+      }
+    },
+    "totals": {
+      "type": "object",
+      "properties": {
+        "suppressed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "already_suppressed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_found": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deleted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "edges_out": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "edges_in": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "blocks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "shared_blocks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blobs_referenced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blobs_deleted": {
+          "const": 0
+        },
+        "tag_rows": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "not_found"
+      ]
+    },
+    "tx": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "mode",
+    "dry_run",
+    "notes",
+    "totals"
+  ]
+}

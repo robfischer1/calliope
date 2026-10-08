@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_read_container/v1",
+  "title": "calliope_read_container \u2014 the answer",
+  "description": "A container's blocks in position order; a block whose prose is absent is dangling with null text. asOfTx echoes an as-of read. An unknown container answers an empty block list. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "type": "object",
+  "properties": {
+    "blocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "slot": {
+            "type": "string"
+          },
+          "position": {
+            "type": "string"
+          },
+          "blobId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dangling": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "slot",
+          "position",
+          "blobId",
+          "text",
+          "dangling"
+        ]
+      }
+    },
+    "asOfTx": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "blocks"
+  ]
+}

@@ -18,6 +18,7 @@ import {
 } from "../note-delete.js";
 import { restoreNotes, suppressNotes } from "../note-suppress.js";
 import type { TagStore } from "../tag-store.js";
+import { outputSchemaOf } from "./output-schemas.js";
 
 const ids = z
   .array(z.string().regex(/^[0-9a-f]{64}$/))
@@ -75,6 +76,7 @@ export function registerDeleteVerbs(
   server.registerTool(
     "delete_note",
     {
+      outputSchema: outputSchemaOf("delete_note"),
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -153,6 +155,7 @@ export function registerDeleteVerbs(
   server.registerTool(
     "restore_note",
     {
+      outputSchema: outputSchemaOf("restore_note"),
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,

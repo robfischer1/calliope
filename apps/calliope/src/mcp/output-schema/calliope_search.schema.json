@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_search/v1",
+  "title": "calliope_search \u2014 the answer",
+  "description": "Ranked hits with snippets, fused across the arms that answered; a dark arm is named in armsDark, never hidden. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "type": "object",
+  "properties": {
+    "hits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "arms": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "snippet",
+          "score",
+          "arms"
+        ]
+      }
+    },
+    "armsQueried": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "armsDark": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "hits",
+    "armsQueried",
+    "armsDark"
+  ]
+}

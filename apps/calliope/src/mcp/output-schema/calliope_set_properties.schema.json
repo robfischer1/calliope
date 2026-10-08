@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_set_properties/v1",
+  "title": "calliope_set_properties \u2014 the answer",
+  "description": "The edges and tags a frontmatter landing asserted or retracted. A structured miss (not_a_note, bad_predicate, bad_value, bad_target, admit_refused) is an isError result. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "type": "object",
+  "properties": {
+    "node_id": {
+      "type": "string"
+    },
+    "added": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "removed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "tags_added": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "tags_removed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "tags_skipped": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "tx": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "node_id",
+    "added",
+    "removed",
+    "tags_added",
+    "tags_removed",
+    "tags_skipped"
+  ]
+}

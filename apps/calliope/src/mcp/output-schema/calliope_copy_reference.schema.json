@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_copy_reference/v1",
+  "title": "calliope_copy_reference \u2014 the answer",
+  "description": "The compound reference for a note: the wikilink, the resolvable id and both joined as `[[title]] (id)`. A miss is an isError result. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "type": "object",
+  "properties": {
+    "compound": {
+      "type": "string"
+    },
+    "wikilink": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "address_form": {
+      "enum": [
+        "node",
+        "path"
+      ]
+    }
+  },
+  "required": [
+    "compound",
+    "wikilink",
+    "id",
+    "title",
+    "address_form"
+  ]
+}

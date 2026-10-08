@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_container_history/v1",
+  "title": "calliope_container_history \u2014 the answer",
+  "description": "A container's graph transactions, ascending, with the count. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "type": "object",
+  "properties": {
+    "transactions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "tx": {
+            "type": "integer"
+          },
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "author": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tx",
+          "at",
+          "author",
+          "note"
+        ]
+      }
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "transactions",
+    "count"
+  ]
+}

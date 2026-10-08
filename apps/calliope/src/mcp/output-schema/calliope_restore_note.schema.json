@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_restore_note/v1",
+  "title": "calliope_restore_note \u2014 the answer",
+  "description": "What a restore did per note and in total. A refusal (bad_arguments, unsupported, refused, admit_refused) is an isError result. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "type": "object",
+  "properties": {
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "restored",
+              "not_suppressed",
+              "not_found"
+            ]
+          }
+        },
+        "required": [
+          "node_id",
+          "status"
+        ]
+      }
+    },
+    "totals": {
+      "type": "object",
+      "properties": {
+        "restored": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_suppressed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_found": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "restored",
+        "not_suppressed",
+        "not_found"
+      ]
+    },
+    "tx": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "notes",
+    "totals"
+  ]
+}

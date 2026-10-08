@@ -62,6 +62,7 @@ import { containerHistory, readContainer } from "../container-read.js";
 import { containerBodies } from "../container-body.js";
 import { runBlobCensus } from "../blob-census.js";
 import type { TagStore } from "../tag-store.js";
+import { outputSchemaOf } from "./output-schemas.js";
 import type { SearchProvider, SearchResponse } from "../search-types.js";
 
 /**
@@ -527,6 +528,7 @@ export function createServer(
   server.registerTool(
     "search",
     {
+      outputSchema: outputSchemaOf("search"),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -627,6 +629,7 @@ export function createServer(
     server.registerTool(
       "file_revisions",
       {
+        outputSchema: outputSchemaOf("file_revisions"),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -672,6 +675,7 @@ export function createServer(
     server.registerTool(
       "revision_deltas",
       {
+        outputSchema: outputSchemaOf("revision_deltas"),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -708,6 +712,7 @@ export function createServer(
     server.registerTool(
       "look",
       {
+        outputSchema: outputSchemaOf("look"),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -743,6 +748,7 @@ export function createServer(
     server.registerTool(
       "unpin",
       {
+        outputSchema: outputSchemaOf("unpin"),
         annotations: {
           readOnlyHint: false,
           destructiveHint: true,
@@ -794,6 +800,7 @@ export function createServer(
     server.registerTool(
       "dissolve_note",
       {
+        outputSchema: outputSchemaOf("dissolve_note"),
         annotations: {
           readOnlyHint: false,
           destructiveHint: false,
@@ -893,6 +900,7 @@ export function createServer(
     server.registerTool(
       "export_note",
       {
+        outputSchema: outputSchemaOf("export_note"),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -971,6 +979,7 @@ export function createServer(
     server.registerTool(
       "materialize_note",
       {
+        outputSchema: outputSchemaOf("materialize_note"),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -1060,6 +1069,7 @@ export function createServer(
     server.registerTool(
       "create_note",
       {
+        outputSchema: outputSchemaOf("create_note"),
         annotations: {
           readOnlyHint: false,
           destructiveHint: false,
@@ -1140,6 +1150,7 @@ export function createServer(
     server.registerTool(
       "copy_reference",
       {
+        outputSchema: outputSchemaOf("copy_reference"),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -1193,6 +1204,7 @@ export function createServer(
     server.registerTool(
       "list_by_tag",
       {
+        outputSchema: outputSchemaOf("list_by_tag"),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -1240,6 +1252,7 @@ export function createServer(
     server.registerTool(
       "list_tags",
       {
+        outputSchema: outputSchemaOf("list_tags"),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -1270,6 +1283,7 @@ export function createServer(
     server.registerTool(
       "set_properties",
       {
+        outputSchema: outputSchemaOf("set_properties"),
         annotations: {
           readOnlyHint: false,
           destructiveHint: true,
@@ -1371,6 +1385,7 @@ export function createServer(
     server.registerTool(
       "write_container",
       {
+        outputSchema: outputSchemaOf("write_container"),
         annotations: {
           readOnlyHint: false,
           destructiveHint: false,
@@ -1492,6 +1507,7 @@ export function createServer(
     server.registerTool(
       "read_container",
       {
+        outputSchema: outputSchemaOf("read_container"),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -1541,6 +1557,7 @@ export function createServer(
     server.registerTool(
       "container_history",
       {
+        outputSchema: outputSchemaOf("container_history"),
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -1584,6 +1601,7 @@ export function createServer(
     server.registerTool(
       "blob_census",
       {
+        outputSchema: outputSchemaOf("blob_census"),
         annotations: {
           readOnlyHint: false,
           destructiveHint: true,

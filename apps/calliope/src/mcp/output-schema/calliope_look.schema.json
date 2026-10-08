@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_look/v1",
+  "title": "calliope_look \u2014 the answer",
+  "description": "The attention pointer: the current focus with its drift verdict (null when none has arrived) and every pin, each with its own verdict. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "type": "object",
+  "properties": {
+    "focus": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pointer": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "body"
+                },
+                "node": {
+                  "type": "string"
+                },
+                "section": {
+                  "type": "string"
+                },
+                "offsetFrom": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "offsetTo": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "text": {
+                  "type": "string"
+                },
+                "ts": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "node",
+                "section",
+                "offsetFrom",
+                "offsetTo",
+                "text",
+                "ts"
+              ]
+            },
+            "received_at": {
+              "type": "string"
+            },
+            "drift": {
+              "enum": [
+                "none",
+                "drifted",
+                "gone"
+              ]
+            },
+            "current_text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pointer",
+            "received_at",
+            "drift"
+          ]
+        }
+      ]
+    },
+    "pins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pointer": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "body"
+              },
+              "node": {
+                "type": "string"
+              },
+              "section": {
+                "type": "string"
+              },
+              "offsetFrom": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "offsetTo": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "text": {
+                "type": "string"
+              },
+              "ts": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "node",
+              "section",
+              "offsetFrom",
+              "offsetTo",
+              "text",
+              "ts"
+            ]
+          },
+          "received_at": {
+            "type": "string"
+          },
+          "drift": {
+            "enum": [
+              "none",
+              "drifted",
+              "gone"
+            ]
+          },
+          "current_text": {
+            "type": "string"
+          },
+          "pin_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pointer",
+          "received_at",
+          "drift",
+          "pin_id"
+        ]
+      }
+    }
+  },
+  "required": [
+    "focus",
+    "pins"
+  ]
+}

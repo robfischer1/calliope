@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_list_by_tag/v1",
+  "title": "calliope_list_by_tag \u2014 the answer",
+  "description": "The notes carrying a tag: the normalized tag and the node ids. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "type": "object",
+  "properties": {
+    "tag": {
+      "type": "string"
+    },
+    "node_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "tag",
+    "node_ids"
+  ]
+}

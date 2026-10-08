@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_file_revisions/v1",
+  "title": "calliope_file_revisions \u2014 the answer",
+  "description": "The frozen file-revision archive, newest first, as {revisions}; empty is an empty list. A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "type": "object",
+  "properties": {
+    "revisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "schema_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "file_path": {
+            "type": "string"
+          },
+          "prior_file_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "change_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "authorship": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary_model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary_generated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "git_blob_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_blob_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "captured_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "schema_type",
+          "repo",
+          "commit_sha",
+          "file_path",
+          "prior_file_path",
+          "change_type",
+          "authorship",
+          "summary",
+          "summary_model",
+          "summary_generated_at",
+          "git_blob_sha",
+          "parent_blob_sha",
+          "captured_at"
+        ]
+      }
+    }
+  },
+  "required": [
+    "revisions"
+  ]
+}

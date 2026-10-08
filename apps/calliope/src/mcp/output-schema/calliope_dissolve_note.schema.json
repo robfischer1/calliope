@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_dissolve_note/v1",
+  "title": "calliope_dissolve_note \u2014 the answer",
+  "description": "Where a promoted container landed: the note's id, whether this call minted it, and what the body write did (minted, superseded, nooped). A refusal is NOT described here: it is an isError result {error, detail}, which calliope has not yet moved to the fleet's {code, detail} refusal.schema.json.",
+  "type": "object",
+  "properties": {
+    "node_id": {
+      "type": "string"
+    },
+    "created": {
+      "type": "boolean"
+    },
+    "generation": {
+      "enum": [
+        "minted",
+        "superseded",
+        "nooped"
+      ]
+    }
+  },
+  "required": [
+    "node_id",
+    "created",
+    "generation"
+  ]
+}
