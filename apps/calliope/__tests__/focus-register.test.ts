@@ -329,8 +329,8 @@ describe("look with pins + the unpin verb", () => {
     const reg = new FocusRegister();
     reg.pin("p1", pointer(), "t1");
     expect(unpin(reg, "p1")).toEqual({ removed: true, pin_id: "p1" });
-    expect(unpin(reg, "p1")).toMatchObject({ error: "unknown_pin" });
-    expect(unpin(reg, "never")).toMatchObject({ error: "unknown_pin" });
+    expect(unpin(reg, "p1")).toMatchObject({ code: "not_found" });
+    expect(unpin(reg, "never")).toMatchObject({ code: "not_found" });
   });
 });
 

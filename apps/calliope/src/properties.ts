@@ -114,12 +114,7 @@ export interface SetPropertiesResult {
 }
 
 export interface SetPropertiesError {
-  error:
-    | "not_a_note"
-    | "bad_predicate"
-    | "bad_value"
-    | "bad_target"
-    | "admit_refused";
+  code: "not_a_note" | "bad_args" | "admit_refused";
   detail: string;
   violations?: unknown[];
 }
@@ -127,7 +122,7 @@ export interface SetPropertiesError {
 export function isSetPropertiesError(
   r: SetPropertiesResult | SetPropertiesError,
 ): r is SetPropertiesError {
-  return "error" in r;
+  return "code" in r;
 }
 
 const TOKEN_RE = /^[0-9a-f]{64}$/;
@@ -148,13 +143,13 @@ function validate(input: SetPropertiesInput): SetPropertiesError | null {
     const name = p.predicate.trim();
     if (name === "" || name !== p.predicate) {
       return {
-        error: "bad_predicate",
+        code: "bad_args",
         detail: `predicate ${JSON.stringify(p.predicate)} must be non-empty and untrimmed`,
       };
     }
     if (RESERVED_PREDICATES.has(name)) {
       return {
-        error: "bad_predicate",
+        code: "bad_args",
         detail: `${name} is reserved — another writer owns it`,
       };
     }
@@ -162,12 +157,12 @@ function validate(input: SetPropertiesInput): SetPropertiesError | null {
       if ("node" in v) {
         if (!TOKEN_RE.test(v.node)) {
           return {
-            error: "bad_target",
+            code: "bad_args",
             detail: `${name}: ${v.node} is not a 64-hex node token`,
           };
         }
       } else if (v.literal === "") {
-        return { error: "bad_value", detail: `${name}: empty literal` };
+        return { code: "bad_args", detail: `${name}: empty literal` };
       }
     }
   }
@@ -297,7 +292,7 @@ export async function setProperties(
     !current.some((e) => e.predicate === "hasType" && e.value === NOTE_KIND)
   ) {
     return {
-      error: "not_a_note",
+      code: "not_a_note",
       detail: `${nodeId} carries no hasType=${NOTE_KIND} edge`,
     };
   }
@@ -314,7 +309,7 @@ export async function setProperties(
     const missing = targets.find((t) => !(t in known));
     if (missing !== undefined) {
       return {
-        error: "bad_target",
+        code: "bad_args",
         detail: `${missing} is not on the node dictionary`,
       };
     }
@@ -332,7 +327,7 @@ export async function setProperties(
     const res = await dial.admit(ops, scope);
     if (!res.admitted) {
       return {
-        error: "admit_refused",
+        code: "admit_refused",
         detail: `the gate refused the property batch for ${nodeId}`,
         violations: res.violations,
       };

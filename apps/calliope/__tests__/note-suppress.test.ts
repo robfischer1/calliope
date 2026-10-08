@@ -90,7 +90,6 @@ async function call(
   out: Record<string, unknown> & {
     notes?: { node_id: string; status: string }[];
     totals?: Record<string, number>;
-    refused?: { node_id: string; error: string }[];
   };
 }> {
   const res = await mcp.callTool({ name, arguments: args });
@@ -417,10 +416,7 @@ describe("purge still retracts", () => {
 });
 
 describe("the protection rule applies to both modes", () => {
-  async function refusedBoth(
-    r: Rig,
-    ids: string[],
-  ): Promise<{ node_id: string; error: string }[][]> {
+  async function refusedBoth(r: Rig, ids: string[]): Promise<string[]> {
     const admits = r.dial.admits.length;
     const out = [];
     for (const purge of [false, true]) {
@@ -430,10 +426,12 @@ describe("the protection rule applies to both modes", () => {
         dry_run: false,
       });
       expect(res.isError).toBe(true);
-      expect(res.text).toBe(
-        `refused: 1 of ${String(ids.length)} id(s) refused; nothing was written`,
+      expect(res.out.code).toBe("batch_refused");
+      expect(res.text).toBe(`batch_refused: ${String(res.out.detail)}`);
+      expect(res.out.detail).toContain(
+        `1 of ${String(ids.length)} id(s) refused; nothing was written (`,
       );
-      out.push(res.out.refused ?? []);
+      out.push(String(res.out.detail));
     }
     expect(r.dial.admits.length).toBe(admits);
     return out;
@@ -445,10 +443,8 @@ describe("the protection rule applies to both modes", () => {
     const m = await r.dial.admit([opCreate("Thing", "thing")], SCOPE);
     const thing = m.minted[0] ?? "";
     await edge(r.dial, thing, "x", { toLiteral: "y" });
-    for (const refused of await refusedBoth(r, [a, thing])) {
-      expect(refused).toEqual([
-        expect.objectContaining({ node_id: thing, error: "not_a_note" }),
-      ]);
+    for (const detail of await refusedBoth(r, [a, thing])) {
+      expect(detail).toContain(`not_a_note: ${thing} `);
     }
   });
 
@@ -456,10 +452,8 @@ describe("the protection rule applies to both modes", () => {
     const r = await rig();
     const a = await note(r.mcp, "Archived");
     await edge(r.dial, a, "isArchived", { toLiteral: "true" });
-    for (const refused of await refusedBoth(r, [a])) {
-      expect(refused).toEqual([
-        expect.objectContaining({ node_id: a, error: "protected" }),
-      ]);
+    for (const detail of await refusedBoth(r, [a])) {
+      expect(detail).toContain(`protected: ${a} `);
     }
   });
 
@@ -469,10 +463,8 @@ describe("the protection rule applies to both modes", () => {
     const owner = "0c".repeat(32);
     r.dial.seed("Owner", "Mnemosyne", owner);
     await edge(r.dial, a, "ownedBy", { toNode: owner });
-    for (const refused of await refusedBoth(r, [a])) {
-      expect(refused).toEqual([
-        expect.objectContaining({ node_id: a, error: "protected" }),
-      ]);
+    for (const detail of await refusedBoth(r, [a])) {
+      expect(detail).toContain(`protected: ${a} `);
     }
   });
 
@@ -480,10 +472,8 @@ describe("the protection rule applies to both modes", () => {
     const r = await rig();
     const p = await note(r.mcp, "Parent");
     const c = await note(r.mcp, "Child", { parent: p });
-    for (const refused of await refusedBoth(r, [p])) {
-      expect(refused).toEqual([
-        expect.objectContaining({ node_id: p, error: "has_children" }),
-      ]);
+    for (const detail of await refusedBoth(r, [p])) {
+      expect(detail).toContain(`has_children: ${p} `);
     }
     const res = await suppress(r.mcp, [p, c]);
     expect(res.isError).toBe(false);
@@ -500,10 +490,11 @@ describe("the protection rule applies to both modes", () => {
     const admits = r.dial.admits.length;
     const res = await restore(r.mcp, [a, memory]);
     expect(res.isError).toBe(true);
-    expect(res.text).toBe("refused: 1 of 2 id(s) refused; nothing was written");
-    expect(res.out.refused).toEqual([
-      expect.objectContaining({ node_id: memory, error: "not_a_note" }),
-    ]);
+    expect(res.out.code).toBe("batch_refused");
+    expect(res.out.detail).toContain(
+      "1 of 2 id(s) refused; nothing was written",
+    );
+    expect(res.out.detail).toContain(`not_a_note: ${memory} `);
     expect(r.dial.admits.length).toBe(admits);
     expect((await suppressedNotes(r.dial, SCOPE)).has(a)).toBe(true);
   });
@@ -580,7 +571,7 @@ describe("the marker", () => {
       properties: [{ predicate: SUPPRESSED, values: [{ literal: "true" }] }],
     });
     expect(res.isError).toBe(true);
-    expect(res.text).toContain("bad_predicate");
+    expect(res.text).toContain("bad_args");
     expect(await suppressedNotes(r.dial, SCOPE)).toEqual(new Set());
   });
 
@@ -669,11 +660,11 @@ describe("suppressNotes / restoreNotes — arguments and failure paths", () => {
   it("refuses a bad id list before reading anything", async () => {
     const dial = new FixtureChaosDial();
     expect(await suppressNotes(dial, SCOPE, { ids: [] })).toEqual({
-      error: "bad_arguments",
+      code: "bad_args",
       detail: "ids is empty",
     });
     expect(await restoreNotes(dial, SCOPE, { ids: [ID, ID] })).toEqual({
-      error: "bad_arguments",
+      code: "bad_args",
       detail: `${ID} is repeated`,
     });
   });
@@ -693,7 +684,7 @@ describe("suppressNotes / restoreNotes — arguments and failure paths", () => {
       findByValue: (s, p, v) => full.findByValue(s, p, v),
     };
     const unsupported = {
-      error: "unsupported",
+      code: "unsupported",
       detail: "this backend's dial cannot read placed edges",
     };
     expect(await suppressNotes(bare, SCOPE, { ids: [ID] })).toEqual(
@@ -725,12 +716,12 @@ describe("suppressNotes / restoreNotes — arguments and failure paths", () => {
     expect(
       await suppressNotes(refusing, SCOPE, { ids: [a], dry_run: false }),
     ).toEqual({
-      error: "admit_refused",
+      code: "admit_refused",
       detail: "the gate refused the suppression; nothing was written",
       violations,
     });
     expect(await restoreNotes(refusing, SCOPE, { ids: [b] })).toEqual({
-      error: "admit_refused",
+      code: "admit_refused",
       detail: "the gate refused the restore; nothing was written",
       violations,
     });
@@ -786,8 +777,8 @@ describe("the listings' published surface", () => {
         "parent is named — orphan-safe, idempotent on (Note, title), with " +
         "heal-on-reuse for interrupted mints. tags[] is accepted and " +
         "forward-carried (the hasTag write is C9's). Returns {node_id, " +
-        "created}; misses are structured (bad_title / bad_parent / " +
-        "bad_tags / admit_refused / suppressed_exists — the title " +
+        "created}; refusals (bad_args / " +
+        "admit_refused / suppressed_exists — the title " +
         "belongs to a suppressed note, whose id it names; restore_note " +
         "brings it back).",
     );
@@ -860,7 +851,10 @@ describe("create_note never hands back a suppressed note", () => {
     const before = r.dial.admits.length;
     const res = await call(r.mcp, "create_note", { title: "Gone" });
     expect(res.isError).toBe(true);
-    expect(res.out).toMatchObject({ error: "suppressed_exists", node_id: a });
+    expect(res.out).toEqual({
+      code: "suppressed_exists",
+      detail: expect.stringContaining(a) as string,
+    });
     expect(res.text).toContain("suppressed_exists");
     expect(res.text).toContain("restore_note");
     expect(res.text).toContain(a);
@@ -927,7 +921,7 @@ describe("create_note never hands back a suppressed note", () => {
       SCOPE,
     );
     expect(await createNote(dial, SCOPE, { title: "Pair" })).toMatchObject({
-      error: "suppressed_exists",
+      code: "suppressed_exists",
       node_id: low,
     });
   });

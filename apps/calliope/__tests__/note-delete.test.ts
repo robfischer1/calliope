@@ -328,11 +328,9 @@ describe("delete_note — the verb", () => {
     const admits = r.dial.admits.length;
     const { isError, out } = await del(r.mcp, [parent], false);
     expect(isError).toBe(true);
-    expect(out.error).toBe("refused");
-    expect(out.refused).toEqual([
-      expect.objectContaining({ node_id: parent, error: "has_children" }),
-    ]);
-    expect(out.refused?.[0]?.detail).toContain(child);
+    expect(out.code).toBe("batch_refused");
+    expect(out.detail).toContain(`has_children: ${parent} is the parent of`);
+    expect(out.detail).toContain(child);
     expect(r.dial.admits.length).toBe(admits);
   });
 
@@ -364,10 +362,8 @@ describe("delete_note — the verb", () => {
     for (const id of [s?.slot ?? "", typed, nodeTyped]) {
       const { isError, out } = await del(r.mcp, [a, id], false);
       expect(isError).toBe(true);
-      expect(out.refused).toEqual([
-        expect.objectContaining({ node_id: id, error: "not_a_note" }),
-      ]);
-      expect(out.detail).toBe("1 of 2 id(s) refused; nothing was written");
+      expect(out.detail).toContain("1 of 2 id(s) refused; nothing was written");
+      expect(out.detail).toContain(`not_a_note: ${id} `);
     }
     expect(r.dial.admits.length).toBe(admits);
     expect((await r.dial.edges(a)).length).toBeGreaterThan(0);
@@ -380,9 +376,7 @@ describe("delete_note — protected notes", () => {
     const a = await note(r.mcp, "Archived");
     await edge(r.dial, a, "isArchived", { toLiteral: "true" });
     const { out } = await del(r.mcp, [a], false);
-    expect(out.refused).toEqual([
-      expect.objectContaining({ node_id: a, error: "protected" }),
-    ]);
+    expect(out.detail).toContain(`protected: ${a} is in the frozen archive`);
   });
 
   it("isArchived=false is not protection", async () => {
@@ -400,13 +394,10 @@ describe("delete_note — protected notes", () => {
     r.dial.seed("Owner", "Mnemosyne", owner);
     await edge(r.dial, a, "ownedBy", { toNode: owner });
     const { out } = await del(r.mcp, [a], false);
-    expect(out.refused).toEqual([
-      {
-        node_id: a,
-        error: "protected",
-        detail: `${a} is owned by mnemosyne, not calliope`,
-      },
-    ]);
+    expect(out.detail).toBe(
+      "1 of 1 id(s) refused; nothing was written " +
+        `(protected: ${a} is owned by mnemosyne, not calliope)`,
+    );
   });
 
   it("an unclaimed note deletes and its system edge stays", async () => {
@@ -443,24 +434,24 @@ describe("deleteNotes — arguments and failure paths", () => {
 
   it("refuses an empty, oversized, malformed or repeated id list", async () => {
     expect(await call([])).toEqual({
-      error: "bad_arguments",
+      code: "bad_args",
       detail: "ids is empty",
     });
     const many = Array.from({ length: DELETE_NOTE_MAX + 1 }, (_, i) =>
       i.toString(16).padStart(64, "0"),
     );
     expect(await call(many)).toEqual({
-      error: "bad_arguments",
+      code: "bad_args",
       detail: `${String(DELETE_NOTE_MAX + 1)} ids; one call takes at most ${String(DELETE_NOTE_MAX)}`,
     });
     const atCap = await call(many.slice(0, DELETE_NOTE_MAX));
     expect(isDeleteNotesError(atCap)).toBe(false);
     expect(await call(["XYZ"])).toEqual({
-      error: "bad_arguments",
+      code: "bad_args",
       detail: "XYZ is not a 64-hex node token",
     });
     expect(await call([ID, ID])).toEqual({
-      error: "bad_arguments",
+      code: "bad_args",
       detail: `${ID} is repeated`,
     });
   });
@@ -480,7 +471,7 @@ describe("deleteNotes — arguments and failure paths", () => {
       findByValue: (s, p, v) => full.findByValue(s, p, v),
     };
     const expected = {
-      error: "unsupported",
+      code: "unsupported",
       detail: "this backend's dial cannot read placed edges",
     };
     expect(await call([ID], bare)).toEqual(expected);
@@ -515,7 +506,7 @@ describe("deleteNotes — arguments and failure paths", () => {
       dry_run: false,
     });
     expect(out).toEqual({
-      error: "admit_refused",
+      code: "admit_refused",
       detail: `the gate refused the retraction of ${b}`,
       violations: [{ rule: "nope" }],
       notes: [expect.objectContaining({ node_id: a, status: "deleted" })],
@@ -557,13 +548,10 @@ describe("delete_note — the edges of each rule", () => {
     await edge(r.dial, wrongPredicate, "kindOf", { toLiteral: "Note" });
     for (const id of [nodeTyped, wrongPredicate]) {
       const { out } = await del(r.mcp, [id], false);
-      expect(out.refused).toEqual([
-        {
-          node_id: id,
-          error: "not_a_note",
-          detail: `${id} carries no hasType=Note edge`,
-        },
-      ]);
+      expect(out.detail).toBe(
+        "1 of 1 id(s) refused; nothing was written " +
+          `(not_a_note: ${id} carries no hasType=Note edge)`,
+      );
     }
   });
 
@@ -572,13 +560,10 @@ describe("delete_note — the edges of each rule", () => {
     const archived = await note(r.mcp, "Archived");
     await edge(r.dial, archived, "isArchived", { toLiteral: "true" });
     const { out } = await del(r.mcp, [archived], false);
-    expect(out.refused).toEqual([
-      {
-        node_id: archived,
-        error: "protected",
-        detail: `${archived} is in the frozen archive (isArchived=true)`,
-      },
-    ]);
+    expect(out.detail).toBe(
+      "1 of 1 id(s) refused; nothing was written " +
+        `(protected: ${archived} is in the frozen archive (isArchived=true))`,
+    );
     const nodeValued = await note(r.mcp, "NodeValued");
     await edge(r.dial, nodeValued, "isArchived", { toNode: "true" });
     const otherPredicate = await note(r.mcp, "Other");
@@ -609,16 +594,14 @@ describe("delete_note — the edges of each rule", () => {
     const c1 = await note(r.mcp, "C1", { parent });
     const c2 = await note(r.mcp, "C2", { parent });
     const { out } = await del(r.mcp, [parent, c1], false);
-    expect(out.refused).toEqual([
-      {
-        node_id: parent,
-        error: "has_children",
-        detail: `${parent} is the parent of 1 note(s) outside this call (${c2})`,
-      },
-    ]);
+    expect(out.detail).toBe(
+      "1 of 2 id(s) refused; nothing was written " +
+        `(has_children: ${parent} is the parent of 1 note(s) outside this call (${c2}))`,
+    );
     const both = await del(r.mcp, [parent], false);
-    expect(both.out.refused?.[0]?.detail).toBe(
-      `${parent} is the parent of 2 note(s) outside this call (${c1}, ${c2})`,
+    expect(both.out.detail).toBe(
+      "1 of 1 id(s) refused; nothing was written " +
+        `(has_children: ${parent} is the parent of 2 note(s) outside this call (${c1}, ${c2}))`,
     );
   });
 
@@ -833,7 +816,8 @@ describe("delete_note's published surface", () => {
     const other = await mint(r.dial, "Thing");
     await edge(r.dial, other, "x", { toLiteral: "y" });
     expect(await text({ ids: [other] })).toEqual([
-      "refused: 1 of 1 id(s) refused; nothing was written",
+      "batch_refused: 1 of 1 id(s) refused; nothing was written " +
+        `(not_a_note: ${other} carries no hasType=Note edge)`,
     ]);
   });
 });
