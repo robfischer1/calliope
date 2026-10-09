@@ -10,9 +10,11 @@ import { FixtureChaosDial, opAdd } from "../src/chaos-client.js";
 import { FixtureTagStore } from "../src/tag-store.js";
 import {
   dissolveContainer,
+  reconcileAttrs,
   sinkNoteVersion,
   NotesSinkError,
 } from "../src/notes-sink.js";
+import type { ChaosDial, ChaosOp, PlacedEdge } from "../src/chaos-client.js";
 import { sha256 } from "../src/document-store.js";
 
 const SCOPE = "notes";
@@ -209,5 +211,119 @@ describe("sinkNoteVersion (F6)", () => {
       subject: "Untitled",
     });
     expect(a.node_id).not.toBe(b.node_id);
+  });
+});
+
+describe("reconcileAttrs converges to exactly {want} (aiws:converge R-E3)", () => {
+  it("retracts a stale sibling beside want, in its own form, and keeps want", async () => {
+    const { client, dial, tags } = rig();
+    const v1 = await sinkNoteVersion(client, dial, SCOPE, tags, {
+      source_path: "Notes/split.md",
+      body_text: "v1",
+      subject: "Split",
+    });
+    // The split: want ("Split") stands beside a stale literal and a
+    // node-form value on the same single-valued slot.
+    await dial.admit(
+      [
+        opAdd(v1.node_id, "title", { toLiteral: "Stale" }),
+        opAdd(v1.node_id, "title", { toNode: v1.node_id }),
+      ],
+      SCOPE,
+    );
+    const before = dial.admits.length;
+    await sinkNoteVersion(client, dial, SCOPE, tags, {
+      source_path: "Notes/split.md",
+      body_text: "v1",
+      subject: "Split",
+    });
+    const titles = (await dial.edges(v1.node_id)).filter(
+      (e) => e.predicate === "title",
+    );
+    expect(titles).toEqual([
+      expect.objectContaining({ value: "Split", isNode: false }),
+    ]);
+    // want stayed: the batch retracts the two stale values and adds nothing.
+    const batch = dial.admits
+      .slice(before)
+      .flatMap((a) => a.ops)
+      .filter((op) => op.predicate === "title");
+    expect(batch.map((op) => op.op).sort()).toEqual([
+      "removeEdge",
+      "removeEdge",
+    ]);
+  });
+});
+
+describe("reconcileAttrs over placed reads", () => {
+  const N = "a".repeat(64);
+  const G1 = "1".repeat(64);
+  const G2 = "2".repeat(64);
+  const placed = (
+    value: string,
+    graph: string,
+    isNode = false,
+  ): PlacedEdge => ({
+    subject: N,
+    predicate: "title",
+    value,
+    isNode,
+    domain: isNode ? "node" : "scalar",
+    graph,
+  });
+  function stub(read: {
+    placed?: PlacedEdge[];
+    edges?: { predicate: string; value: string; isNode: boolean }[];
+  }) {
+    const sent: ChaosOp[][] = [];
+    const dial = {
+      admit: (ops: ChaosOp[]) => {
+        sent.push(ops);
+        return Promise.resolve({ admitted: true, minted: [], violations: [] });
+      },
+      edges: () => Promise.resolve(read.edges ?? []),
+      ...(read.placed !== undefined
+        ? { placedEdges: () => Promise.resolve(read.placed ?? []) }
+        : {}),
+    } as unknown as ChaosDial;
+    return { dial, sent };
+  }
+
+  it("keeps one want, retracts every other value pinned to its own scope", async () => {
+    const { dial, sent } = stub({
+      placed: [
+        placed("Want", G1),
+        placed("Want", G2),
+        placed("Stale", ""),
+        placed(N, G1, true),
+      ],
+    });
+    await reconcileAttrs(dial, SCOPE, N, new Map([["title", "Want"]]));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toEqual([
+      expect.objectContaining({
+        op: "removeEdge",
+        to_literal: "Want",
+        graph: G2,
+      }),
+      expect.objectContaining({ op: "removeEdge", to_literal: "Stale" }),
+      expect.objectContaining({ op: "removeEdge", to_node: N, graph: G1 }),
+    ]);
+    // The scope-less read pins nothing: the retraction rides the batch's.
+    expect(sent[0]?.[1]).not.toHaveProperty("graph");
+  });
+
+  it("an exact {want} sends nothing; a dial with no placed read falls back to edges", async () => {
+    const exact = stub({ placed: [placed("Want", G1)] });
+    await reconcileAttrs(exact.dial, SCOPE, N, new Map([["title", "Want"]]));
+    expect(exact.sent).toHaveLength(0);
+    const bare = stub({
+      edges: [{ predicate: "title", value: "Stale", isNode: false }],
+    });
+    await reconcileAttrs(bare.dial, SCOPE, N, new Map([["title", "Want"]]));
+    expect(bare.sent[0]).toEqual([
+      expect.objectContaining({ op: "removeEdge", to_literal: "Stale" }),
+      expect.objectContaining({ op: "addEdge", to_literal: "Want" }),
+    ]);
   });
 });

@@ -90,26 +90,52 @@ function provenanceAttrs(
 /**
  * Reconcile the note's provenance attribute edges to `next`: assert missing
  * values, retract superseded ones. One admit batch; zero ops = zero calls.
+ *
+ * A slot is converged only when it holds EXACTLY {want}, as a literal
+ * (aiws:converge R-E3): a stale sibling beside want is retracted, never kept.
+ * Every stale value is retracted in its own form — a node-form value as a
+ * node — and pinned to the scope it was read in when the read names one
+ * (retract-in-own-graph); want, when held, stays.
  */
-async function reconcileAttrs(
+export async function reconcileAttrs(
   dial: ChaosDial,
   scope: string,
   nodeId: string,
   next: Map<string, string>,
 ): Promise<void> {
-  const current = await dial.edges(nodeId);
+  const current: {
+    predicate: string;
+    value: string;
+    isNode: boolean;
+    graph?: string;
+  }[] =
+    dial.placedEdges !== undefined
+      ? await dial.placedEdges(nodeId)
+      : await dial.edges(nodeId);
   const ops: ChaosOp[] = [];
   for (const [predicate, value] of next) {
     const standing = current.filter((e) => e.predicate === predicate);
-    if (standing.some((e) => !e.isNode && e.value === value)) {
-      continue; // already exact
-    }
-    for (const stale of standing) {
-      if (!stale.isNode) {
-        ops.push(opRemove(nodeId, predicate, { toLiteral: stale.value }));
+    let kept = false;
+    for (const held of standing) {
+      if (!kept && !held.isNode && held.value === value) {
+        kept = true;
+        continue;
       }
+      const target = held.isNode
+        ? { toNode: held.value }
+        : { toLiteral: held.value };
+      ops.push(
+        opRemove(
+          nodeId,
+          predicate,
+          target,
+          held.graph === "" ? undefined : held.graph,
+        ),
+      );
     }
-    ops.push(opAdd(nodeId, predicate, { toLiteral: value }));
+    if (!kept) {
+      ops.push(opAdd(nodeId, predicate, { toLiteral: value }));
+    }
   }
   if (ops.length === 0) {
     return;
