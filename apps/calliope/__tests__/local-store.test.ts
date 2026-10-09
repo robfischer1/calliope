@@ -49,6 +49,22 @@ describe("the store over the engine", () => {
     expect(dial.admits.length).toBe(admits);
   });
 
+  it("a second store over the same engine resolves the one container it finds", async () => {
+    await store.saveBody("one.md", [{ text: "alpha" }]);
+    const again = new LocalEngineStore(
+      root,
+      { blobs, dial },
+      { pool: null, watch: false },
+    );
+    try {
+      expect((await again.readBody("one.md")).map((s) => s.text)).toEqual([
+        "alpha",
+      ]);
+    } finally {
+      again.close();
+    }
+  });
+
   it("a missing file reads as an empty body", async () => {
     expect(await store.readBody("nothing.md")).toEqual([]);
   });

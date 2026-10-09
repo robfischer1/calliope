@@ -97,7 +97,7 @@ function provenanceAttrs(
  * node — and pinned to the scope it was read in when the read names one
  * (retract-in-own-graph); want, when held, stays.
  */
-async function reconcileAttrs(
+export async function reconcileAttrs(
   dial: ChaosDial,
   scope: string,
   nodeId: string,
@@ -129,9 +129,7 @@ async function reconcileAttrs(
           nodeId,
           predicate,
           target,
-          held.graph === undefined || held.graph === ""
-            ? undefined
-            : held.graph,
+          held.graph === "" ? undefined : held.graph,
         ),
       );
     }
