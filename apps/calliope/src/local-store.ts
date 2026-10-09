@@ -253,6 +253,13 @@ export class LocalEngineStore implements BodyClient {
     const cached = this.#containers.get(nodeId);
     if (cached !== undefined) return cached;
     const existing = await this.#facet.dial.findByName("node", nodeId);
+    // refuse-ambiguous-identity (aiws:converge R-E1): a name two containers
+    // answer to is a split; writing through either deepens it.
+    if (existing.length > 1) {
+      throw new Error(
+        `ambiguous_identity: ${nodeId} resolves to ${String(existing.length)} containers — reconcile them first.`,
+      );
+    }
     let token = existing[0];
     if (token === undefined) {
       const res = await this.#facet.dial.admit(

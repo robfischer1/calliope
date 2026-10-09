@@ -38,6 +38,17 @@ afterEach(async () => {
 });
 
 describe("the store over the engine", () => {
+  it("refuses a container name two nodes answer to (refuse-ambiguous-identity)", async () => {
+    // The fixture door never mints a second node under one name, so the
+    // split is stood in at the read the store resolves through.
+    dial.findByName = () => Promise.resolve(["a".repeat(64), "b".repeat(64)]);
+    const admits = dial.admits.length;
+    await expect(store.readBody("split.md")).rejects.toThrow(
+      /ambiguous_identity: split\.md resolves to 2 containers/,
+    );
+    expect(dial.admits.length).toBe(admits);
+  });
+
   it("a missing file reads as an empty body", async () => {
     expect(await store.readBody("nothing.md")).toEqual([]);
   });
