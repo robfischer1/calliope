@@ -17,7 +17,7 @@
 #
 # THE BASE is oven/bun slim (foundry/base-images/bun); its ENTRYPOINT is empty,
 # so this CMD is PID 1. Renovate moves the digest.
-FROM registry.notusmi.com/foundry/base-images/bun:stable@sha256:e764e9e23747ab9889dc2f079bcea12be4ee5003c2ed2aea1efb895955c3b7c5
+FROM registry.notusmi.com/foundry/base-images/bun:stable@sha256:86fd3940efddf52f2dcbe434da1964826faf5bdbfe974eac71729e1948d9e8b0
 WORKDIR /app
 # Numeric, so the host and the kubelet can resolve it without the image's
 # /etc/passwd: the base's bun user, measured uid=1000 gid=1000 on the running pod.
