@@ -31,6 +31,7 @@ import {
   opRemove,
   type ChaosOp,
 } from "./chaos-client.js";
+import { type FactOp, factOps, observe } from "./converge-witness.js";
 import type { TagStore } from "./tag-store.js";
 import {
   createNote,
@@ -87,9 +88,23 @@ function provenanceAttrs(
   return attrs;
 }
 
+/** An outbound edge as the reconcile reads it (placed when the dial can). */
+interface HeldAttr {
+  predicate: string;
+  value: string;
+  isNode: boolean;
+  graph?: string;
+}
+
+async function readHeld(dial: ChaosDial, nodeId: string): Promise<HeldAttr[]> {
+  return dial.placedEdges !== undefined
+    ? await dial.placedEdges(nodeId)
+    : await dial.edges(nodeId);
+}
+
 /**
- * Reconcile the note's provenance attribute edges to `next`: assert missing
- * values, retract superseded ones. One admit batch; zero ops = zero calls.
+ * The ops that bring the note's provenance attribute edges to `next`: assert
+ * missing values, retract superseded ones.
  *
  * A slot is converged only when it holds EXACTLY {want}, as a literal
  * (aiws:converge R-E3): a stale sibling beside want is retracted, never kept.
@@ -97,21 +112,11 @@ function provenanceAttrs(
  * node — and pinned to the scope it was read in when the read names one
  * (retract-in-own-graph); want, when held, stays.
  */
-export async function reconcileAttrs(
-  dial: ChaosDial,
-  scope: string,
+function reconcileOps(
   nodeId: string,
-  next: Map<string, string>,
-): Promise<void> {
-  const current: {
-    predicate: string;
-    value: string;
-    isNode: boolean;
-    graph?: string;
-  }[] =
-    dial.placedEdges !== undefined
-      ? await dial.placedEdges(nodeId)
-      : await dial.edges(nodeId);
+  current: readonly HeldAttr[],
+  next: ReadonlyMap<string, string>,
+): ChaosOp[] {
   const ops: ChaosOp[] = [];
   for (const [predicate, value] of next) {
     const standing = current.filter((e) => e.predicate === predicate);
@@ -137,6 +142,41 @@ export async function reconcileAttrs(
       ops.push(opAdd(nodeId, predicate, { toLiteral: value }));
     }
   }
+  return ops;
+}
+
+/** The ops asserting additive pairs not already standing (never a retract). */
+function additiveOps(
+  nodeId: string,
+  current: readonly HeldAttr[],
+  pairs: readonly (readonly [string, string])[],
+): ChaosOp[] {
+  const ops: ChaosOp[] = [];
+  const seen = new Set<string>();
+  for (const [predicate, value] of pairs) {
+    const k = `${predicate}\u0000${value}`;
+    const standing = current.some(
+      (e) => e.predicate === predicate && !e.isNode && e.value === value,
+    );
+    if (!standing && !seen.has(k)) {
+      seen.add(k);
+      ops.push(opAdd(nodeId, predicate, { toLiteral: value }));
+    }
+  }
+  return ops;
+}
+
+/**
+ * Reconcile the note's provenance attribute edges to `next`: assert missing
+ * values, retract superseded ones. One admit batch; zero ops = zero calls.
+ */
+export async function reconcileAttrs(
+  dial: ChaosDial,
+  scope: string,
+  nodeId: string,
+  next: Map<string, string>,
+): Promise<void> {
+  const ops = reconcileOps(nodeId, await readHeld(dial, nodeId), next);
   if (ops.length === 0) {
     return;
   }
@@ -147,6 +187,78 @@ export async function reconcileAttrs(
       res.violations,
     );
   }
+}
+
+/**
+ * The attribute half of a land. A minted note already carries them (born
+ * whole); an existing note's reconcile and additive assert are ONE admit.
+ * The converge core is asked the same question, beside, never acting.
+ */
+async function landAttrs(
+  dial: ChaosDial,
+  scope: string,
+  name: string,
+  minted: { node_id: string; created: boolean },
+  attrs: ReadonlyMap<string, string>,
+  additive: readonly (readonly [string, string])[],
+): Promise<void> {
+  if (minted.created) {
+    witness(name, scope, minted.node_id, [], attrs, additive, "created", [
+      ...[...attrs, ...additive].map(([p, v]) => ({
+        kind: "add" as const,
+        p,
+        o: v,
+        node: false,
+      })),
+    ]);
+    return;
+  }
+  const held = await readHeld(dial, minted.node_id);
+  const ops = [
+    ...reconcileOps(minted.node_id, held, attrs),
+    ...additiveOps(minted.node_id, held, additive),
+  ];
+  if (ops.length > 0) {
+    const res = await dial.admit(ops, scope);
+    if (!res.admitted) {
+      throw new NotesSinkError(
+        `notes-sink: the gate refused the attribute batch for ${minted.node_id}`,
+        res.violations,
+      );
+    }
+  }
+  witness(
+    name,
+    scope,
+    minted.node_id,
+    held,
+    attrs,
+    additive,
+    ops.length === 0 ? "unchanged" : "updated",
+    factOps(ops),
+  );
+}
+
+function witness(
+  name: string,
+  scope: string,
+  nodeId: string,
+  held: readonly HeldAttr[],
+  one: ReadonlyMap<string, string>,
+  additive: readonly (readonly [string, string])[],
+  legacyOutcome: "unchanged" | "created" | "updated",
+  legacyOps: readonly FactOp[],
+): void {
+  observe({
+    name,
+    holders: legacyOutcome === "created" ? [] : [nodeId],
+    scope,
+    one,
+    additive,
+    held,
+    legacyOutcome,
+    legacyOps,
+  });
 }
 
 /**
@@ -164,11 +276,15 @@ async function landContainer(
   sourcePath: string,
   blocks: readonly string[],
   attrs: Map<string, string>,
+  additive: readonly (readonly [string, string])[] = [],
 ): Promise<SinkResult> {
+  // A NEW note is born whole: its attributes ride the mint batch, so a
+  // refusal leaves no note without provenance (one logical write, one
+  // batch). The body is the declared carve-out: calliope's container.
   const minted = await createNote(
     dial,
     scope,
-    { title: sourcePath },
+    { title: sourcePath, attrs: [...attrs, ...additive] },
     undefined, // tags ride the inline reconcile below, not the mint
   );
   if (isCreateNoteError(minted)) {
@@ -195,7 +311,7 @@ async function landContainer(
     generation = active.length === 0 ? "minted" : "superseded";
   }
 
-  await reconcileAttrs(dial, scope, minted.node_id, attrs);
+  await landAttrs(dial, scope, sourcePath, minted, attrs, additive);
 
   if (tagStore !== undefined) {
     try {
@@ -248,16 +364,7 @@ export async function assertAdditiveAttrs(
   pairs: readonly [string, string][],
 ): Promise<void> {
   if (pairs.length === 0) return;
-  const current = await dial.edges(nodeId);
-  const ops: ChaosOp[] = [];
-  for (const [predicate, value] of pairs) {
-    const standing = current.some(
-      (e) => e.predicate === predicate && !e.isNode && e.value === value,
-    );
-    if (!standing) {
-      ops.push(opAdd(nodeId, predicate, { toLiteral: value }));
-    }
-  }
+  const ops = additiveOps(nodeId, await dial.edges(nodeId), pairs);
   if (ops.length === 0) return;
   const res = await dial.admit(ops, scope);
   if (!res.admitted) {
@@ -299,11 +406,6 @@ export async function sinkNoteVersion(
     opts?.identity ?? input.source_path,
     [input.body_text],
     attrs,
-  );
-  await assertAdditiveAttrs(
-    dial,
-    scope,
-    result.node_id,
     opts?.additiveAttrs ?? [],
   );
   return result;

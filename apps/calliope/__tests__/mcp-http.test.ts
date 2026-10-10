@@ -219,9 +219,13 @@ describe("heartbeatOptions — what this star hands the core's publisher", () =>
   it("reports ready, with the consciousness producer's own counters", async () => {
     const { consciousnessMetrics } =
       await import("../src/mcp/consciousness-emit.js");
+    const { convergeMetrics } = await import("../src/converge-witness.js");
     const reading = heartbeatOptions().standing?.();
     expect(reading?.ready).toBe(true);
-    expect(reading?.metrics).toEqual(consciousnessMetrics());
+    expect(reading?.metrics).toEqual({
+      ...consciousnessMetrics(),
+      ...convergeMetrics(),
+    });
     // Not an empty reading: `metrics` is what nyx renders on the star's card.
     expect(Object.keys(reading?.metrics ?? {})).toContain(
       "calliope_consciousness_published_total",

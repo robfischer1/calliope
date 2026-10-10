@@ -328,7 +328,17 @@ export const NOTE_KIND = "Note";
 export async function createNote(
   dial: ChaosDial,
   scope: string,
-  input: { title: string; parent?: string; tags?: string[]; type?: string },
+  input: {
+    title: string;
+    parent?: string;
+    tags?: string[];
+    type?: string;
+    /** Attribute literals the new note is BORN with: they ride the mint
+     *  batch (the `{"$mint":0}` subject), so a refusal leaves no note
+     *  without them. Applied on a mint only — an existing note's attributes
+     *  are the caller's reconcile (notes-sink `landContainer`). */
+    attrs?: Iterable<readonly [string, string]>;
+  },
   tagStore?: TagStore,
 ): Promise<CreateNoteResult | CreateNoteError> {
   const title = input.title.trim();
@@ -448,7 +458,13 @@ export async function createNote(
   // ops in the same batch, as tree.ts slotBirthOps does), so the Note floor
   // (hasName) lands in the same transaction as the node (chaos#14929).
   const mint = await dial.admit(
-    [opCreate(NOTE_KIND, title), ...edgeBatch(title, parent)],
+    [
+      opCreate(NOTE_KIND, title),
+      ...edgeBatch(title, parent),
+      ...[...(input.attrs ?? [])].map(([p, v]) =>
+        opAdd(title, p, { toLiteral: v }),
+      ),
+    ],
     scope,
   );
   const token = mint.minted.length === 1 ? mint.minted[0] : undefined;
