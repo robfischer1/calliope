@@ -34,6 +34,7 @@ import {
 import { factOps, observe } from "./converge-witness.js";
 import type { TagStore } from "./tag-store.js";
 import {
+  type CreateNoteResult,
   createNote,
   isCreateNoteError,
   maybeReconcileInlineTags,
@@ -191,7 +192,7 @@ export async function reconcileAttrs(
 
 /**
  * The attribute half of a land. A minted note already carries them (born
- * whole, `mintedOps` is what the mint batch sent); an existing note's
+ * whole, `minted.attrOps` is what the mint batch sent); an existing note's
  * reconcile and additive assert are ONE admit. The converge core is asked the
  * same question, beside, never acting.
  */
@@ -199,8 +200,7 @@ async function landAttrs(
   dial: ChaosDial,
   scope: string,
   name: string,
-  minted: { node_id: string; created: boolean },
-  mintedOps: readonly ChaosOp[],
+  minted: CreateNoteResult,
   attrs: ReadonlyMap<string, string>,
   additive: readonly (readonly [string, string])[],
 ): Promise<void> {
@@ -211,7 +211,7 @@ async function landAttrs(
       holders: [],
       held: [],
       legacyOutcome: "created",
-      legacyOps: factOps(mintedOps),
+      legacyOps: factOps(minted.attrOps ?? []),
     });
     return;
   }
@@ -258,11 +258,10 @@ async function landContainer(
   // A NEW note is born whole: its attributes ride the mint batch, so a
   // refusal leaves no note without provenance (one logical write, one
   // batch). The body is the declared carve-out: calliope's container.
-  const mintedOps: ChaosOp[] = [];
   const minted = await createNote(
     dial,
     scope,
-    { title: sourcePath, attrs: [...attrs, ...additive], attrOps: mintedOps },
+    { title: sourcePath, attrs: [...attrs, ...additive] },
     undefined, // tags ride the inline reconcile below, not the mint
   );
   if (isCreateNoteError(minted)) {
@@ -289,7 +288,7 @@ async function landContainer(
     generation = active.length === 0 ? "minted" : "superseded";
   }
 
-  await landAttrs(dial, scope, sourcePath, minted, mintedOps, attrs, additive);
+  await landAttrs(dial, scope, sourcePath, minted, attrs, additive);
 
   if (tagStore !== undefined) {
     try {

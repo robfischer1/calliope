@@ -287,6 +287,10 @@ export interface ListCommentsResult {
 export interface CreateNoteResult {
   node_id: string;
   created: boolean;
+  /** A mint only: the attribute ops actually put on the mint batch, so the
+   *  converge witness compares what was SENT. Internal: the MCP tool answers
+   *  `node_id` and `created` alone. */
+  attrOps?: ChaosOp[];
 }
 
 /** `create_note` structured miss — surfaced, never thrown. */
@@ -339,10 +343,6 @@ export async function createNote(
      *  without them. Applied on a mint only — an existing note's attributes
      *  are the caller's reconcile (notes-sink `landContainer`). */
     attrs?: Iterable<readonly [string, string]>;
-    /** OUT: filled with the attribute ops actually put on the mint batch,
-     *  so the converge witness compares what was SENT, not a respelling of
-     *  what was wanted. Left empty when nothing is minted. */
-    attrOps?: ChaosOp[];
   },
   tagStore?: TagStore,
 ): Promise<CreateNoteResult | CreateNoteError> {
@@ -478,15 +478,13 @@ export async function createNote(
     };
   }
 
-  input.attrOps?.push(...attrOps);
-
   if (tagStore !== undefined && input.tags !== undefined) {
     await reconcileNoteTags(dial, scope, tagStore, token, {
       explicit: input.tags,
     });
   }
 
-  return { node_id: token, created: true };
+  return { node_id: token, created: true, attrOps };
 }
 
 // ── C9: the tag path ─────────────────────────────────────────────────────────

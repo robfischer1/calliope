@@ -183,23 +183,21 @@ export function buildQuery(o: Observation): FactsQuery {
   };
 }
 
-/** The ops one side has more of than the other (legacy +1, core -1). */
+/** The ops one side has more of than the other, counting repeats. */
 function differing(
   legacy: readonly FactOp[],
   core: readonly FactOp[],
 ): FactOp[] {
-  const net = new Map<string, { op: FactOp; n: number }>();
-  const add = (ops: readonly FactOp[], by: number): void => {
-    for (const op of ops) {
-      const k = JSON.stringify([op.kind, op.p, op.o, op.node]);
-      const held = net.get(k) ?? { op, n: 0 };
-      held.n += by;
-      net.set(k, held);
-    }
-  };
-  add(legacy, 1);
-  add(core, -1);
-  return [...net.values()].filter((e) => e.n !== 0).map((e) => e.op);
+  const same = (a: FactOp, b: FactOp): boolean =>
+    a.kind === b.kind && a.p === b.p && a.o === b.o && a.node === b.node;
+  const legacyOnly = [...legacy];
+  const coreOnly: FactOp[] = [];
+  for (const op of core) {
+    const i = legacyOnly.findIndex((l) => same(l, op));
+    if (i < 0) coreOnly.push(op);
+    else legacyOnly.splice(i, 1);
+  }
+  return [...legacyOnly, ...coreOnly];
 }
 
 /** Name the disagreement, or undefined when legacy and core agree. */

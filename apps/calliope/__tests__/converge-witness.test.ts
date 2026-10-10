@@ -237,6 +237,15 @@ describe("classify", () => {
     });
   });
 
+  it("a different value on the same kind and predicate is a difference", () => {
+    expect(
+      classify(
+        obs({ legacyOps: [add("a", "1")] }),
+        receipt("created", [{ kind: "add", p: "a", o: "2" }]),
+      )?.kase,
+    ).toBe("ops");
+  });
+
   it("counts multiplicity and node form", () => {
     expect(
       classify(

@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
-import { FixtureChaosDial, opAdd, type ChaosOp } from "../src/chaos-client.js";
+import { FixtureChaosDial, opAdd } from "../src/chaos-client.js";
 import { FixtureTagStore } from "../src/tag-store.js";
 import { sinkNoteVersion } from "../src/notes-sink.js";
 import { createNote, isCreateNoteError } from "../src/mcp/tools.js";
@@ -92,20 +92,15 @@ describe("sinkNoteVersion admits (one logical write)", () => {
 });
 
 describe("createNote attrOps (what the mint sent)", () => {
-  it("is filled on a mint and left empty on reuse", async () => {
+  it("is the mint batch's attribute ops on a mint and absent on reuse", async () => {
     const dial = new FixtureChaosDial();
     const attrs = new Map([["k", "v"]]);
-    const first: ChaosOp[] = [];
-    await createNote(dial, SCOPE, { title: "T/1", attrs, attrOps: first });
-    expect(first).toEqual([opAdd("T/1", "k", { toLiteral: "v" })]);
-    const again: ChaosOp[] = [];
-    const res = await createNote(dial, SCOPE, {
-      title: "T/1",
-      attrs,
-      attrOps: again,
-    });
-    if (isCreateNoteError(res)) throw new Error(res.detail);
-    expect(res.created).toBe(false);
-    expect(again).toEqual([]);
+    const first = await createNote(dial, SCOPE, { title: "T/1", attrs });
+    if (isCreateNoteError(first)) throw new Error(first.detail);
+    expect(first.attrOps).toEqual([opAdd("T/1", "k", { toLiteral: "v" })]);
+    const again = await createNote(dial, SCOPE, { title: "T/1", attrs });
+    if (isCreateNoteError(again)) throw new Error(again.detail);
+    expect(again.created).toBe(false);
+    expect(again.attrOps).toBeUndefined();
   });
 });
