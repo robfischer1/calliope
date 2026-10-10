@@ -63,6 +63,7 @@ import {
   makeConsciousnessPublisher,
   type NotePublisher,
 } from "./consciousness-emit.js";
+import { convergeMetrics } from "../converge-witness.js";
 import { FocusRegister, startFocusConsumer } from "../focus-register.js";
 import { makeErosProvider } from "../eros-provider.js";
 import { reservedHeaders } from "@forge/stellar-core-ts/identitycore";
@@ -107,7 +108,10 @@ export function heartbeatOptions(): HeartbeatOptions {
     star: SOURCE_STAR,
     // Read PER BEAT, so a counter that moves between beats is reported as it
     // stands rather than as it was at boot.
-    standing: () => ({ ready: true, metrics: consciousnessMetrics() }),
+    standing: () => ({
+      ready: true,
+      metrics: { ...consciousnessMetrics(), ...convergeMetrics() },
+    }),
   };
 }
 

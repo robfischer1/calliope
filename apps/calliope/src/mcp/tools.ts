@@ -26,6 +26,7 @@ import type {
 } from "../types.js";
 import {
   type ChaosDial,
+  type ChaosOp,
   ChaosClientError,
   ensureNotesRoot,
   isNodeToken,
@@ -286,6 +287,10 @@ export interface ListCommentsResult {
 export interface CreateNoteResult {
   node_id: string;
   created: boolean;
+  /** The attribute ops actually put on the mint batch (empty on reuse), so the
+   *  converge witness compares what was SENT. Internal: the MCP tool answers
+   *  `node_id` and `created` alone. */
+  attrOps: ChaosOp[];
 }
 
 /** `create_note` structured miss — surfaced, never thrown. */
@@ -328,7 +333,17 @@ export const NOTE_KIND = "Note";
 export async function createNote(
   dial: ChaosDial,
   scope: string,
-  input: { title: string; parent?: string; tags?: string[]; type?: string },
+  input: {
+    title: string;
+    parent?: string;
+    tags?: string[];
+    type?: string;
+    /** Attribute literals the new note is BORN with: they ride the mint
+     *  batch (the `{"$mint":0}` subject), so a refusal leaves no note
+     *  without them. Applied on a mint only — an existing note's attributes
+     *  are the caller's reconcile (notes-sink `landContainer`). */
+    attrs?: Iterable<readonly [string, string]>;
+  },
   tagStore?: TagStore,
 ): Promise<CreateNoteResult | CreateNoteError> {
   const title = input.title.trim();
@@ -435,7 +450,7 @@ export async function createNote(
         explicit: input.tags,
       });
     }
-    return { node_id: node, created: false };
+    return { node_id: node, created: false, attrOps: [] };
   }
 
   const parent = await resolveParent();
@@ -447,8 +462,11 @@ export async function createNote(
   // mint reference (themis resolves a non-empty createNode label for later
   // ops in the same batch, as tree.ts slotBirthOps does), so the Note floor
   // (hasName) lands in the same transaction as the node (chaos#14929).
+  const attrOps = [...(input.attrs ?? [])].map(([p, v]) =>
+    opAdd(title, p, { toLiteral: v }),
+  );
   const mint = await dial.admit(
-    [opCreate(NOTE_KIND, title), ...edgeBatch(title, parent)],
+    [opCreate(NOTE_KIND, title), ...edgeBatch(title, parent), ...attrOps],
     scope,
   );
   const token = mint.minted.length === 1 ? mint.minted[0] : undefined;
@@ -466,7 +484,7 @@ export async function createNote(
     });
   }
 
-  return { node_id: token, created: true };
+  return { node_id: token, created: true, attrOps };
 }
 
 // ── C9: the tag path ─────────────────────────────────────────────────────────

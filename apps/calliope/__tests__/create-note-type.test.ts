@@ -60,7 +60,7 @@ describe("create_note type", () => {
     const first = await mint(dial, "memory:m:y", "Memory");
     const before = dial.admits.length;
     const again = await mint(dial, "memory:m:y", "Memory");
-    expect(again).toEqual({ node_id: first.node_id, created: false });
+    expect(again).toMatchObject({ node_id: first.node_id, created: false });
     expect(dial.admits.length).toBe(before);
   });
 

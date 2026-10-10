@@ -1112,7 +1112,10 @@ export function createServer(
               text: `note ${result.node_id} (${result.created ? "created" : "existing"})`,
             },
           ],
-          structuredContent: structured(result),
+          structuredContent: structured({
+            node_id: result.node_id,
+            created: result.created,
+          }),
         };
       },
     );
