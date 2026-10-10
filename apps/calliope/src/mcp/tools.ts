@@ -287,10 +287,10 @@ export interface ListCommentsResult {
 export interface CreateNoteResult {
   node_id: string;
   created: boolean;
-  /** A mint only: the attribute ops actually put on the mint batch, so the
+  /** The attribute ops actually put on the mint batch (empty on reuse), so the
    *  converge witness compares what was SENT. Internal: the MCP tool answers
    *  `node_id` and `created` alone. */
-  attrOps?: ChaosOp[];
+  attrOps: ChaosOp[];
 }
 
 /** `create_note` structured miss — surfaced, never thrown. */
@@ -450,7 +450,7 @@ export async function createNote(
         explicit: input.tags,
       });
     }
-    return { node_id: node, created: false };
+    return { node_id: node, created: false, attrOps: [] };
   }
 
   const parent = await resolveParent();

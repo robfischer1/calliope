@@ -237,6 +237,15 @@ describe("classify", () => {
     });
   });
 
+  it("a different predicate on the same kind and value is a difference", () => {
+    expect(
+      classify(
+        obs({ legacyOps: [add("a", "1")] }),
+        receipt("created", [{ kind: "add", p: "b", o: "1" }]),
+      )?.why,
+    ).toBe("legacy created, core created; differing ops [add a, add b]");
+  });
+
   it("a different value on the same kind and predicate is a difference", () => {
     expect(
       classify(

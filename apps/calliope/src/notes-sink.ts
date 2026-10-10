@@ -211,7 +211,7 @@ async function landAttrs(
       holders: [],
       held: [],
       legacyOutcome: "created",
-      legacyOps: factOps(minted.attrOps ?? []),
+      legacyOps: factOps(minted.attrOps),
     });
     return;
   }

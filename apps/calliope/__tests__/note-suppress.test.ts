@@ -893,7 +893,7 @@ describe("create_note never hands back a suppressed note", () => {
       SCOPE,
     );
     expect([hidden, node_id].sort()[0]).toBe(hidden);
-    expect(await createNote(dial, SCOPE, { title: "Twin" })).toEqual({
+    expect(await createNote(dial, SCOPE, { title: "Twin" })).toMatchObject({
       node_id,
       created: false,
     });
@@ -910,7 +910,7 @@ describe("create_note never hands back a suppressed note", () => {
     const byName = dial.findByName.bind(dial);
     dial.findByName = async (kind, label) =>
       label === "Pair" ? [high, low] : byName(kind, label);
-    expect(await createNote(dial, SCOPE, { title: "Pair" })).toEqual({
+    expect(await createNote(dial, SCOPE, { title: "Pair" })).toMatchObject({
       node_id: low,
       created: false,
     });
@@ -934,9 +934,11 @@ describe("create_note never hands back a suppressed note", () => {
       [opAdd(node_id, SUPPRESSED, { toLiteral: SUPPRESSED_VALUE })],
       "memories",
     );
-    expect(await createNote(dial, SCOPE, { title: "Elsewhere" })).toEqual({
-      node_id,
-      created: false,
-    });
+    expect(await createNote(dial, SCOPE, { title: "Elsewhere" })).toMatchObject(
+      {
+        node_id,
+        created: false,
+      },
+    );
   });
 });

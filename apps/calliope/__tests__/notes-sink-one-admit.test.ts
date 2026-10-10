@@ -92,7 +92,7 @@ describe("sinkNoteVersion admits (one logical write)", () => {
 });
 
 describe("createNote attrOps (what the mint sent)", () => {
-  it("is the mint batch's attribute ops on a mint and absent on reuse", async () => {
+  it("is the mint batch's attribute ops on a mint and empty on reuse", async () => {
     const dial = new FixtureChaosDial();
     const attrs = new Map([["k", "v"]]);
     const first = await createNote(dial, SCOPE, { title: "T/1", attrs });
@@ -101,6 +101,6 @@ describe("createNote attrOps (what the mint sent)", () => {
     const again = await createNote(dial, SCOPE, { title: "T/1", attrs });
     if (isCreateNoteError(again)) throw new Error(again.detail);
     expect(again.created).toBe(false);
-    expect(again.attrOps).toBeUndefined();
+    expect(again.attrOps).toEqual([]);
   });
 });
