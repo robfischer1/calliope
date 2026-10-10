@@ -183,14 +183,23 @@ export function buildQuery(o: Observation): FactsQuery {
   };
 }
 
-function key(op: FactOp): string {
-  return `${op.kind}\u0000${op.p}\u0000${op.o}\u0000${op.node ? "node" : "lit"}`;
-}
-
-function multiset(ops: readonly FactOp[]): Map<string, number> {
-  const m = new Map<string, number>();
-  for (const op of ops) m.set(key(op), (m.get(key(op)) ?? 0) + 1);
-  return m;
+/** The ops one side has more of than the other (legacy +1, core -1). */
+function differing(
+  legacy: readonly FactOp[],
+  core: readonly FactOp[],
+): FactOp[] {
+  const net = new Map<string, { op: FactOp; n: number }>();
+  const add = (ops: readonly FactOp[], by: number): void => {
+    for (const op of ops) {
+      const k = JSON.stringify([op.kind, op.p, op.o, op.node]);
+      const held = net.get(k) ?? { op, n: 0 };
+      held.n += by;
+      net.set(k, held);
+    }
+  };
+  add(legacy, 1);
+  add(core, -1);
+  return [...net.values()].filter((e) => e.n !== 0).map((e) => e.op);
 }
 
 /** Name the disagreement, or undefined when legacy and core agree. */
@@ -211,30 +220,25 @@ export function classify(
       why: `core's verdict is ${r.verdict}, legacy wrote`,
     };
   }
-  const core = factOps(
-    r.ops
-      .filter((op) => op.kind !== "relabel")
-      .map((op): ChaosOp => ({
-        op: op.kind === "add" ? "addEdge" : "removeEdge",
-        predicate: op.p,
-        ...(op.node ? { to_node: op.o } : { to_literal: op.o }),
-      })),
-  );
-  const a = multiset(o.legacyOps);
-  const b = multiset(core);
-  const differ = [...new Set([...a.keys(), ...b.keys()])].filter(
-    (k) => (a.get(k) ?? 0) !== (b.get(k) ?? 0),
-  );
+  const core: FactOp[] = r.ops
+    .filter((op) => op.kind !== "relabel")
+    .map((op) => ({
+      kind: op.kind === "add" ? "add" : "retract",
+      p: op.p,
+      o: op.o,
+      node: op.node,
+    }));
+  const differ = differing(o.legacyOps, core);
   const sameOutcome = o.legacyOutcome === r.outcome;
   if (sameOutcome && differ.length === 0) return undefined;
-  // Predicates and kinds only: a value can be a title or a path.
-  const preds = [
-    ...new Set(differ.map((k) => k.split("\u0000").slice(0, 2).join(" "))),
-  ]
+  // Kinds and predicates only: a value can be a title or a path.
+  const preds = [...new Set(differ.map((d) => `${d.kind} ${d.p}`))]
     .sort()
     .join(", ");
-  const why = `legacy ${o.legacyOutcome}, core ${r.outcome}; differing ops [${preds}]`;
-  return { kase: sameOutcome ? "ops" : "outcome", why };
+  return {
+    kase: sameOutcome ? "ops" : "outcome",
+    why: `legacy ${o.legacyOutcome}, core ${r.outcome}; differing ops [${preds}]`,
+  };
 }
 
 /**

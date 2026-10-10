@@ -31,7 +31,7 @@ import {
   opRemove,
   type ChaosOp,
 } from "./chaos-client.js";
-import { type FactOp, factOps, observe } from "./converge-witness.js";
+import { factOps, observe } from "./converge-witness.js";
 import type { TagStore } from "./tag-store.js";
 import {
   createNote,
@@ -191,26 +191,28 @@ export async function reconcileAttrs(
 
 /**
  * The attribute half of a land. A minted note already carries them (born
- * whole); an existing note's reconcile and additive assert are ONE admit.
- * The converge core is asked the same question, beside, never acting.
+ * whole, `mintedOps` is what the mint batch sent); an existing note's
+ * reconcile and additive assert are ONE admit. The converge core is asked the
+ * same question, beside, never acting.
  */
 async function landAttrs(
   dial: ChaosDial,
   scope: string,
   name: string,
   minted: { node_id: string; created: boolean },
+  mintedOps: readonly ChaosOp[],
   attrs: ReadonlyMap<string, string>,
   additive: readonly (readonly [string, string])[],
 ): Promise<void> {
+  const observation = { name, scope, one: attrs, additive };
   if (minted.created) {
-    witness(name, scope, minted.node_id, [], attrs, additive, "created", [
-      ...[...attrs, ...additive].map(([p, v]) => ({
-        kind: "add" as const,
-        p,
-        o: v,
-        node: false,
-      })),
-    ]);
+    observe({
+      ...observation,
+      holders: [],
+      held: [],
+      legacyOutcome: "created",
+      legacyOps: factOps(mintedOps),
+    });
     return;
   }
   const held = await readHeld(dial, minted.node_id);
@@ -227,37 +229,12 @@ async function landAttrs(
       );
     }
   }
-  witness(
-    name,
-    scope,
-    minted.node_id,
-    held,
-    attrs,
-    additive,
-    ops.length === 0 ? "unchanged" : "updated",
-    factOps(ops),
-  );
-}
-
-function witness(
-  name: string,
-  scope: string,
-  nodeId: string,
-  held: readonly HeldAttr[],
-  one: ReadonlyMap<string, string>,
-  additive: readonly (readonly [string, string])[],
-  legacyOutcome: "unchanged" | "created" | "updated",
-  legacyOps: readonly FactOp[],
-): void {
   observe({
-    name,
-    holders: legacyOutcome === "created" ? [] : [nodeId],
-    scope,
-    one,
-    additive,
+    ...observation,
+    holders: [minted.node_id],
     held,
-    legacyOutcome,
-    legacyOps,
+    legacyOutcome: ops.length === 0 ? "unchanged" : "updated",
+    legacyOps: factOps(ops),
   });
 }
 
@@ -276,15 +253,16 @@ async function landContainer(
   sourcePath: string,
   blocks: readonly string[],
   attrs: Map<string, string>,
-  additive: readonly (readonly [string, string])[] = [],
+  additive: readonly (readonly [string, string])[],
 ): Promise<SinkResult> {
   // A NEW note is born whole: its attributes ride the mint batch, so a
   // refusal leaves no note without provenance (one logical write, one
   // batch). The body is the declared carve-out: calliope's container.
+  const mintedOps: ChaosOp[] = [];
   const minted = await createNote(
     dial,
     scope,
-    { title: sourcePath, attrs: [...attrs, ...additive] },
+    { title: sourcePath, attrs: [...attrs, ...additive], attrOps: mintedOps },
     undefined, // tags ride the inline reconcile below, not the mint
   );
   if (isCreateNoteError(minted)) {
@@ -311,7 +289,7 @@ async function landContainer(
     generation = active.length === 0 ? "minted" : "superseded";
   }
 
-  await landAttrs(dial, scope, sourcePath, minted, attrs, additive);
+  await landAttrs(dial, scope, sourcePath, minted, mintedOps, attrs, additive);
 
   if (tagStore !== undefined) {
     try {
@@ -463,5 +441,6 @@ export async function dissolveContainer(
       ...(input.ctime !== undefined ? { ctime: input.ctime } : {}),
       ...(input.file_path !== undefined ? { file_path: input.file_path } : {}),
     }),
+    [],
   );
 }

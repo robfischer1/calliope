@@ -26,6 +26,7 @@ import type {
 } from "../types.js";
 import {
   type ChaosDial,
+  type ChaosOp,
   ChaosClientError,
   ensureNotesRoot,
   isNodeToken,
@@ -338,6 +339,10 @@ export async function createNote(
      *  without them. Applied on a mint only — an existing note's attributes
      *  are the caller's reconcile (notes-sink `landContainer`). */
     attrs?: Iterable<readonly [string, string]>;
+    /** OUT: filled with the attribute ops actually put on the mint batch,
+     *  so the converge witness compares what was SENT, not a respelling of
+     *  what was wanted. Left empty when nothing is minted. */
+    attrOps?: ChaosOp[];
   },
   tagStore?: TagStore,
 ): Promise<CreateNoteResult | CreateNoteError> {
@@ -457,14 +462,11 @@ export async function createNote(
   // mint reference (themis resolves a non-empty createNode label for later
   // ops in the same batch, as tree.ts slotBirthOps does), so the Note floor
   // (hasName) lands in the same transaction as the node (chaos#14929).
+  const attrOps = [...(input.attrs ?? [])].map(([p, v]) =>
+    opAdd(title, p, { toLiteral: v }),
+  );
   const mint = await dial.admit(
-    [
-      opCreate(NOTE_KIND, title),
-      ...edgeBatch(title, parent),
-      ...[...(input.attrs ?? [])].map(([p, v]) =>
-        opAdd(title, p, { toLiteral: v }),
-      ),
-    ],
+    [opCreate(NOTE_KIND, title), ...edgeBatch(title, parent), ...attrOps],
     scope,
   );
   const token = mint.minted.length === 1 ? mint.minted[0] : undefined;
@@ -475,6 +477,8 @@ export async function createNote(
       violations: mint.violations,
     };
   }
+
+  input.attrOps?.push(...attrOps);
 
   if (tagStore !== undefined && input.tags !== undefined) {
     await reconcileNoteTags(dial, scope, tagStore, token, {
