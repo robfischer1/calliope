@@ -7,40 +7,40 @@
 # [[produces]] is who breaks if calliope changes what it SERVES; [[consumes]] is
 # what calliope breaks if it changes how it CALLS. To change a seam, edit the
 # contract in a foundry-dies pull (orbits/README.md says how), then re-lay
-# from the repo root: furnace die --for . --dest DIR && gavel order . --from DIR
+# from the repo root: gavel orbit .
 
 [[produces]]
 to = "athena"
 contract = "calliope-athena"
 version = "1781948"
-digest = "sha256:37140758c7ae65978bf43f3bc7552e4b5c3d659a99cb35fbe519741b9f56a8b5"
+digest = "sha256:04a95853bcfe45aff819b3703f5c6717d0fd10090bc9a2561a2517d9325e7121"
 
 [[produces]]
 to = "mnemosyne"
 contract = "calliope-mnemosyne"
 version = "1781951"
-digest = "sha256:9935ea1b01cde8b58cba28ae03415d2a890badc822bb68adfb45dee9255fe1af"
+digest = "sha256:b28f794cfdba18049ad9569671497eb62dce11cf5f3d83225c71596b91474276"
 
 [[produces]]
 to = "ourea"
 contract = "calliope-ourea"
 version = "1781953"
-digest = "sha256:db377b59e9cebde0cc74d939c0d815d539496847d2d511edc23953e38f57976a"
+digest = "sha256:7f66ff4f82993b615985cdd51ac33b6e57eaf0c478a3d3dcfd6eb95a1de75558"
 
 [[produces]]
 to = "proteus"
 contract = "calliope-proteus"
 version = "1781957"
-digest = "sha256:ecd0bd83e16f5677b841a61c18c74a6737c27ed6cd294ac2a0d3ea6e857bb844"
+digest = "sha256:b73beeb4ebb20ea346a09549230d4269c00fcaa64f1558aa77f240effd32781b"
 
 [[consumes]]
 from = "chaos"
 contract = "chaos-calliope"
 version = "1819219"
-digest = "sha256:20387646619b14cfe48cec1cb8ff486625ecf00c5599b922a1440ac4839de1f1"
+digest = "sha256:22a10b69f14cc9de5a8a04222a9e68b027e037da8ce795a711beb188a3db467c"
 
 [[consumes]]
 from = "themis"
 contract = "themis-calliope"
 version = "1782147"
-digest = "sha256:c6966b00aeac5ae4cecf7cef15400b66b662b38a28d2b55a134a603401a2002d"
+digest = "sha256:84b5b378d702cb5ab333e2e77d395e3cd9465e148b4ce5948f2d3899b56a88ae"
