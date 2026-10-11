@@ -111,18 +111,20 @@ async function call(
 }
 
 describe("F17 batch 2a — calliope's output schemas", () => {
-  it("ships one schema file per verb, named as the gateway names it", () => {
+  it("ships one schema file per verb, named by the bare verb; the $id carries the gateway name", () => {
     const files = readdirSync(SCHEMA_DIR)
       .filter((f) => f.endsWith(".schema.json"))
       .sort();
-    expect(files).toEqual(VERBS.map((v) => `calliope_${v}.schema.json`).sort());
+    expect(files).toEqual(VERBS.map((v) => `${v}.schema.json`).sort());
     for (const file of files) {
       const doc = JSON.parse(
         readFileSync(new URL(file, SCHEMA_DIR), "utf8"),
       ) as { type?: string; $id?: string };
       expect(doc.type, file).toBe("object");
       expect(doc.$id, file).toMatch(
-        new RegExp(`/tool-output/${file.replace(".schema.json", "")}/v1$`),
+        new RegExp(
+          `/tool-output/calliope_${file.replace(".schema.json", "")}/v1$`,
+        ),
       );
     }
   });
