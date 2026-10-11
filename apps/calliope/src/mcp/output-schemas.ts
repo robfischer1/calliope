@@ -10,25 +10,25 @@
  * z.fromJSONSchema and the server advertises what the SDK renders from it.
  */
 import { z } from "zod";
-import blob_census from "./output-schema/calliope_blob_census.schema.json" with { type: "json" };
-import container_history from "./output-schema/calliope_container_history.schema.json" with { type: "json" };
-import copy_reference from "./output-schema/calliope_copy_reference.schema.json" with { type: "json" };
-import create_note from "./output-schema/calliope_create_note.schema.json" with { type: "json" };
-import delete_note from "./output-schema/calliope_delete_note.schema.json" with { type: "json" };
-import dissolve_note from "./output-schema/calliope_dissolve_note.schema.json" with { type: "json" };
-import export_note from "./output-schema/calliope_export_note.schema.json" with { type: "json" };
-import file_revisions from "./output-schema/calliope_file_revisions.schema.json" with { type: "json" };
-import list_by_tag from "./output-schema/calliope_list_by_tag.schema.json" with { type: "json" };
-import list_tags from "./output-schema/calliope_list_tags.schema.json" with { type: "json" };
-import look from "./output-schema/calliope_look.schema.json" with { type: "json" };
-import materialize_note from "./output-schema/calliope_materialize_note.schema.json" with { type: "json" };
-import read_container from "./output-schema/calliope_read_container.schema.json" with { type: "json" };
-import restore_note from "./output-schema/calliope_restore_note.schema.json" with { type: "json" };
-import revision_deltas from "./output-schema/calliope_revision_deltas.schema.json" with { type: "json" };
-import search from "./output-schema/calliope_search.schema.json" with { type: "json" };
-import set_properties from "./output-schema/calliope_set_properties.schema.json" with { type: "json" };
-import unpin from "./output-schema/calliope_unpin.schema.json" with { type: "json" };
-import write_container from "./output-schema/calliope_write_container.schema.json" with { type: "json" };
+import blob_census from "./output-schema/blob_census.schema.json" with { type: "json" };
+import container_history from "./output-schema/container_history.schema.json" with { type: "json" };
+import copy_reference from "./output-schema/copy_reference.schema.json" with { type: "json" };
+import create_note from "./output-schema/create_note.schema.json" with { type: "json" };
+import delete_note from "./output-schema/delete_note.schema.json" with { type: "json" };
+import dissolve_note from "./output-schema/dissolve_note.schema.json" with { type: "json" };
+import export_note from "./output-schema/export_note.schema.json" with { type: "json" };
+import file_revisions from "./output-schema/file_revisions.schema.json" with { type: "json" };
+import list_by_tag from "./output-schema/list_by_tag.schema.json" with { type: "json" };
+import list_tags from "./output-schema/list_tags.schema.json" with { type: "json" };
+import look from "./output-schema/look.schema.json" with { type: "json" };
+import materialize_note from "./output-schema/materialize_note.schema.json" with { type: "json" };
+import read_container from "./output-schema/read_container.schema.json" with { type: "json" };
+import restore_note from "./output-schema/restore_note.schema.json" with { type: "json" };
+import revision_deltas from "./output-schema/revision_deltas.schema.json" with { type: "json" };
+import search from "./output-schema/search.schema.json" with { type: "json" };
+import set_properties from "./output-schema/set_properties.schema.json" with { type: "json" };
+import unpin from "./output-schema/unpin.schema.json" with { type: "json" };
+import write_container from "./output-schema/write_container.schema.json" with { type: "json" };
 
 const DOCUMENTS = {
   blob_census,
