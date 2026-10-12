@@ -365,15 +365,36 @@ describe("the mode machine at boot (TestNewModes, TestAnUnknownModeRunsWitnessLo
   });
 });
 
-describe("FAIL-CLOSED BOOT (a divergence from Go: witness boots there without a sidecar)", () => {
-  // Go: TestWitnessBootsWithoutASidecar (boots, records would_deny{no_acl}),
-  // TestWitnessRefusesABrokenSidecar (refuses), TestEnforceSidecarFaults and
-  // TestEnforceRefusesEveryCallOnABrokenSidecar (boot, refuse every call). Here
-  // every one of those refuses the boot, in both modes.
+describe("BOOT on a missing or broken sidecar", () => {
+  // Go: TestWitnessBootsWithoutASidecar (boots, records would_deny{no_acl}) —
+  // matched here; TestWitnessRefusesABrokenSidecar (refuses) — matched;
+  // TestEnforceSidecarFaults and TestEnforceRefusesEveryCallOnABrokenSidecar
+  // (boot, refuse every call) — here an enforcing star refuses the boot.
   const missing = (): string => `${tempFile("x", "")}.absent`;
   const broken = (): string => tempFile("orbit.toml", "[[produces]\n");
 
-  it.each(["witness", "enforce"])(
+  it("witness: a missing sidecar boots, star callers would_deny{no_acl}", () => {
+    const lines: string[] = [];
+    const pep = loadPep({
+      star: "calliope",
+      mode: "witness",
+      sidecarPath: missing(),
+      log: (l) => lines.push(l),
+    });
+    expect(pep.mode).toBe("witness");
+    expect(pep.consumers).toBe(0);
+    expect(lines.join("\n")).toMatch(
+      /no orbit sidecar .*STELLAR_ORBIT_SIDECAR/,
+    );
+    const d = pep.adjudicate({
+      peer: peerFor(star("athena")),
+      verb: "read_container",
+    });
+    expect([d.verdict, d.reason]).toEqual(["deny", "no_acl"]);
+    expect(pep.refuses(d)).toBe(false);
+  });
+
+  it.each(["enforce"])(
     "%s: a missing sidecar refuses to start, naming the path and the env",
     (mode) => {
       const path = missing();
@@ -401,21 +422,21 @@ describe("FAIL-CLOSED BOOT (a divergence from Go: witness boots there without a 
 
   it("an unset path reads the mount point", () => {
     // The sandbox has no /etc/stellar/orbit.toml; the point is where it looked.
-    expect(() => loadPep({ star: "calliope", log: quiet })).toThrow(
-      new RegExp(DEFAULT_SIDECAR_PATH),
-    );
+    expect(() =>
+      loadPep({ star: "calliope", mode: "enforce", log: quiet }),
+    ).toThrow(new RegExp(DEFAULT_SIDECAR_PATH));
   });
 });
 
 describe("the process refuses to start (main(), as the pod runs it)", () => {
   const bun = spawnSync("bun", ["--version"]);
   it.skipIf(bun.status !== 0)(
-    "exits non-zero before it binds, in both modes, when the sidecar is missing or broken",
+    "exits non-zero before it binds when the sidecar is broken (witness) or missing (enforce)",
     () => {
       const entry = new URL("../src/mcp/http.ts", import.meta.url).pathname;
       for (const [mode, sidecar] of [
-        ["witness", `${tempFile("x", "")}.absent`],
-        ["enforce", tempFile("orbit.toml", "[[produces]\n")],
+        ["enforce", `${tempFile("x", "")}.absent`],
+        ["witness", tempFile("orbit.toml", "[[produces]\n")],
       ] as const) {
         const run = spawnSync("bun", [entry], {
           encoding: "utf8",

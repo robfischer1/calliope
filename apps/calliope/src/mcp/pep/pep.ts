@@ -13,15 +13,15 @@
  *    nothing) and says so in one loud line quoting the value. Safe default,
  *    keep running.
  *
- * FAIL-CLOSED BOOT. Unlike Go (which boots a witnessing star without a sidecar
- * and an enforcing one with a broken sidecar), this PEP refuses to START when
- * the composed sidecar is missing or does not parse, in either mode. Calliope
- * has one inbound door and no PEP-less period to preserve: a pod that cannot
- * read its own ACL is a deploy defect, and a rolling update holds the old pod
- * rather than serve one.
+ * BOOT. A sidecar that does not parse refuses the START, in either mode (Go
+ * refuses it in witness and boots a refuse-everything star in enforce). A
+ * MISSING sidecar boots in witness, as Go does: star callers record
+ * would_deny{no_acl} and nothing is refused, so the bare image still starts
+ * and serves (the build lane's boot smoke runs it with no mount). An enforcing
+ * star with no sidecar refuses to start: there is no ACL to enforce.
  */
 
-import { loadAcl } from "./acl.js";
+import { loadAcl, NoSidecarError } from "./acl.js";
 import type { Acl } from "./acl.js";
 import { consumerOf, decide } from "./decide.js";
 import type { Decision, Input } from "./decide.js";
@@ -91,12 +91,13 @@ export class Pep {
   constructor(
     readonly star: string,
     readonly mode: Mode,
-    private readonly acl: Acl,
+    /** Undefined = no sidecar (witness only): star callers decide `no_acl`. */
+    private readonly acl: Acl | undefined,
   ) {}
 
-  /** How many consumers the sidecar declares. */
+  /** How many consumers the sidecar declares (0 with none). */
   get consumers(): number {
-    return this.acl.size;
+    return this.acl?.size ?? 0;
   }
 
   /** Adjudicate one call as this PEP's mode acts on it: witness's decision is
@@ -143,10 +144,17 @@ export function loadPep(config: PepConfig): Pep {
     config.sidecarPath === undefined || config.sidecarPath === ""
       ? DEFAULT_SIDECAR_PATH
       : config.sidecarPath;
-  let acl: Acl;
+  let acl: Acl | undefined;
   try {
     acl = loadAcl(config.star, path);
   } catch (err) {
+    if (err instanceof NoSidecarError && mode === "witness") {
+      log(
+        `${config.star}: pep: no orbit sidecar at ${path} (${ENV_SIDECAR}); ` +
+          "witnessing, every star caller will be recorded would_deny{no_acl}",
+      );
+      return new Pep(config.star, mode, undefined);
+    }
     throw new PepBootError(
       `${config.star}: pep: refusing to start, the orbit sidecar at ${path} ` +
         `(${ENV_SIDECAR}) is missing or unparseable: ${err instanceof Error ? err.message : String(err)}`,
