@@ -1,0 +1,618 @@
+{
+  "about": "Cross-port fixture set for the endpoint PEP decision (stellar-core-go/policy). Inputs -> expected decision. Hand-authored from the Python spec stellar_core/policy.py plus the 2026-10-03 plan amendment (the gateway _meta principal); NOT a recorded tape, because the Go port deliberately diverges (see divergences). A TypeScript or Rust port replays the same cases. Peers are SPIFFE ids typed by the fleet rule (mtls.PeerFromRequest): star subject is the bare name, session/human subject the full id; empty = no certificate.",
+  "sidecars": "testdata/sidecars/<name>.orbit.toml, copied verbatim from foundry-stocks/orbits (frozen, feff611)",
+  "divergences": [
+    "reason names: no_edge / verb_not_on_edge / unidentified / edge_allows replace Python no_contract / verb_not_in_contract / unidentified_caller / contract_allows; no_acl is new (Python cannot run without an ACL)",
+    "the verdict is consult, not deny, for a non-star caller: Python marks pdp_not_consulted as would_deny=True; here the plane was not asked, so the record says what would be asked, not what would be refused",
+    "the gateway path is new: a verified hades peer with a hades/principal-type stamp in _meta takes the non-service path with the stamped principal; Python has no gateway rule",
+    "a verb is matched exactly as served (bare); a prefixed-form name is a different verb and is not on the edge. Python matches the verb as given too, but a star here no longer knows its gateway prefix",
+    "a missing sidecar is a decision (no_acl), not a constructor error, so witness mode boots without one",
+    "ACL parse: an absent status is not approved (Python: approved); two blocks for one consumer is an error (Python: last wins); a non-string version is an error (Python ignores version)",
+    "the consult is ASKED in witness mode when a PDP is configured (STELLAR_PDP_URL): the plane's answer is recorded as allow{pdp_allows} or deny{pdp_denies} (rendered would_deny), and a plane that did not answer as pdp_error with the client's fault posture as the verdict (fail-open: allow); Python never consults in witness mode. The star asks the endpoint_decision document with its own name and the verb as served; the bundle joins the gateway prefix (prefix_verb, as hades aggregates it) from the roster, and only the action discriminator of the arguments crosses (pdp_cases, action_cases)"
+  ],
+  "acl_cases": [
+    {
+      "name": "athena (consume-only)",
+      "sidecar": "athena",
+      "entries": 0,
+      "all_approved": true
+    },
+    {
+      "name": "chaos",
+      "sidecar": "chaos",
+      "entries": 6,
+      "all_approved": false
+    },
+    {
+      "name": "narcissus",
+      "sidecar": "narcissus",
+      "entries": 1,
+      "all_approved": false
+    },
+    {
+      "name": "nyx (consume-only)",
+      "sidecar": "nyx",
+      "entries": 0,
+      "all_approved": true
+    },
+    {
+      "name": "techne (consume-only)",
+      "sidecar": "techne",
+      "entries": 0,
+      "all_approved": true
+    },
+    {
+      "name": "terpsichore (consume-only)",
+      "sidecar": "terpsichore",
+      "entries": 0,
+      "all_approved": true
+    },
+    {
+      "name": "themis",
+      "sidecar": "themis",
+      "entries": 1,
+      "all_approved": false
+    },
+    {
+      "name": "urania",
+      "sidecar": "urania",
+      "entries": 3,
+      "all_approved": false
+    },
+    {
+      "name": "every entry approved",
+      "toml": "[[produces]]\nto = \"a\"\ncontract = \"s-a\"\nstatus = \"approved\"\nverbs = [\"v\"]\n",
+      "entries": 1,
+      "all_approved": true
+    },
+    {
+      "name": "absent status is not approved",
+      "toml": "[[produces]]\nto = \"a\"\ncontract = \"s-a\"\nverbs = [\"v\"]\n",
+      "entries": 1,
+      "all_approved": false,
+      "note": "DIVERGENCE: Python defaults an absent status to approved"
+    },
+    {
+      "name": "not TOML",
+      "toml": "[[produces]\nto = ",
+      "error": true
+    },
+    {
+      "name": "missing to",
+      "toml": "[[produces]]\ncontract = \"s-a\"\nverbs = [\"v\"]\n",
+      "error": true
+    },
+    {
+      "name": "missing contract",
+      "toml": "[[produces]]\nto = \"a\"\nverbs = [\"v\"]\n",
+      "error": true
+    },
+    {
+      "name": "verbs not a list",
+      "toml": "[[produces]]\nto = \"a\"\ncontract = \"s-a\"\nverbs = \"v\"\n",
+      "error": true
+    },
+    {
+      "name": "verbs not strings",
+      "toml": "[[produces]]\nto = \"a\"\ncontract = \"s-a\"\nverbs = [1]\n",
+      "error": true
+    },
+    {
+      "name": "two blocks for one consumer",
+      "toml": "[[produces]]\nto = \"a\"\ncontract = \"s-a\"\nverbs = [\"v\"]\n\n[[produces]]\nto = \"a\"\ncontract = \"s-a2\"\nverbs = [\"w\"]\n",
+      "error": true,
+      "note": "DIVERGENCE: Python keeps the last block silently"
+    },
+    {
+      "name": "version not a string",
+      "toml": "[[produces]]\nto = \"a\"\ncontract = \"s-a\"\nversion = 0\nverbs = [\"v\"]\n",
+      "error": true,
+      "note": "DIVERGENCE: Python ignores version; the composed dialect writes it as a string"
+    },
+    {
+      "name": "empty document",
+      "toml": "",
+      "entries": 0,
+      "all_approved": true
+    }
+  ],
+  "decision_cases": [
+    {
+      "name": "plaintext caller is unidentified",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "deny",
+        "reason": "unidentified",
+        "contract": "",
+        "principal": "",
+        "principal_type": ""
+      }
+    },
+    {
+      "name": "untyped certificate is unidentified",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "deny",
+        "reason": "unidentified",
+        "contract": "",
+        "principal": "",
+        "principal_type": ""
+      },
+      "untyped_certificate": true,
+      "note": "handshake verified, but the leaf names no principal this fleet types"
+    },
+    {
+      "name": "star on its edge, verb on the edge",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/athena",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "allow",
+        "reason": "edge_allows",
+        "contract": "urania-athena",
+        "principal": "",
+        "principal_type": ""
+      }
+    },
+    {
+      "name": "star on its edge, verb not on the edge",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/athena",
+      "verb": "declare_litigant",
+      "want": {
+        "verdict": "deny",
+        "reason": "verb_not_on_edge",
+        "contract": "urania-athena",
+        "principal": "",
+        "principal_type": ""
+      }
+    },
+    {
+      "name": "a verb the edge does not list is denied",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/athena",
+      "verb": "urania_declare_litigant",
+      "want": {
+        "verdict": "deny",
+        "reason": "verb_not_on_edge",
+        "contract": "urania-athena",
+        "principal": "",
+        "principal_type": ""
+      }
+    },
+    {
+      "name": "star with no edge",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/chaos",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "deny",
+        "reason": "no_edge",
+        "contract": "",
+        "principal": "",
+        "principal_type": ""
+      }
+    },
+    {
+      "name": "a prefixed-form name is not stripped: it is a different verb",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/athena",
+      "verb": "urania_shapes",
+      "want": {
+        "verdict": "deny",
+        "reason": "verb_not_on_edge",
+        "contract": "urania-athena",
+        "principal": "",
+        "principal_type": ""
+      },
+      "note": "exact bare-verb match only; a prefixed name arriving at a star is a verb the edge does not list"
+    },
+    {
+      "name": "prefixed verb with no prefix configured is not stripped",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/athena",
+      "verb": "urania_shapes",
+      "want": {
+        "verdict": "deny",
+        "reason": "verb_not_on_edge",
+        "contract": "urania-athena",
+        "principal": "",
+        "principal_type": ""
+      }
+    },
+    {
+      "name": "a leading underscore is not a prefix when none is configured",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/athena",
+      "verb": "_shapes",
+      "want": {
+        "verdict": "deny",
+        "reason": "verb_not_on_edge",
+        "contract": "urania-athena",
+        "principal": "",
+        "principal_type": ""
+      }
+    },
+    {
+      "name": "a native verb that begins with the star's gateway prefix matches as itself",
+      "star": "ananke",
+      "sidecar": {
+        "toml": "[[produces]]\nto = \"chaos\"\ncontract = \"ananke-chaos\"\nversion = \"0\"\nstatus = \"generated\"\nwire_form = \"native\"\nverbs = [\"prob_score\"]\n"
+      },
+      "peer_spiffe_id": "spiffe://notusmi.com/star/chaos",
+      "verb": "prob_score",
+      "want": {
+        "verdict": "allow",
+        "reason": "edge_allows",
+        "contract": "ananke-chaos",
+        "principal": "",
+        "principal_type": ""
+      },
+      "note": "exact match: prob_score is the verb as served; nothing is stripped into another verb"
+    },
+    {
+      "name": "gateway with a session stamp takes the non-service path",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/hades",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "consult",
+        "reason": "pdp_not_consulted",
+        "contract": "",
+        "principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "principal_type": "session"
+      },
+      "meta": {
+        "hades/principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "hades/principal-type": "session",
+        "hades/verb": "urania_neighbors"
+      }
+    },
+    {
+      "name": "gateway with an agent stamp carries the type only",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/hades",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "consult",
+        "reason": "pdp_not_consulted",
+        "contract": "",
+        "principal": "",
+        "principal_type": "agent"
+      },
+      "meta": {
+        "hades/principal-type": "agent"
+      }
+    },
+    {
+      "name": "gateway with a star principal stamp is still the non-service path",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/hades",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "consult",
+        "reason": "pdp_not_consulted",
+        "contract": "",
+        "principal": "arachne",
+        "principal_type": "star"
+      },
+      "meta": {
+        "hades/principal": "arachne",
+        "hades/principal-type": "star"
+      },
+      "note": "a through-hades star is adjudicated by the plane, not by this star's edges, in this wave"
+    },
+    {
+      "name": "gateway with no stamp is held to its own edge",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/hades",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "deny",
+        "reason": "no_edge",
+        "contract": "",
+        "principal": "",
+        "principal_type": ""
+      },
+      "note": "hades calling as itself; an anonymous caller stamps nothing and is indistinguishable"
+    },
+    {
+      "name": "gateway with an empty type is no stamp",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/hades",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "deny",
+        "reason": "no_edge",
+        "contract": "",
+        "principal": "",
+        "principal_type": ""
+      },
+      "meta": {
+        "hades/principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "hades/principal-type": ""
+      }
+    },
+    {
+      "name": "gateway with a non-string type is no stamp",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/hades",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "deny",
+        "reason": "no_edge",
+        "contract": "",
+        "principal": "",
+        "principal_type": ""
+      },
+      "meta": {
+        "hades/principal-type": 7
+      }
+    },
+    {
+      "name": "a non-gateway peer's stamp is ignored",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/chaos",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "deny",
+        "reason": "no_edge",
+        "contract": "",
+        "principal": "",
+        "principal_type": ""
+      },
+      "meta": {
+        "hades/principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "hades/principal-type": "session"
+      },
+      "note": "the caller's own claim under the gateway's key"
+    },
+    {
+      "name": "a non-gateway peer's stamp cannot lend it an edge",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/athena",
+      "verb": "declare_litigant",
+      "want": {
+        "verdict": "deny",
+        "reason": "verb_not_on_edge",
+        "contract": "urania-athena",
+        "principal": "",
+        "principal_type": ""
+      },
+      "meta": {
+        "hades/principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "hades/principal-type": "session"
+      }
+    },
+    {
+      "name": "session dialling direct takes the non-service path",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "consult",
+        "reason": "pdp_not_consulted",
+        "contract": "",
+        "principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "principal_type": "session"
+      }
+    },
+    {
+      "name": "human dialling direct takes the non-service path",
+      "star": "urania",
+      "sidecar": "urania",
+      "peer_spiffe_id": "spiffe://notusmi.com/human/rob",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "consult",
+        "reason": "pdp_not_consulted",
+        "contract": "",
+        "principal": "spiffe://notusmi.com/human/rob",
+        "principal_type": "human"
+      }
+    },
+    {
+      "name": "no sidecar: a star caller is no_acl",
+      "star": "urania",
+      "sidecar": null,
+      "peer_spiffe_id": "spiffe://notusmi.com/star/athena",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "deny",
+        "reason": "no_acl",
+        "contract": "",
+        "principal": "",
+        "principal_type": ""
+      }
+    },
+    {
+      "name": "no sidecar: the gateway path never reads the ACL",
+      "star": "urania",
+      "sidecar": null,
+      "peer_spiffe_id": "spiffe://notusmi.com/star/hades",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "consult",
+        "reason": "pdp_not_consulted",
+        "contract": "",
+        "principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "principal_type": "session"
+      },
+      "meta": {
+        "hades/principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "hades/principal-type": "session"
+      }
+    },
+    {
+      "name": "no sidecar: an unidentified caller is still unidentified",
+      "star": "urania",
+      "sidecar": null,
+      "peer_spiffe_id": "",
+      "verb": "neighbors",
+      "want": {
+        "verdict": "deny",
+        "reason": "unidentified",
+        "contract": "",
+        "principal": "",
+        "principal_type": ""
+      }
+    },
+    {
+      "name": "narcissus serves themis freshness",
+      "star": "narcissus",
+      "sidecar": "narcissus",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/themis",
+      "verb": "freshness",
+      "want": {
+        "verdict": "allow",
+        "reason": "edge_allows",
+        "contract": "narcissus-themis",
+        "principal": "",
+        "principal_type": ""
+      }
+    },
+    {
+      "name": "a consume-only sidecar grants nobody",
+      "star": "nyx",
+      "sidecar": "nyx",
+      "peer_spiffe_id": "spiffe://notusmi.com/star/chaos",
+      "verb": "capture",
+      "want": {
+        "verdict": "deny",
+        "reason": "no_edge",
+        "contract": "",
+        "principal": "",
+        "principal_type": ""
+      },
+      "note": "[[consumes]] is the star's outbound half; it is never an inbound grant"
+    }
+  ],
+  "pdp_cases": [
+    {
+      "name": "the plane allows",
+      "consult": {
+        "verdict": "consult",
+        "reason": "pdp_not_consulted",
+        "principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "principal_type": "session"
+      },
+      "pdp": {
+        "allow": true,
+        "reason": "",
+        "error": false
+      },
+      "want": {
+        "verdict": "allow",
+        "reason": "pdp_allows",
+        "principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "principal_type": "session"
+      }
+    },
+    {
+      "name": "the plane denies, with its reason",
+      "consult": {
+        "verdict": "consult",
+        "reason": "pdp_not_consulted",
+        "principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "principal_type": "session"
+      },
+      "pdp": {
+        "allow": false,
+        "reason": "authz: not granted",
+        "error": false
+      },
+      "want": {
+        "verdict": "deny",
+        "reason": "pdp_denies",
+        "principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "principal_type": "session"
+      },
+      "note": "the plane's own reason text is not a closed set and is not recorded; pdp_denies names the verdict"
+    },
+    {
+      "name": "the plane did not answer, fail-open",
+      "consult": {
+        "verdict": "consult",
+        "reason": "pdp_not_consulted",
+        "principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "principal_type": "session"
+      },
+      "pdp": {
+        "allow": true,
+        "reason": "policy unavailable — permitted (fail-open)",
+        "error": true
+      },
+      "want": {
+        "verdict": "allow",
+        "reason": "pdp_error",
+        "principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "principal_type": "session"
+      },
+      "note": "the client's posture verdict, recorded under its own reason: never a refusal, never mistaken for the plane's allow"
+    },
+    {
+      "name": "the plane did not answer, fail-closed",
+      "consult": {
+        "verdict": "consult",
+        "reason": "pdp_not_consulted",
+        "principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "principal_type": "session"
+      },
+      "pdp": {
+        "allow": false,
+        "reason": "policy decision unavailable",
+        "error": true
+      },
+      "want": {
+        "verdict": "deny",
+        "reason": "pdp_error",
+        "principal": "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49",
+        "principal_type": "session"
+      }
+    }
+  ],
+  "action_cases": [
+    {
+      "arguments": "{\"action\":\"create\"}",
+      "want": "create"
+    },
+    {
+      "arguments": "{\"action\":7}",
+      "want": ""
+    },
+    {
+      "arguments": "{}",
+      "want": ""
+    },
+    {
+      "arguments": "[]",
+      "want": ""
+    },
+    {
+      "arguments": "",
+      "want": ""
+    }
+  ]
+}
