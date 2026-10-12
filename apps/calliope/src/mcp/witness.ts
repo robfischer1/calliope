@@ -8,7 +8,8 @@
  * peer stamp (http.ts wraps the listener with it), the dispatcher interceptor
  * (server.ts installs it) and the sink (built here from `KAFKA_BOOTSTRAP`).
  *
- * It records and refuses nothing. Calliope's mTLS door (port + 1, `mtls-door.ts`)
+ * It records and refuses nothing (the PEP, `pep/`, decides on the same record).
+ * Calliope's mTLS door (port + 1, `mtls-door.ts`)
  * verifies a presented client certificate against the SPIFFE bundle, so a call
  * on it names its caller (`caller_identity`, `path` gateway or direct); a call
  * on the plaintext port, or on the door with no certificate, reads
@@ -18,6 +19,7 @@
 import { RequestLog, witnessSink } from "@forge/stellar-core-ts";
 import type { WitnessSink } from "@forge/stellar-core-ts";
 import { SOURCE_STAR } from "./consciousness-emit.js";
+import { withDenyDecision } from "./pep/intercept.js";
 
 /** A request log and what to release when the process ends. */
 export interface Witness {
@@ -41,7 +43,7 @@ export function makeWitness(
   });
   return {
     log: new RequestLog(SOURCE_STAR, {
-      sink: sink.sink,
+      sink: withDenyDecision(sink.sink),
     }),
     close: () => sink.close(),
   };

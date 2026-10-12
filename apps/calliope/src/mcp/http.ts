@@ -70,6 +70,8 @@ import { reservedHeaders } from "@forge/stellar-core-ts/identitycore";
 import { makeWitness } from "./witness.js";
 import type { Witness } from "./witness.js";
 import { LoopbackPeers, serveMtlsDoor, withDoorPeers } from "./mtls-door.js";
+import { loadPep, pepConfigFromEnv } from "./pep/pep.js";
+import type { Pep } from "./pep/pep.js";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
 const MCP_PATH = "/mcp";
@@ -157,6 +159,7 @@ async function handleMcp(
   containers?: ContainerFacet,
   consciousness?: NotePublisher,
   witness?: RequestLog,
+  pep?: Pep,
 ): Promise<void> {
   // Findability F4: the pg arm — eros-routed when CALLIOPE_EROS_URL is set;
   // absent, the search verb answers honest darkness (F2's contract).
@@ -174,6 +177,7 @@ async function handleMcp(
     ...(containers !== undefined ? { containers } : {}),
     ...(consciousness !== undefined ? { consciousness } : {}),
     witness,
+    pep,
   });
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session id, no server-initiated streams to keep alive.
@@ -205,6 +209,9 @@ export function createCalliopeHttpServer(
   // The mTLS door's table of verified peers riding its loopback connections;
   // absent, the peer is read from the socket's own TLS state (none, plaintext).
   peers?: LoopbackPeers,
+  // The endpoint PEP, armed once at boot (the servers are per-request, the
+  // ACL is not). Absent = no PEP; `main()` always passes one.
+  pep?: Pep,
 ): ReturnType<typeof createHttpServer> {
   // THE IDENTITY CORE LOADS WHEN THE SERVER IS BUILT, not at the first mTLS
   // peer. Lazily, a core that cannot load (stellar-core-ts 0.17.0 read its
@@ -275,6 +282,7 @@ export function createCalliopeHttpServer(
         containerFacet,
         consciousness,
         witness?.log,
+        pep,
       ),
     ).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
@@ -318,6 +326,11 @@ async function main(): Promise<void> {
   const kind = backendKind();
   const port = resolvePort();
   const host = process.env.HOST ?? "0.0.0.0";
+  // The endpoint PEP (Constellation Mesh F7): witness by default, enforce on
+  // STELLAR_PEP_MODE=enforce. FAIL-CLOSED BOOT: a missing or unparseable
+  // composed sidecar throws here, before the backend is touched or the door binds, and main's catch
+  // exits non-zero. Nothing is listening yet, so nothing is served unguarded.
+  const pep = loadPep(pepConfigFromEnv(SOURCE_STAR));
   const backend = await prepareBackend(kind);
   await initBackend(backend);
   // Stream of Consciousness pass 4: ONE producer for the process (the
@@ -344,6 +357,7 @@ async function main(): Promise<void> {
     consciousness,
     witness,
     peers,
+    pep,
   );
 
   await new Promise<void>((resolve) => {

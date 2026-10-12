@@ -18,8 +18,14 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { witnessToolCalls, withHeartbeat } from "@forge/stellar-core-ts";
-import type { RequestLog } from "@forge/stellar-core-ts";
+import {
+  RequestLog,
+  witnessToolCalls,
+  withHeartbeat,
+} from "@forge/stellar-core-ts";
+import { SOURCE_STAR } from "./consciousness-emit.js";
+import { pepToolCalls } from "./pep/intercept.js";
+import type { Pep } from "./pep/pep.js";
 import { isAuthoredBy, validateWriteProvenance } from "../types.js";
 import type { AuthoredBy, BodyClient } from "../types.js";
 import type { RevisionStore } from "../revision-store.js";
@@ -129,6 +135,11 @@ export interface ServerOptions {
    *  leaves one request record. Installed on the dispatcher before any tool
    *  registers, so a verb added later is covered by construction. */
   witness?: RequestLog | undefined;
+  /** The endpoint PEP (Constellation Mesh F7). When present it decides every
+   *  `tools/call` on the same dispatcher the witness wraps, and the decision
+   *  lands on the call's one record; in enforce mode a refused call never
+   *  reaches its verb. Absent = no PEP (tests; `main()` always arms one). */
+  pep?: Pep | undefined;
 }
 
 /** Build a configured MCP server bound to `client`, ready to `connect()`. */
@@ -142,7 +153,13 @@ export function createServer(
   });
   // BEFORE the first tool registers: McpServer installs its one `tools/call`
   // handler when the first tool lands, and the witness wraps that registration.
-  if (options?.witness !== undefined)
+  if (options?.pep !== undefined)
+    pepToolCalls(
+      server.server,
+      options.witness ?? new RequestLog(SOURCE_STAR),
+      options.pep,
+    );
+  else if (options?.witness !== undefined)
     witnessToolCalls(server.server, options.witness);
 
   // The suppressed notes (delete_note's default): every listing drops them.
