@@ -1,12 +1,13 @@
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Peer } from "@forge/stellar-core-ts";
 import { describe, expect, it } from "vitest";
 import { NoSidecarError, loadAcl, parseAcl } from "../src/mcp/pep/acl.js";
 import type { Acl } from "../src/mcp/pep/acl.js";
 import { consumerOf, decide } from "../src/mcp/pep/decide.js";
 import type { Decision } from "../src/mcp/pep/decide.js";
-import { enforced, refusal } from "../src/mcp/pep/enforce.js";
+import { contractFile, enforced, refusal } from "../src/mcp/pep/enforce.js";
 import { resolveMode } from "../src/mcp/pep/pep.js";
 import { parseToml } from "../src/mcp/pep/toml.js";
 import { peerFor, sidecarWith } from "./helpers/pep.js";
@@ -308,6 +309,91 @@ describe("consumerOf", () => {
     );
   });
 
+  it("a ci is ci.<lane>; a runner and a malformed ci take the non-service path", () => {
+    expect(consumerOf(ciPeer(CI_ID))).toBe("ci.gate");
+    expect(
+      consumerOf(
+        ciPeer(
+          "spiffe://notusmi.com/ci/foundry.foundry-stocks/red-ledger/branch/red-ledger-1",
+        ),
+      ),
+    ).toBe("ci.red-ledger");
+    // The two-segment ci/<ns>/<sa> is a runner, no consumer.
+    const runner = "spiffe://notusmi.com/ci/rob.hades/gate";
+    expect(consumerOf({ spiffeId: runner, kind: "runner", name: runner })).toBe(
+      "",
+    );
+    // A ci-kinded peer that is not four segments names no lane.
+    for (const id of [
+      "spiffe://notusmi.com/ci/rob.hades/gate/main",
+      "spiffe://notusmi.com/ci/rob.hades/gate/main/run-1/extra",
+      "spiffe://notusmi.com/ci",
+    ]) {
+      expect(consumerOf(ciPeer(id))).toBe("");
+    }
+    // A job still reads as job.<lane>, whatever shape its id.
+    expect(consumerOf({ spiffeId: JOB_ID, kind: "job", name: JOB_ID })).toBe(
+      "job.gate",
+    );
+  });
+
+  it("a ci is held to its lane's ci.<lane> edge, never a job's, and the reverse", () => {
+    const acl = parseAcl(
+      "narcissus",
+      '[[produces]]\nto = "ci.gate"\ncontract = "narcissus-ci.gate"\nstatus = "approved"\nverbs = ["witness"]\n' +
+        '[[produces]]\nto = "job.build"\ncontract = "narcissus-job.build"\nstatus = "approved"\nverbs = ["witness"]\n',
+    );
+    const jobPeer = (id: string): Peer => ({
+      spiffeId: id,
+      kind: "job",
+      name: id,
+    });
+    const want = (peer: Peer, verb: string, d: Partial<Decision>) => {
+      expect(decide(acl, { peer, verb })).toMatchObject(d);
+    };
+    want(ciPeer(CI_ID), "witness", {
+      verdict: "allow",
+      reason: "edge_allows",
+      contract: "narcissus-ci.gate",
+    });
+    want(ciPeer(CI_ID), "index", {
+      verdict: "deny",
+      reason: "verb_not_on_edge",
+      contract: "narcissus-ci.gate",
+    });
+    want(
+      ciPeer("spiffe://notusmi.com/ci/rob.hades/build/main/build-x-1"),
+      "witness",
+      { verdict: "deny", reason: "no_edge" },
+    );
+    // A job.<lane> edge does not admit a ci of that lane, nor the reverse.
+    want(ciPeer("spiffe://notusmi.com/ci/rob.hades/gate/main/x-1"), "witness", {
+      verdict: "allow",
+    });
+    want(jobPeer("spiffe://notusmi.com/job/gate/gate-x-1"), "witness", {
+      verdict: "deny",
+      reason: "no_edge",
+    });
+    want(jobPeer("spiffe://notusmi.com/job/build/build-x-1"), "witness", {
+      verdict: "allow",
+      contract: "narcissus-job.build",
+    });
+    want(
+      ciPeer("spiffe://notusmi.com/ci/rob.hades/build/main/b-1"),
+      "witness",
+      {
+        verdict: "deny",
+        reason: "no_edge",
+      },
+    );
+    expect(
+      decide(undefined, { peer: ciPeer(CI_ID), verb: "witness" }),
+    ).toMatchObject({ verdict: "deny", reason: "no_acl" });
+    expect(contractFile("narcissus", consumerOf(ciPeer(CI_ID)))).toBe(
+      "foundry-dies/orbits/narcissus-ci.gate.toml",
+    );
+  });
+
   it("a job edge is held like a star's, under consumer job.<lane>", () => {
     const acl = parseAcl(
       "urania",
@@ -325,6 +411,9 @@ describe("consumerOf", () => {
 const SESSION_ID =
   "spiffe://notusmi.com/session/5906d6fc-aba9-49ab-a8af-3b1e56409c49";
 const JOB_ID = "spiffe://notusmi.com/job/gate/run-42";
+const ciPeer = (id: string): Peer => ({ spiffeId: id, kind: "ci", name: id });
+const CI_ID =
+  "spiffe://notusmi.com/ci/rob.hades/gate/main/gate-theia-241ff73-9dlwn";
 
 describe("the composed sidecar dialect (TS-only: no TOML library behind the parser)", () => {
   it("calliope's own composed sidecar parses: four approved grants", () => {
