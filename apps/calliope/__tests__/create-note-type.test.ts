@@ -162,7 +162,11 @@ describe("the create_note verb's type", () => {
         arguments: { title: "t", type },
       });
       expect(res.isError, type).toBe(true);
-      expect(res.structuredContent, type).toBeUndefined();
+      // At the schema, worded bad_args by the door (dispatch 283).
+      expect(res.structuredContent, type).toMatchObject({
+        code: "bad_args",
+        detail: expect.stringContaining("at type") as string,
+      });
     }
   });
 

@@ -497,9 +497,12 @@ describe("write_container with replacements", () => {
         arguments: args,
       });
       expect(res.isError, JSON.stringify(args)).toBe(true);
-      // Refused at the schema, before the handler: a handler miss
-      // (empty_container / bad_args) would carry structured content.
-      expect(res.structuredContent, JSON.stringify(args)).toBeUndefined();
+      // Refused at the schema, before the handler (the door words the
+      // parse refusal as bad_args, dispatch 283): the detail is the pattern.
+      expect(res.structuredContent, JSON.stringify(args)).toMatchObject({
+        code: "bad_args",
+        detail: expect.stringContaining("must match pattern") as string,
+      });
     }
   });
 
@@ -544,7 +547,10 @@ describe("write_container with replacements", () => {
       arguments: { container: node, ops: [] },
     });
     expect(res.isError).toBe(true);
-    expect(res.structuredContent).toBeUndefined();
+    expect(res.structuredContent).toMatchObject({
+      code: "bad_args",
+      detail: expect.stringContaining("at ops") as string,
+    });
   });
 
   it("an ops save that nets out reports noop and runs no reconcile", async () => {

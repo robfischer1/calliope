@@ -18,7 +18,11 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { witnessToolCalls, withHeartbeat } from "@forge/stellar-core-ts";
+import {
+  enforceInputSchemas,
+  witnessToolCalls,
+  withHeartbeat,
+} from "@forge/stellar-core-ts";
 import type { RequestLog } from "@forge/stellar-core-ts";
 import { isAuthoredBy, validateWriteProvenance } from "../types.js";
 import type { AuthoredBy, BodyClient } from "../types.js";
@@ -41,6 +45,7 @@ import {
   frontmatterOf,
   isSetPropertiesError,
   setProperties,
+  type PropertyValue,
   withFrontmatter,
 } from "../properties.js";
 import type { FocusRegister } from "../focus-register.js";
@@ -53,7 +58,8 @@ import {
   NOTE_KIND,
 } from "./tools.js";
 import type { ChaosFacet } from "../chaos-client.js";
-import { ChaosClientError } from "../chaos-client.js";
+import { ChaosClientError, TENANTS } from "../chaos-client.js";
+import { NODE_TOKEN_RE, nodeToken } from "./inputs.js";
 import { type ContainerFacet, writeContainer } from "../container-write.js";
 import { isPatchError, patchContainer } from "../container-patch.js";
 import type { AuthorKind, NotePublisher } from "./consciousness-emit.js";
@@ -64,6 +70,7 @@ import { runBlobCensus } from "../blob-census.js";
 import type { TagStore } from "../tag-store.js";
 import { outputSchemaOf } from "./output-schemas.js";
 import { refuse, refusalResult } from "../refusal.js";
+import type { RefusalResult } from "../refusal.js";
 import type { SearchProvider, SearchResponse } from "../search-types.js";
 
 /**
@@ -74,6 +81,36 @@ import type { SearchProvider, SearchResponse } from "../search-types.js";
  */
 function structured(result: object): Record<string, unknown> {
   return { ...result };
+}
+
+/**
+ * A note verb's handle: container_id, else source_path, each counted only
+ * when non-empty. Neither is a bad_args refusal (the schema's
+ * x-requiredAnyOf), decided before any read.
+ */
+function noteHandle(
+  verb: string,
+  container_id: string | undefined,
+  source_path: string | undefined,
+): {
+  refusal?: RefusalResult;
+  container_id?: string;
+  source_path?: string;
+} {
+  const id = container_id === "" ? undefined : container_id;
+  const path = source_path === "" ? undefined : source_path;
+  if (id === undefined && path === undefined) {
+    return {
+      refusal: refuse(
+        "bad_args",
+        `${verb} needs a container_id or a source_path`,
+      ),
+    };
+  }
+  return {
+    ...(id !== undefined ? { container_id: id } : {}),
+    ...(path !== undefined ? { source_path: path } : {}),
+  };
 }
 
 /** Optional extra facets a server can carry beside the body verbs. */
@@ -144,6 +181,10 @@ export function createServer(
   // handler when the first tool lands, and the witness wraps that registration.
   if (options?.witness !== undefined)
     witnessToolCalls(server.server, options.witness);
+  // After the witness, so it records these refusals too: every call is held
+  // to the schema tools/list advertises — a missing required field and an
+  // undeclared one refuse as bad_args before any handler runs.
+  enforceInputSchemas(server.server, refuse);
 
   // The suppressed notes (delete_note's default): every listing drops them.
   // No chaos facet, no notes graph, nothing to hide.
@@ -291,9 +332,9 @@ export function createServer(
           "Resolve a plan node's body — its prose sections, sorted by order key. " +
           "Returns { sections: [{ id, text, orderKey }] }; a node with no body " +
           "returns an empty list.",
-        inputSchema: {
+        inputSchema: z.strictObject({
           node_id: z.string().describe("The node whose body to read."),
-        },
+        }),
       },
       async ({ node_id }) => {
         const result = await readBody(client, node_id);
@@ -330,14 +371,22 @@ export function createServer(
           "merge_block) — they preserve block identity; this replaces every " +
           "block's id in one stroke. Kept for coarse imports and the editor's " +
           "degraded path. Returns { ok, count }.",
-        inputSchema: {
-          node_id: z.string().describe("The node whose body to replace."),
-          sections: z
-            .array(z.object({ text: z.string() }))
-            .describe("The new sections, in display order."),
-          authored_by: authoredByField,
-          kafka_offset: kafkaOffsetField,
-        },
+        inputSchema: z
+          .strictObject({
+            node_id: z.string().describe("The node whose body to replace."),
+            sections: z
+              .array(
+                z
+                  .strictObject({
+                    text: z.string().describe("The section's prose."),
+                  })
+                  .describe("One section."),
+              )
+              .describe("The new sections, in display order."),
+            authored_by: authoredByField,
+            kafka_offset: kafkaOffsetField,
+          })
+          .meta({ dependentRequired: { kafka_offset: ["authored_by"] } }),
       },
       async ({ node_id, sections, authored_by, kafka_offset }) => {
         validateWriteProvenance(asAuthor(authored_by), kafka_offset);
@@ -376,54 +425,63 @@ export function createServer(
           "or none; a stale section_id rejects the whole batch " +
           "(stale_section) — the compare-before-write race backstop. Returns " +
           "{ sections, applied } (applied aligned to the ops array).",
-        inputSchema: {
-          node_id: z.string().describe("The node whose body the ops target."),
-          ops: z
-            .array(
-              z.discriminatedUnion("op", [
-                z.object({
-                  op: z.literal("add"),
-                  text: z.string().describe("The new block's prose."),
-                  order_key: z
-                    .string()
-                    .min(1)
-                    .describe(
-                      "Caller-minted fractional key (between neighbors).",
-                    ),
-                }),
-                z.object({
-                  op: z.literal("update"),
-                  section_id: z.string().describe("The section to rewrite."),
-                  text: z.string().describe("The section's new prose."),
-                  order_key: z
-                    .string()
-                    .min(1)
-                    .optional()
-                    .describe(
-                      "Optional new key (an edit+move in one gesture).",
-                    ),
-                }),
-                z.object({
-                  op: z.literal("delete"),
-                  section_id: z.string().describe("The section to remove."),
-                }),
-                z.object({
-                  op: z.literal("reorder"),
-                  section_id: z.string().describe("The section to move."),
-                  order_key: z
-                    .string()
-                    .min(1)
-                    .describe("The new fractional key (between neighbors)."),
-                }),
-              ]),
-            )
-            .min(1)
-            .describe(
-              "The op batch, in apply order; at most one op per section.",
-            ),
-          authored_by: authoredByField,
-          kafka_offset: kafkaOffsetField,
-        },
+        inputSchema: z
+          .strictObject({
+            node_id: z.string().describe("The node whose body the ops target."),
+            ops: z
+              .array(
+                z
+                  .discriminatedUnion("op", [
+                    z.strictObject({
+                      op: z.literal("add").describe("Mint a section."),
+                      text: z.string().describe("The new block's prose."),
+                      order_key: z
+                        .string()
+                        .min(1)
+                        .describe(
+                          "Caller-minted fractional key (between neighbors).",
+                        ),
+                    }),
+                    z.strictObject({
+                      op: z.literal("update").describe("Rewrite a section."),
+                      section_id: z
+                        .string()
+                        .describe("The section to rewrite."),
+                      text: z.string().describe("The section's new prose."),
+                      order_key: z
+                        .string()
+                        .min(1)
+                        .optional()
+                        .describe(
+                          "Optional new key (an edit+move in one gesture).",
+                        ),
+                    }),
+                    z.strictObject({
+                      op: z.literal("delete").describe("Remove a section."),
+                      section_id: z.string().describe("The section to remove."),
+                    }),
+                    z.strictObject({
+                      op: z.literal("reorder").describe("Move a section."),
+                      section_id: z.string().describe("The section to move."),
+                      order_key: z
+                        .string()
+                        .min(1)
+                        .describe(
+                          "The new fractional key (between neighbors).",
+                        ),
+                    }),
+                  ])
+                  .meta({ type: "object" })
+                  .describe("One op: add, update, delete or reorder."),
+              )
+              .min(1)
+              .describe(
+                "The op batch, in apply order; at most one op per section.",
+              ),
+            authored_by: authoredByField,
+            kafka_offset: kafkaOffsetField,
+          })
+          .meta({ dependentRequired: { kafka_offset: ["authored_by"] } }),
       },
       async ({ node_id, ops, authored_by, kafka_offset }) => {
         validateWriteProvenance(asAuthor(authored_by), kafka_offset);
@@ -465,7 +523,7 @@ export function createServer(
           "newest first — each coarse save and each single-section edit is one " +
           "event. Returns { revisions: [{ revision, kind, authoredBy, " +
           "sections }] }. Read-only.",
-        inputSchema: {
+        inputSchema: z.strictObject({
           node_id: z.string().describe("The node whose history to list."),
           limit: z
             .number()
@@ -473,7 +531,7 @@ export function createServer(
             .positive()
             .optional()
             .describe("Max events to return (default 50, newest first)."),
-        },
+        }),
       },
       async ({ node_id, limit }) => {
         const result = await readBodyRevisions(client, node_id, limit);
@@ -504,12 +562,12 @@ export function createServer(
           "Reconstruct a plan node's body as it stood at a write-event returned " +
           "by read_body_revisions. Returns { revision, sections }; a revision " +
           "predating the body returns an empty list. Read-only.",
-        inputSchema: {
+        inputSchema: z.strictObject({
           node_id: z.string().describe("The node whose body to reconstruct."),
           revision: z
             .string()
             .describe("The write-event timestamp (from read_body_revisions)."),
-        },
+        }),
       },
       async ({ node_id, revision }) => {
         const result = await readBodyAt(client, node_id, revision);
@@ -543,7 +601,7 @@ export function createServer(
         "score, arms }], armsQueried, armsDark } — a dark arm is NAMED, " +
         "never hidden; no arms queried + arms dark means the backend has " +
         "no search provider (or no index yet), distinct from zero matches.",
-      inputSchema: {
+      inputSchema: z.strictObject({
         query: z.string().min(1).describe("The search phrase."),
         scope: z
           .string()
@@ -558,7 +616,7 @@ export function createServer(
           .max(100)
           .optional()
           .describe("Max hits to return (default 20)."),
-      },
+      }),
     },
     async ({ query, scope, k }) => {
       const provider = options?.search;
@@ -598,13 +656,13 @@ export function createServer(
           "call — the browse list badges without N per-node reads (footgun " +
           "#5). Returns { present: [{ node_id, blocks }] }; ids with no body " +
           "are absent from the list. Bounded: at most 2048 ids per call.",
-        inputSchema: {
+        inputSchema: z.strictObject({
           node_ids: z
-            .array(z.string())
+            .array(z.string().describe("A node id."))
             .min(1)
             .max(2048)
             .describe("The extent to check (bounded at 2048 ids)."),
-        },
+        }),
       },
       async ({ node_ids }) => {
         const counts = await client.hasBody(node_ids);
@@ -642,7 +700,7 @@ export function createServer(
           "from phdb — read-only history, never a live write surface: " +
           "revisions by file_path / repo / id, newest first. Blob shas are " +
           "pointers into the vault's git repo. Returns { revisions: [...] }.",
-        inputSchema: {
+        inputSchema: z.strictObject({
           id: z.number().int().optional().describe("A single revision id."),
           file_path: z
             .string()
@@ -655,7 +713,7 @@ export function createServer(
             .positive()
             .optional()
             .describe("Row cap (default 50)."),
-        },
+        }),
       },
       async ({ id, file_path, repo, limit }) => {
         const rows = await revisions.revisions({
@@ -688,12 +746,12 @@ export function createServer(
           "record for one revision — " +
           "denormalized (subject, predicate, object) labels, in stored " +
           "order. Returns { deltas: [...] }.",
-        inputSchema: {
+        inputSchema: z.strictObject({
           revision_id: z
             .number()
             .int()
             .describe("The revision whose deltas to read."),
-        },
+        }),
       },
       async ({ revision_id }) => {
         const rows = await revisions.deltasFor(revision_id);
@@ -726,7 +784,7 @@ export function createServer(
           "honest drift verdict against the live block: none / drifted " +
           "(current_text included) / gone. No focus yet answers " +
           "{ focus: null }, not an error. Reading never mutates.",
-        inputSchema: {},
+        inputSchema: z.strictObject({}),
       },
       async () => {
         const result = await look(client, register, await hiddenNotes());
@@ -760,9 +818,9 @@ export function createServer(
           "029/F6: clear one deliberate pin by its pin_id (as answered in " +
           "look's pins[]). The conversational 'clear pin 2'. Unknown id " +
           "answers a not_found refusal; live focus is untouched.",
-        inputSchema: {
+        inputSchema: z.strictObject({
           pin_id: z.string().min(1).describe("The pin to remove."),
-        },
+        }),
       },
       ({ pin_id }) => {
         const result = unpin(register, pin_id);
@@ -809,13 +867,19 @@ export function createServer(
           "superseding generation — history keeps the old (last-write-wins " +
           "under append-only history). Returns { node_id, created, " +
           "generation }.",
-        inputSchema: {
+        inputSchema: z.strictObject({
           source_path: z
             .string()
             .min(1)
             .describe("The container's local path — its stable identity."),
           blocks: z
-            .array(z.object({ text: z.string() }))
+            .array(
+              z
+                .strictObject({
+                  text: z.string().describe("The block's prose."),
+                })
+                .describe("One block."),
+            )
             .describe("The container's blocks, in display order."),
           title: z.string().optional().describe("The display title."),
           source_kind: z
@@ -839,7 +903,7 @@ export function createServer(
             .string()
             .optional()
             .describe("The local file's content hash (default: derived)."),
-        },
+        }),
       },
       async ({
         source_path,
@@ -908,18 +972,27 @@ export function createServer(
           "truth. Handle: container_id, or source_path (the note's " +
           "identity name). Returns { container_id, markdown, block_count }; " +
           "a miss is a not_found refusal.",
-        inputSchema: {
-          container_id: z.string().optional().describe("The note's node id."),
-          source_path: z
-            .string()
-            .optional()
-            .describe("The note's identity path (resolves by name)."),
-        },
+        inputSchema: z
+          .strictObject({
+            container_id: z
+              .string()
+              .optional()
+              .describe("The note's node id; this or source_path."),
+            source_path: z
+              .string()
+              .optional()
+              .describe("The note's identity path (resolves by name)."),
+          })
+          .meta({ "x-requiredAnyOf": [["container_id"], ["source_path"]] }),
       },
       async ({ container_id, source_path }) => {
-        let nodeId = container_id;
-        if (nodeId === undefined && source_path !== undefined) {
-          const [hit] = await dial.findByName("Note", source_path);
+        // The advertised x-requiredAnyOf, in the handler's words: a handle
+        // sent empty is no handle (the vendor keyword's present rule).
+        const handle = noteHandle("export_note", container_id, source_path);
+        if (handle.refusal !== undefined) return handle.refusal;
+        let nodeId = handle.container_id;
+        if (nodeId === undefined && handle.source_path !== undefined) {
+          const [hit] = await dial.findByName("Note", handle.source_path);
           nodeId = hit;
         }
         // A missing handle never reaches a read — the miss is decided
@@ -927,11 +1000,7 @@ export function createServer(
         // dial read at all (pinned by the container-body suite).
         const miss = (detail: string) => refuse("not_found", detail);
         if (nodeId === undefined) {
-          return miss(
-            container_id ??
-              source_path ??
-              "export_note needs a container_id or a source_path",
-          );
+          return miss(handle.source_path ?? "");
         }
         const body = await bodies.readBody(nodeId);
         if (body.length === 0) {
@@ -976,27 +1045,36 @@ export function createServer(
           "tags, and the provenance attributes. Handle: container_id, or " +
           "source_path (the note's identity name). A miss is a " +
           "not_found refusal.",
-        inputSchema: {
-          container_id: z.string().optional().describe("The note's node id."),
-          source_path: z
-            .string()
-            .optional()
-            .describe("The note's identity path (resolves by name)."),
-        },
+        inputSchema: z
+          .strictObject({
+            container_id: z
+              .string()
+              .optional()
+              .describe("The note's node id; this or source_path."),
+            source_path: z
+              .string()
+              .optional()
+              .describe("The note's identity path (resolves by name)."),
+          })
+          .meta({ "x-requiredAnyOf": [["container_id"], ["source_path"]] }),
       },
       async ({ container_id, source_path }) => {
-        let nodeId = container_id;
-        if (nodeId === undefined && source_path !== undefined) {
-          const [hit] = await dial.findByName("Note", source_path);
+        const handle = noteHandle(
+          "materialize_note",
+          container_id,
+          source_path,
+        );
+        if (handle.refusal !== undefined) return handle.refusal;
+        let nodeId = handle.container_id;
+        if (nodeId === undefined && handle.source_path !== undefined) {
+          const [hit] = await dial.findByName("Note", handle.source_path);
           nodeId = hit;
         }
         const edges = nodeId === undefined ? [] : await dial.edges(nodeId);
         if (nodeId === undefined || edges.length === 0) {
           return refuse(
             "not_found",
-            container_id ??
-              source_path ??
-              "materialize_note needs a container_id or a source_path",
+            handle.container_id ?? handle.source_path ?? "",
           );
         }
         const body = await bodies.readBody(nodeId);
@@ -1065,21 +1143,21 @@ export function createServer(
           "admit_refused / suppressed_exists — the title " +
           "belongs to a suppressed note, whose id it names; restore_note " +
           "brings it back).",
-        inputSchema: {
+        inputSchema: z.strictObject({
           title: z
             .string()
             .min(1)
             .describe("The note's title — its graph name AND idempotency key."),
           parent: z
             .string()
-            .regex(/^[0-9a-f]{64}$/)
+            .regex(NODE_TOKEN_RE)
             .optional()
             .describe(
               "Parent node token; omitted, the note parents to the ensured " +
                 "'Notes' root.",
             ),
           tags: z
-            .array(z.string())
+            .array(z.string().describe("One tag."))
             .optional()
             .describe(
               "Explicit tags (e.g. folder-derived) — validated here, written " +
@@ -1090,7 +1168,7 @@ export function createServer(
             .regex(/^[A-Za-z][A-Za-z0-9_-]*$/)
             .default(NOTE_KIND)
             .describe("The hasType edge; the node kind stays Note."),
-        },
+        }),
       },
       async ({ title, parent, tags, type }) => {
         const result = await createNote(
@@ -1136,11 +1214,11 @@ export function createServer(
           "The title is the node's graph name; the id half is the full node " +
           "token (the address of record — resolvable by read_body et al.). " +
           "Unknown node → a not_found refusal.",
-        inputSchema: {
+        inputSchema: z.strictObject({
           node_id: z
             .string()
             .describe("The note whose compound reference to mint."),
-        },
+        }),
       },
       async ({ node_id }) => {
         const result = await copyReference(dial, node_id);
@@ -1181,7 +1259,7 @@ export function createServer(
           "hasTag == the (lowercase-normalized) tag, over the graph's indexed " +
           "point lookup, suppressed notes left out unless include_suppressed. " +
           "Returns {tag, node_ids}.",
-        inputSchema: {
+        inputSchema: z.strictObject({
           tag: z
             .string()
             .min(1)
@@ -1193,7 +1271,7 @@ export function createServer(
               "Default false. true also lists suppressed notes (a tag " +
                 "rename must reach them).",
             ),
-        },
+        }),
       },
       async ({ tag, include_suppressed }) => {
         const result = await listByTag(
@@ -1228,7 +1306,7 @@ export function createServer(
           "C9: every tag Calliope has written, with carrier counts — the " +
           "picker's chip source. Suppressed notes are not counted. Returns " +
           "{tags: [{tag, count}]}.",
-        inputSchema: {},
+        inputSchema: z.strictObject({}),
       },
       async () => {
         const result = await listTags(tagStore, await hiddenNotes());
@@ -1241,10 +1319,27 @@ export function createServer(
       },
     );
 
-    const propertyValue = z.union([
-      z.object({ literal: z.string() }).strict(),
-      z.object({ node: z.string() }).strict(),
-    ]);
+    // One value is a literal OR a node token: exactly one key, the shape
+    // the handler counts (x-requiredOneOfKeys — key presence, since the
+    // handler refuses an empty literal in its own words).
+    const propertyValue = z
+      .strictObject({
+        literal: z
+          .string()
+          .optional()
+          .describe("A literal value; this or node."),
+        node: nodeToken(
+          "A node token (a resolved wikilink); this or literal.",
+        ).optional(),
+      })
+      .refine((v) => (v.literal === undefined) !== (v.node === undefined), {
+        message: "send exactly one of literal or node",
+      })
+      .transform((v): PropertyValue =>
+        v.node !== undefined ? { node: v.node } : { literal: v.literal ?? "" },
+      )
+      .meta({ "x-requiredOneOfKeys": [["literal"], ["node"]] })
+      .describe("One value: {literal} or {node}.");
     server.registerTool(
       "set_properties",
       {
@@ -1265,21 +1360,31 @@ export function createServer(
           "Idempotent — a re-run is a read. Returns {node_id, added, " +
           "removed, tags_added, tags_removed, tags_skipped, tx?}; refusals " +
           "are not_a_note / bad_args / admit_refused.",
-        inputSchema: {
+        inputSchema: z.strictObject({
           container_id: z
             .string()
-            .regex(/^[0-9a-f]{64}$/)
+            .regex(NODE_TOKEN_RE)
             .describe("The note's node token."),
           properties: z
             .array(
-              z.object({
-                predicate: z.string().min(1),
-                values: z.array(propertyValue),
-              }),
+              z
+                .strictObject({
+                  predicate: z
+                    .string()
+                    .min(1)
+                    .describe("The predicate (frontmatter key)."),
+                  values: z
+                    .array(propertyValue)
+                    .describe("The predicate's whole value set."),
+                })
+                .describe("One predicate and its values."),
             )
             .optional()
             .describe("predicate → values; a node value is a 64-hex token."),
-          tags: z.array(z.string()).optional().describe("Explicit tags."),
+          tags: z
+            .array(z.string().describe("One tag."))
+            .optional()
+            .describe("Explicit tags."),
           frontmatter: z
             .string()
             .optional()
@@ -1288,7 +1393,7 @@ export function createServer(
             .boolean()
             .optional()
             .describe("Remove exactly the named values instead of setting."),
-        },
+        }),
       },
       async (args) => {
         const result = await setProperties(dial, scope, tagStore, args);
@@ -1310,34 +1415,44 @@ export function createServer(
 
   if (options?.containers !== undefined) {
     const facet = options.containers;
-    const containerOpField = z.discriminatedUnion("op", [
-      z.object({
-        op: z.literal("add"),
-        text: z.string().describe("The new block's prose."),
-        position: z
-          .string()
-          .min(1)
-          .describe("Fractional order key (bytewise order; client-minted)."),
-      }),
-      z.object({
-        op: z.literal("update"),
-        slot: z.string().regex(/^[0-9a-f]{64}$/),
-        oldBlobId: z.string().min(1),
-        text: z.string(),
-      }),
-      z.object({
-        op: z.literal("reorder"),
-        slot: z.string().regex(/^[0-9a-f]{64}$/),
-        oldPosition: z.string().min(1),
-        position: z.string().min(1),
-      }),
-      z.object({
-        op: z.literal("remove"),
-        slot: z.string().regex(/^[0-9a-f]{64}$/),
-        position: z.string().min(1),
-        blobId: z.string().min(1),
-      }),
-    ]);
+    const slotField = nodeToken("The block slot's 64-hex token.");
+    const containerOpField = z
+      .discriminatedUnion("op", [
+        z.strictObject({
+          op: z.literal("add").describe("Add a block."),
+          text: z.string().describe("The new block's prose."),
+          position: z
+            .string()
+            .min(1)
+            .describe("Fractional order key (bytewise order; client-minted)."),
+        }),
+        z.strictObject({
+          op: z.literal("update").describe("Rewrite a block's prose."),
+          slot: slotField,
+          oldBlobId: z
+            .string()
+            .min(1)
+            .describe("The blob the slot holds now (compare-before-write)."),
+          text: z.string().describe("The block's new prose."),
+        }),
+        z.strictObject({
+          op: z.literal("reorder").describe("Move a block."),
+          slot: slotField,
+          oldPosition: z
+            .string()
+            .min(1)
+            .describe("The slot's position now (compare-before-write)."),
+          position: z.string().min(1).describe("The new fractional order key."),
+        }),
+        z.strictObject({
+          op: z.literal("remove").describe("Remove a block."),
+          slot: slotField,
+          position: z.string().min(1).describe("The slot's position now."),
+          blobId: z.string().min(1).describe("The blob the slot holds now."),
+        }),
+      ])
+      .meta({ type: "object" })
+      .describe("One op: add, update, reorder or remove.");
     server.registerTool(
       "write_container",
       {
@@ -1355,32 +1470,50 @@ export function createServer(
           "server-side in order, optionally to one slot; any expected_count " +
           "miss refuses the whole batch as count_mismatch, nothing written). " +
           "Returns noop, the tx and, for replacements, the counts.",
-        inputSchema: {
-          container: z
-            .string()
-            .regex(/^[0-9a-f]{64}$/)
-            .describe("The container node's 64-hex token."),
-          ops: z.array(containerOpField).min(1).optional(),
-          slot: z
-            .string()
-            .regex(/^[0-9a-f]{64}$/)
-            .optional()
-            .describe("With replacements: patch this block only."),
-          replacements: z
-            .array(
-              z.object({
-                find: z.string().min(1),
-                replace: z.string(),
-                expected_count: z.number().int().min(0),
-              }),
-            )
-            .min(1)
-            .optional(),
-          tenant: z
-            .enum(["notes", "documents", "comments", "governance", "issues"])
-            .optional()
-            .describe("Default: notes."),
-        },
+        inputSchema: z
+          .strictObject({
+            container: z
+              .string()
+              .regex(NODE_TOKEN_RE)
+              .describe("The container node's 64-hex token."),
+            ops: z
+              .array(containerOpField)
+              .min(1)
+              .optional()
+              .describe("The op batch, in apply order; this or replacements."),
+            slot: z
+              .string()
+              .regex(NODE_TOKEN_RE)
+              .optional()
+              .describe("With replacements: patch this block only."),
+            replacements: z
+              .array(
+                z
+                  .strictObject({
+                    find: z
+                      .string()
+                      .min(1)
+                      .describe("The literal text to find (case-sensitive)."),
+                    replace: z.string().describe("Its replacement."),
+                    expected_count: z
+                      .number()
+                      .int()
+                      .min(0)
+                      .describe(
+                        "How many matches must exist, or none is written.",
+                      ),
+                  })
+                  .describe("One find/replace."),
+              )
+              .min(1)
+              .optional()
+              .describe("Find/replace pairs, applied in order; this or ops."),
+            tenant: z.enum(TENANTS).optional().describe("Default: notes."),
+          })
+          .meta({
+            "x-requiredOneOf": [["ops"], ["replacements"]],
+            dependentRequired: { slot: ["replacements"] },
+          }),
       },
       async ({ container, ops, slot, replacements, tenant }) => {
         const graph = tenant ?? "notes";
@@ -1455,10 +1588,10 @@ export function createServer(
           "(members since removed included). A tree fact naming an absent " +
           "blob surfaces as dangling (text null) — reported, never " +
           "fabricated.",
-        inputSchema: {
+        inputSchema: z.strictObject({
           container: z
             .string()
-            .regex(/^[0-9a-f]{64}$/)
+            .regex(NODE_TOKEN_RE)
             .describe("The container node's 64-hex token."),
           as_of_tx: z
             .number()
@@ -1466,7 +1599,7 @@ export function createServer(
             .positive()
             .optional()
             .describe("Read the container as it stood at this transaction."),
-        },
+        }),
       },
       async ({ container, as_of_tx }) => {
         const result = await readContainer(
@@ -1504,12 +1637,12 @@ export function createServer(
           "tree_member — removed members' edits stay reachable), ascending, " +
           "with authors and timestamps. No revision table: history IS the " +
           "graph. Reconstruct any moment with read_container(as_of_tx).",
-        inputSchema: {
+        inputSchema: z.strictObject({
           container: z
             .string()
-            .regex(/^[0-9a-f]{64}$/)
+            .regex(NODE_TOKEN_RE)
             .describe("The container node's 64-hex token."),
-        },
+        }),
       },
       async ({ container }) => {
         const transactions = await containerHistory(facet, container);
@@ -1552,12 +1685,12 @@ export function createServer(
           "grace window for saves in flight). Facts naming absent blobs " +
           "are reported dangling, never fixed. Held is the log, so only " +
           "never-referenced orphans ever reap.",
-        inputSchema: {
+        inputSchema: z.strictObject({
           execute: z
             .boolean()
             .optional()
             .describe("Reap previously-marked, still-unheld blobs."),
-        },
+        }),
       },
       // `extra` carries the caller's progress token; the census is the one
       // verb here that can outlive hades' 25s IDLE reap, because it is a
