@@ -42,6 +42,7 @@
  * current semantic facts is `not_found`, which is how a re-delete answers.
  */
 
+import { NODE_TOKEN_RE } from "./types.js";
 import {
   type ChaosDial,
   type ChaosOp,
@@ -70,7 +71,7 @@ export const DELETABLE_OWNERS: ReadonlySet<string> = new Set([
 ]);
 
 const NOTE_TYPE = "Note";
-const TOKEN_RE = /^[0-9a-f]{64}$/;
+const TOKEN_RE = NODE_TOKEN_RE;
 
 export interface DeleteNotesInput {
   ids: string[];

@@ -761,11 +761,13 @@ describe("delete_note's published surface", () => {
         description?: string;
         minItems?: number;
         maxItems?: number;
+        uniqueItems?: boolean;
         items?: { pattern?: string };
       }
     >;
     expect(props.ids).toMatchObject({
-      description: "Note node tokens.",
+      description: "Note node tokens, each once.",
+      uniqueItems: true,
       minItems: 1,
       maxItems: 100,
       items: { pattern: "^[0-9a-f]{64}$" },

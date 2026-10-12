@@ -20,12 +20,15 @@ import { restoreNotes, suppressNotes } from "../note-suppress.js";
 import type { TagStore } from "../tag-store.js";
 import { outputSchemaOf } from "./output-schemas.js";
 import { refusalResult } from "../refusal.js";
+import { nodeToken } from "./inputs.js";
 
 const ids = z
-  .array(z.string().regex(/^[0-9a-f]{64}$/))
+  .array(nodeToken("A Note node token."))
   .min(1)
   .max(DELETE_NOTE_MAX)
-  .describe("Note node tokens.");
+  // The handler refuses a repeated id (bad_args "… is repeated").
+  .meta({ uniqueItems: true })
+  .describe("Note node tokens, each once.");
 
 interface Answer {
   [key: string]: unknown;
@@ -99,7 +102,7 @@ export function registerDeleteVerbs(
         "refuses, writing nothing, on a non-Note, a protected note " +
         "(archived, or claimed by another star) or a parent of a note " +
         "outside the call. A note with no current facts answers not_found.",
-      inputSchema: {
+      inputSchema: z.strictObject({
         ids,
         dry_run: z.boolean().optional().describe("Default true. false writes."),
         purge: z
@@ -109,7 +112,7 @@ export function registerDeleteVerbs(
             "Default false (suppress). true retracts every fact; restore " +
               "cannot undo it.",
           ),
-      },
+      }),
     },
     async ({ ids, dry_run, purge }) => {
       if (purge !== true) {
@@ -172,7 +175,7 @@ export function registerDeleteVerbs(
         "read_container(as_of_tx) still reads it) and answers not_found. " +
         `Takes up to ${String(DELETE_NOTE_MAX)} ids; a non-Note or a ` +
         "protected note refuses the call, writing nothing.",
-      inputSchema: { ids },
+      inputSchema: z.strictObject({ ids }),
     },
     async ({ ids }) => {
       const result = await restoreNotes(dial, scope, { ids });

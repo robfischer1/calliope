@@ -30,6 +30,7 @@
  * the same predicate would flap.
  */
 
+import { NODE_TOKEN_RE } from "./types.js";
 import {
   type ChaosDial,
   ChaosClientError,
@@ -125,7 +126,7 @@ export function isSetPropertiesError(
   return "code" in r;
 }
 
-const TOKEN_RE = /^[0-9a-f]{64}$/;
+const TOKEN_RE = NODE_TOKEN_RE;
 
 /** One edge's identity for set arithmetic: domain-tagged so a literal that
  *  happens to look like a token never equals a node edge. */

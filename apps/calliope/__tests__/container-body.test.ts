@@ -177,10 +177,10 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
     expect(miss.structuredContent).toMatchObject({
       code: "not_found",
     });
-    // export_note: no handle at all, an unknown path, an unknown id — every
-    // miss is the structured not_found, never a body-client call.
+    // export_note: an unknown path, an unknown id — every miss is the
+    // structured not_found, never a body-client call. (No handle at all is
+    // the schema's x-requiredAnyOf: bad_args, dispatch 283.)
     for (const args of [
-      {},
       { source_path: "never/dissolved.md" },
       { container_id: "e".repeat(64) },
     ]) {
@@ -202,15 +202,17 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
     };
     const res = await mcp.callTool({ name: "export_note", arguments: {} });
     expect(res.isError).toBe(true);
+    // dispatch 283: no handle is an argument refusal (the advertised
+    // x-requiredAnyOf), not a miss; a handle sent empty is no handle.
     expect(res.structuredContent).toEqual({
-      code: "not_found",
+      code: "bad_args",
       detail: "export_note needs a container_id or a source_path",
     });
     // The text half carries the same miss, for a caller reading prose only.
     expect(res.content).toEqual([
       {
         type: "text",
-        text: "not_found: export_note needs a container_id or a source_path",
+        text: "bad_args: export_note needs a container_id or a source_path",
       },
     ]);
     expect(reads).toEqual([]);

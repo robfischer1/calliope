@@ -502,3 +502,7 @@ export function isBodyPointer(p: unknown): p is BodyPointer {
  * them by type.
  */
 export type NoteBodies = Pick<BodyClient, "readBody" | "saveBody">;
+
+/** A graph node token: 64 lowercase hex. The one pattern the verbs' schemas
+ *  advertise and their handlers check. */
+export const NODE_TOKEN_RE = /^[0-9a-f]{64}$/;
