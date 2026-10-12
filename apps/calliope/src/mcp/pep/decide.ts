@@ -16,7 +16,8 @@
  *     non-service path. Any other peer's `_meta` is its own claim and is ignored.
  *  3. A star caller: is there a `[[produces]]` edge for it, and does that edge
  *     carry this verb (the star's own unprefixed verb name)?
- *  4. A CI lane's run (`job`): the same edge check, held to consumer `job.<lane>`.
+ *  4. A CI lane's run (`job`) or a CI job's workload identity (`ci`): the same
+ *     edge check, held to consumer `job.<lane>` / `ci.<lane>`.
  *  5. Any other verified caller (session, human): the non-service path.
  *
  * The non-service path is the policy plane's question. This port has no policy
@@ -92,9 +93,19 @@ const decision = (
 export const JOB_CONSUMER_PREFIX = "job.";
 
 /**
+ * A CI job's workload identity (a `ci` peer, R-D20) is held to consumer
+ * `ci.<lane>` (orbits/<producer>-ci.<lane>.toml), however many repos, refs and
+ * runs carry that lane. A job.<lane> edge does not admit a ci, nor the reverse.
+ */
+export const CI_CONSUMER_PREFIX = "ci.";
+
+/**
  * The `[[produces]]` consumer a peer's edge is held to: a star's bare name,
- * `job.<lane>` for a CI lane's run (`spiffe://<td>/job/<lane>/<id>`), and ""
- * for every other caller, which takes the non-service path.
+ * `job.<lane>` for a CI lane's run (`spiffe://<td>/job/<lane>/<id>`),
+ * `ci.<lane>` for a CI job's workload identity
+ * (`spiffe://<td>/ci/<repo>/<lane>/<ref>/<run>`), and "" for every other
+ * caller (the two-segment `ci/<ns>/<sa>` runner among them), which takes the
+ * non-service path.
  */
 export function consumerOf(peer: Peer | undefined): string {
   if (peer === undefined) return "";
@@ -102,6 +113,12 @@ export function consumerOf(peer: Peer | undefined): string {
     const rest = peer.name.split("/job/")[1] ?? "";
     const lane = rest.split("/", 1)[0] ?? "";
     return lane === "" ? "" : JOB_CONSUMER_PREFIX + lane;
+  }
+  if (peer.kind === "ci") {
+    // Exactly four segments after ci/, as the SDK typed it: repo, lane, ref, run.
+    const parts = (peer.name.split("/ci/")[1] ?? "").split("/");
+    const lane = parts.length === 4 ? (parts[1] ?? "") : "";
+    return lane === "" ? "" : CI_CONSUMER_PREFIX + lane;
   }
   return peer.kind === "star" ? peer.name : "";
 }
