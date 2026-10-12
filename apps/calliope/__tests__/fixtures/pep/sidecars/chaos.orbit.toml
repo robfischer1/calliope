@@ -1,0 +1,51 @@
+# orbit.toml — chaos's seam contracts (composed by furnace, U6/C6).
+# Per-edge references to the shared contract blocks; a version mismatch
+# across a seam is contract-drift. Generated — do not hand-edit.
+
+[[produces]]
+to = "athena"
+contract = "chaos-athena"
+version = "0"
+status = "generated"
+wire_form = "native"
+verbs = ["find_by_value", "graph_edges", "materialize_edges"]
+
+[[produces]]
+to = "nyx"
+contract = "chaos-nyx"
+version = "0"
+status = "generated"
+wire_form = "native"
+verbs = ["capture", "find_by_name", "nodes", "quads_from", "resolve_node_refs"]
+
+[[produces]]
+to = "techne"
+contract = "chaos-techne"
+version = "0"
+status = "generated"
+wire_form = "native"
+verbs = ["capture", "find_by_name", "materialize_edges"]
+
+[[produces]]
+to = "terpsichore"
+contract = "chaos-terpsichore"
+version = "0"
+status = "generated"
+wire_form = "native"
+verbs = ["capture"]
+
+[[produces]]
+to = "themis"
+contract = "chaos-themis"
+version = "0"
+status = "generated"
+wire_form = "native"
+verbs = ["capture", "materialize_edges"]
+
+[[produces]]
+to = "urania"
+contract = "chaos-urania"
+version = "0"
+status = "generated"
+wire_form = "native"
+verbs = ["index_nodes", "resolve_nodes", "resolve_scalars"]
