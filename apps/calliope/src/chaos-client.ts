@@ -884,8 +884,14 @@ export interface ChaosFacet {
  *  from every other tenant's graph while the bytes dedupe in the one
  *  blob store. Mnemosyne stays graph-native on its own and joins only if
  *  it adopts the shared store. */
-export type Tenant =
-  "notes" | "documents" | "comments" | "governance" | "issues";
+export const TENANTS = [
+  "notes",
+  "documents",
+  "comments",
+  "governance",
+  "issues",
+] as const;
+export type Tenant = (typeof TENANTS)[number];
 
 /** The bare-scope convention (the chaos guard registers graphs bare),
  *  generalized per tenant. Env overrides keep the notes compat knob and
