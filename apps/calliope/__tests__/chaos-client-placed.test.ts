@@ -262,6 +262,29 @@ describe("chaos list reads — the bare array and the F17 {items} object", () =>
     expect(await live().referrers(NODE)).toEqual(bare);
     expect(bare).toHaveLength(1);
   });
+
+  it("findByName reads a bare array and {items} to the same literal tokens", async () => {
+    reply = [TOKEN, "not-a-token"];
+    expect(await live().findByName("note", "x")).toEqual([TOKEN]);
+    reply = { items: [TOKEN, "not-a-token"] };
+    expect(await live().findByName("note", "x")).toEqual([TOKEN]);
+    reply = { items: [] };
+    expect(await live().findByName("note", "x")).toEqual([]);
+    reply = { items: [TOKEN], more: 1 };
+    expect(await live().findByName("note", "x")).toEqual([]);
+    expect(calls.map((c) => c.name)).toEqual(Array(4).fill("find_by_name"));
+  });
+
+  it("quadsFrom reads a bare array and {items} to the same literal rows", async () => {
+    const row = [NODE, "related", OTHER, G];
+    const want = [{ s: NODE, p: "related", o: OTHER, g: G }];
+    reply = [row];
+    expect(await live().quadsFrom([NODE], null, null)).toEqual(want);
+    reply = { items: [row] };
+    expect(await live().quadsFrom([NODE], null, null)).toEqual(want);
+    reply = { items: [] };
+    expect(await live().quadsFrom([NODE], null, null)).toEqual([]);
+  });
 });
 
 describe("LocalChaosDial delegates the placed reads to its chaos door", () => {
