@@ -22,7 +22,7 @@
         "calliope-mcp-http": "./src/mcp/http.ts",
       },
       "dependencies": {
-        "@forge/stellar-core-ts": "0.52.0",
+        "@forge/stellar-core-ts": "0.53.0",
         "@modelcontextprotocol/sdk": "^1.31.0",
         "@noble/hashes": "^2.4.0",
         "@platformatic/kafka": "^2.11.0",
@@ -201,7 +201,7 @@
 
     "@forge/calliope": ["@forge/calliope@workspace:apps/calliope"],
 
-    "@forge/stellar-core-ts": ["@forge/stellar-core-ts@0.52.0", "https://packages.notusmi.com/npm/@forge/stellar-core-ts/-/stellar-core-ts-0.52.0.tgz", { "dependencies": { "@opentelemetry/api": "^1.9.1", "@opentelemetry/exporter-trace-otlp-http": "^0.223.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.223.0", "@opentelemetry/resources": "^2.11.0", "@opentelemetry/sampler-jaeger-remote": "^0.223.0", "@opentelemetry/sdk-trace-base": "^2.11.0", "@opentelemetry/semantic-conventions": "^1.43.0", "@peculiar/x509": "^2.0.0", "@platformatic/kafka": "^2.11.0", "@platformatic/wasm-utils": "^0.3.0", "reflect-metadata": "^0.2.2", "spiffe": "0.5.1" }, "peerDependencies": { "@modelcontextprotocol/sdk": ">=1.20.0" }, "optionalPeers": ["@modelcontextprotocol/sdk"] }, "sha512-ocgbNK8Mv1TrjXSKyeqWzBK7V0BhPjg3ZdQAoMscSOfou2NwJZsOI/hNwAokTpuBthjPX5Qc19+FNIPR0zb2WQ=="],
+    "@forge/stellar-core-ts": ["@forge/stellar-core-ts@0.53.0", "https://packages.notusmi.com/npm/@forge/stellar-core-ts/-/stellar-core-ts-0.53.0.tgz", { "dependencies": { "@opentelemetry/api": "^1.9.1", "@opentelemetry/exporter-trace-otlp-http": "^0.223.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.223.0", "@opentelemetry/resources": "^2.11.0", "@opentelemetry/sampler-jaeger-remote": "^0.223.0", "@opentelemetry/sdk-trace-base": "^2.11.0", "@opentelemetry/semantic-conventions": "^1.43.0", "@peculiar/x509": "^2.0.0", "@platformatic/kafka": "^2.11.0", "@platformatic/wasm-utils": "^0.3.0", "reflect-metadata": "^0.2.2", "spiffe": "0.5.1" }, "peerDependencies": { "@modelcontextprotocol/sdk": ">=1.20.0" }, "optionalPeers": ["@modelcontextprotocol/sdk"] }, "sha512-HSQXBd89xkVIcXYOnSiuMPMf/77JzZFAX0+X6jP5z8okF6/71ewb5ay5heRa+NyyO+4fMgsgYYxylCHCN1QmsQ=="],
 
     "@grpc/grpc-js": ["@grpc/grpc-js@1.14.5", "", { "dependencies": { "@grpc/proto-loader": "^0.8.0", "@js-sdsl/ordered-map": "^4.4.2" } }, "sha512-7VZM+SVdEcUUqSQeNI3zM8Qs/BhQKZndPo2h5VkYkAM8Iz0wJIa8mKV5ekQGqG8UUsnkQ0NMxIxwkIHYvj0qOw=="],
 
