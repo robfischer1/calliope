@@ -580,10 +580,11 @@ export class LiveChaosDial implements ChaosDial {
       kind,
       label,
     });
-    if (!Array.isArray(raw)) {
+    const rows = chaosRows(raw);
+    if (rows === null) {
       return [];
     }
-    return raw.map(String).filter((t) => HEX64.test(t));
+    return rows.map(String).filter((t) => HEX64.test(t));
   }
 
   async resolveNodes(tokens: string[]): Promise<Record<string, string>> {
@@ -718,9 +719,10 @@ export class LiveChaosDial implements ChaosDial {
       predicates: predicateNames ?? null,
       graph: graph ?? null,
     });
-    if (!Array.isArray(raw)) return [];
+    const rows = chaosRows(raw);
+    if (rows === null) return [];
     const out: QuadRow[] = [];
-    for (const row of raw) {
+    for (const row of rows) {
       if (Array.isArray(row) && row.length >= 4) {
         out.push({
           s: asStr(row[0]),
