@@ -1473,7 +1473,7 @@ export function createServer(
         outputSchema: outputSchemaOf("write_container"),
         annotations: {
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: false,
         },
         title: "Write a container (one graph transaction)",

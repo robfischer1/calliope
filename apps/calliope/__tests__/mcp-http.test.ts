@@ -147,8 +147,9 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       // retracts only the marker it finds; a re-run answers not_suppressed
       restore_note: [false, false, true],
       // the ONE write path (F4/F12): a save whose ops all net out writes
-      // nothing, but the verb itself is not idempotent (adds mint slots)
-      write_container: [false, false, false],
+      // nothing, but the verb itself is not idempotent (adds mint slots).
+      // Destructive: its remove op deletes a section (the dies classify it so)
+      write_container: [false, true, false],
     };
     await rpc(initEnvelope(1));
     const listed = (await rpc({

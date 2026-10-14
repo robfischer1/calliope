@@ -624,7 +624,7 @@ describe("write_container with replacements", () => {
     const tool = tools.find((t) => t.name === "write_container");
     expect(tool?.annotations).toEqual({
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
     });
     expect(tool?.title).toBe("Write a container (one graph transaction)");
