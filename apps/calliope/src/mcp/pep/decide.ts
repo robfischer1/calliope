@@ -20,11 +20,11 @@
  *     edge check, held to consumer `job.<lane>` / `ci.<lane>`.
  *  5. Any other verified caller (session, human): the non-service path.
  *
- * The non-service path is the policy plane's question. This port has no policy
- * plane client (Go asks one when `STELLAR_PDP_URL` is set; calliope's flux
- * manifest sets none), so it answers what Go answers with no PDP configured:
- * `consult` / `pdp_not_consulted`, carrying the principal that would be asked
- * about.
+ * The non-service path is the policy plane's question. {@link decide} only
+ * names it: `consult` / `pdp_not_consulted`, carrying the principal to ask
+ * about. Asking is {@link ./pdp.ts}'s job, run by {@link Pep.adjudicate} when
+ * `STELLAR_PDP_URL` is set, and its answer replaces the reason with
+ * `pdp_allows` / `pdp_denies` / `pdp_error`.
  *
  * Pure: no network, no clock, no mode.
  */
@@ -49,6 +49,9 @@ export const REASONS = [
   "no_acl",
   "pdp_not_consulted",
   "edge_not_approved",
+  "pdp_allows",
+  "pdp_denies",
+  "pdp_error",
 ] as const;
 export type Reason = (typeof REASONS)[number];
 

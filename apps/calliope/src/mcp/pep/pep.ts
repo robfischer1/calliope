@@ -26,6 +26,9 @@ import type { Acl } from "./acl.js";
 import { consumerOf, decide } from "./decide.js";
 import type { Decision, Input } from "./decide.js";
 import { enforced } from "./enforce.js";
+import type { DecisionRecorder } from "./metrics.js";
+import { actionOf, consulted, pdpFromEnv } from "./pdp.js";
+import type { Pdp } from "./pdp.js";
 
 export type Mode = "witness" | "enforce";
 
@@ -66,6 +69,10 @@ export interface PepConfig {
   readonly sidecarPath?: string | undefined;
   /** Receives the boot lines. Default: stderr (stdout belongs to a stdio MCP transport). */
   readonly log?: ((line: string) => void) | undefined;
+  /** The policy plane the non-service path asks; undefined = none wired. */
+  readonly pdp?: Pdp | undefined;
+  /** Receives every counted decision (the OTel counter); undefined = none. */
+  readonly onDecision?: DecisionRecorder | undefined;
 }
 
 /** {@link PepConfig} from the environment. */
@@ -77,6 +84,7 @@ export function pepConfigFromEnv(
     star,
     mode: env[ENV_MODE],
     sidecarPath: env[ENV_SIDECAR],
+    pdp: pdpFromEnv(env),
   };
 }
 
@@ -93,20 +101,50 @@ export class Pep {
     readonly mode: Mode,
     /** Undefined = no sidecar (witness only): star callers decide `no_acl`. */
     private readonly acl: Acl | undefined,
+    private readonly pdp?: Pdp,
+    private readonly onDecision?: DecisionRecorder,
   ) {}
+
+  /** Whether a policy plane is wired. */
+  get hasPdp(): boolean {
+    return this.pdp !== undefined;
+  }
 
   /** How many consumers the sidecar declares (0 with none). */
   get consumers(): number {
     return this.acl?.size ?? 0;
   }
 
-  /** Adjudicate one call as this PEP's mode acts on it: witness's decision is
-   *  {@link decide}'s verbatim; enforce closes what witness only records. */
-  adjudicate(input: Input): Decision {
-    const d = decide(this.acl, input);
+  /** Adjudicate one call as this PEP's mode acts on it: {@link decide}, then
+   *  (a consult verdict with a principal, and a PDP wired) the policy plane's
+   *  answer; enforce then closes what witness only records. `args` are the
+   *  call's raw arguments, of which only `action` crosses the wire. */
+  async adjudicate(input: Input, args?: unknown): Promise<Decision> {
+    const d = await this.consult(decide(this.acl, input), input.verb, args);
     return this.mode === "enforce"
       ? enforced(this.acl, consumerOf(input.peer), d)
       : d;
+  }
+
+  /** Put a consult verdict to the PDP, when one is wired and there is a
+   *  principal to ask about (a gateway-stamped agent carries its type only). */
+  private async consult(
+    d: Decision,
+    verb: string,
+    args: unknown,
+  ): Promise<Decision> {
+    if (this.pdp === undefined || d.verdict !== "consult" || d.principal === "")
+      return d;
+    return consulted(
+      d,
+      await this.pdp.decide({
+        principal: d.principal,
+        principalType: d.principalType,
+        verb,
+        star: this.star,
+        action: actionOf(args),
+      }),
+    );
   }
 
   /** Whether this PEP refuses a call decided as `d`. Witness refuses nothing. */
@@ -118,6 +156,7 @@ export class Pep {
   count(decision: string, reason: string): void {
     const key = `${this.mode}/${decision}/${reason}`;
     this.tally.set(key, (this.tally.get(key) ?? 0) + 1);
+    this.onDecision?.(this.mode, decision, reason);
   }
 
   /** Decisions counted so far, keyed `mode/decision/reason` (Go's
@@ -153,7 +192,13 @@ export function loadPep(config: PepConfig): Pep {
         `${config.star}: pep: no orbit sidecar at ${path} (${ENV_SIDECAR}); ` +
           "witnessing, every star caller will be recorded would_deny{no_acl}",
       );
-      return new Pep(config.star, mode, undefined);
+      return new Pep(
+        config.star,
+        mode,
+        undefined,
+        config.pdp,
+        config.onDecision,
+      );
     }
     throw new PepBootError(
       `${config.star}: pep: refusing to start, the orbit sidecar at ${path} ` +
@@ -161,10 +206,10 @@ export function loadPep(config: PepConfig): Pep {
       { cause: err },
     );
   }
-  const pep = new Pep(config.star, mode, acl);
+  const pep = new Pep(config.star, mode, acl, config.pdp, config.onDecision);
   log(
     `${config.star}: pep: ${mode === "enforce" ? "ENFORCING on" : "witnessing"} inbound calls ` +
-      `(mode=${mode} sidecar=${path} consumers=${String(pep.consumers)})`,
+      `(mode=${mode} sidecar=${path} consumers=${String(pep.consumers)} pdp=${String(pep.hasPdp)})`,
   );
   return pep;
 }
