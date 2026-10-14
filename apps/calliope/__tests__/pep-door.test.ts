@@ -9,10 +9,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { RequestLog, runWithPeer } from "@forge/stellar-core-ts";
 import type { RequestRecord, ToolCallHandler } from "@forge/stellar-core-ts";
 import { createCalliopeHttpServer } from "../src/mcp/http.js";
+import { parseAcl } from "../src/mcp/pep/acl.js";
 import { pepHandler } from "../src/mcp/pep/intercept.js";
 import {
   DEFAULT_SIDECAR_PATH,
   PepBootError,
+  enforcePreconditions,
   loadPep,
   pepConfigFromEnv,
 } from "../src/mcp/pep/pep.js";
@@ -284,6 +286,65 @@ describe("TestEnforceFailsClosed (the no-PDP row)", () => {
     expect(d.got).toMatchObject([
       { outcome: "denied", reason: "pdp_not_consulted" },
     ]);
+  });
+});
+
+describe("enforce preconditions at boot (enforcePreconditions)", () => {
+  const pdp = { decide: () => Promise.reject(new Error("unused")) } as never;
+  const boot = (mode: string, path: string, withPdp: boolean): string => {
+    const lines: string[] = [];
+    loadPep({
+      star: "urania",
+      mode,
+      sidecarPath: path,
+      pdp: withPdp ? pdp : undefined,
+      log: (l) => lines.push(l),
+    });
+    return lines.join("\n");
+  };
+
+  it("approved contracts and a PDP: no gap, no warning", () => {
+    expect(boot("enforce", sidecarWith("approved"), true)).not.toContain(
+      "unmet preconditions",
+    );
+    expect(enforcePreconditions(parseAcl("urania", ""), true)).toHaveLength(1);
+  });
+
+  it("no PDP names pdp_not_consulted", () => {
+    const out = boot("enforce", sidecarWith("approved"), false);
+    expect(out).toContain("ENFORCING on inbound calls");
+    expect(out).toContain("unmet preconditions");
+    expect(out).toContain("no PDP");
+    expect(out).toContain("pdp_not_consulted");
+  });
+
+  it("a generated contract names edge_not_approved", () => {
+    const out = boot("enforce", sidecarWith("generated"), true);
+    expect(out).toContain("edge_not_approved");
+    expect(out).not.toContain("no PDP");
+  });
+
+  it("an empty rule set names no_edge", () => {
+    const out = boot("enforce", tempFile("orbit.toml", ""), true);
+    expect(out).toContain("EMPTY rule set");
+    expect(out).toContain("no_edge");
+  });
+
+  it("joins every gap", () => {
+    const gaps = enforcePreconditions(parseAcl("urania", ""), false);
+    expect(gaps).toHaveLength(2);
+  });
+
+  it("an absent sidecar in enforce still refuses the start", () => {
+    expect(() => boot("enforce", "/nonexistent/orbit.toml", true)).toThrow(
+      PepBootError,
+    );
+  });
+
+  it("witness never warns", () => {
+    expect(boot("witness", sidecarWith("generated"), false)).not.toContain(
+      "unmet preconditions",
+    );
   });
 });
 
