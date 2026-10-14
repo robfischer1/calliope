@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { peerFromCertificate, RequestLog } from "@forge/stellar-core-ts";
 import type { Peer, RequestRecord } from "@forge/stellar-core-ts";
-import { withDenyDecision } from "../../src/mcp/pep/intercept.js";
+import { withDenyDecision } from "@forge/stellar-core-ts/pep";
 import { makeIdentity } from "./tls-identity.js";
 
 const peers = new Map<string, Peer | undefined>();
