@@ -44,6 +44,11 @@ function metaOf(request: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+/** The call's raw arguments; only their `action` ever crosses to the PDP. */
+function argumentsOf(request: unknown): unknown {
+  return (request as { params?: { arguments?: unknown } }).params?.arguments;
+}
+
 /**
  * stellar-core-ts's {@link Call.decided} knows only `allow`, `would_deny` and
  * `would_consult`; Go's vocabulary also has `deny`, the decision an enforcing
@@ -74,11 +79,10 @@ export function pepHandler(
     const call = log.observe(name, { path: pathOf(peer) });
     call.caller(peer?.spiffeId, peer?.kind);
     try {
-      const d = pep.adjudicate({
-        peer,
-        meta: metaOf(request),
-        verb: name,
-      });
+      const d = await pep.adjudicate(
+        { peer, meta: metaOf(request), verb: name },
+        argumentsOf(request),
+      );
       const refused = pep.refuses(d);
       record(call, pep, d, refused);
       if (refused) {

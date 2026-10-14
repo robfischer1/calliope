@@ -4,8 +4,10 @@
  * witness mode, so the evidence witness mode gathered is the evidence enforce
  * acts on. Enforce then closes two gaps witness only records:
  *
- *  - a consult nobody answered (the non-service path, which this port cannot
- *    ask a policy plane about): refused, `pdp_not_consulted`;
+ *  - a consult nobody answered (no PDP wired, or an agent stamped with a type
+ *    and no subject to ask about): refused, `pdp_not_consulted`;
+ *  - `pdp_error`: refused, whatever the PDP client's fail-open posture said
+ *    ("fail closed like everything else");
  *  - an edge that allows the verb but whose contract is still `generated`:
  *    refused, `edge_not_approved`. A witnessed baseline nobody ratified is not
  *    a grant.
@@ -24,7 +26,8 @@ export function enforced(
   consumer: string,
   d: Decision,
 ): Decision {
-  if (d.verdict === "consult") return { ...d, verdict: "deny" };
+  if (d.verdict === "consult" || d.reason === "pdp_error")
+    return { ...d, verdict: "deny" };
   if (d.reason === "edge_allows" && acl?.approved(consumer) !== true) {
     return { ...d, verdict: "deny", reason: "edge_not_approved" };
   }
@@ -57,6 +60,8 @@ function fixFor(star: string, consumer: string, d: Decision): string {
     case "unidentified":
       return "dial the star's mTLS port (plaintext port + 1) presenting a SPIFFE SVID";
     case "pdp_not_consulted":
+    case "pdp_denies":
+    case "pdp_error":
       return GRANTS_FILE;
     case "no_acl":
       return `the star's orbit sidecar (ConfigMap orbit-${star}), composed from ${contractFile(star, consumer)}`;

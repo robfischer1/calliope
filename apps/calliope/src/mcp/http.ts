@@ -70,6 +70,7 @@ import { reservedHeaders } from "@forge/stellar-core-ts/identitycore";
 import { makeWitness } from "./witness.js";
 import type { Witness } from "./witness.js";
 import { LoopbackPeers, serveMtlsDoor, withDoorPeers } from "./mtls-door.js";
+import { startPepMetrics } from "./pep/metrics.js";
 import { loadPep, pepConfigFromEnv } from "./pep/pep.js";
 import type { Pep } from "./pep/pep.js";
 
@@ -330,7 +331,13 @@ async function main(): Promise<void> {
   // STELLAR_PEP_MODE=enforce. FAIL-CLOSED BOOT: a missing or unparseable
   // composed sidecar throws here, before the backend is touched or the door binds, and main's catch
   // exits non-zero. Nothing is listening yet, so nothing is served unguarded.
-  const pep = loadPep(pepConfigFromEnv(SOURCE_STAR));
+  // stellar_pep_decisions_total rides the OTLP metrics pipeline (a no-op with
+  // no OTEL destination), and STELLAR_PDP_URL arms the policy-plane consult.
+  const pepMetrics = startPepMetrics(SOURCE_STAR);
+  const pep = loadPep({
+    ...pepConfigFromEnv(SOURCE_STAR),
+    onDecision: pepMetrics.record,
+  });
   const backend = await prepareBackend(kind);
   await initBackend(backend);
   // Stream of Consciousness pass 4: ONE producer for the process (the
@@ -382,6 +389,7 @@ async function main(): Promise<void> {
     // drops its last window of spans, which is exactly the window that
     // explains why it was terminated.
     void telemetryShutdown();
+    void pepMetrics.shutdown();
     httpServer.close(() => {
       process.exit(0);
     });

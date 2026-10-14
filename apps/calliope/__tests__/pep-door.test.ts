@@ -162,9 +162,9 @@ describe("TestWitnessRecordsAndRefusesNothing", () => {
 });
 
 describe("TestEnforceRefusesBeforeTheHandler", () => {
-  // Go's matrix minus the policy-plane rows (this port has no plane: the gateway
+  // Go's matrix minus the policy-plane rows (no PDP wired here: the gateway
   // and session paths are refused pdp_not_consulted, which Go's TestEnforceFailsClosed
-  // "no PDP" row pins).
+  // "no PDP" row pins; the wired-PDP rows are pep-pdp.test.ts).
   const other =
     "spiffe://notusmi.com/session/00000000-0000-0000-0000-000000000000";
   const cases = [
@@ -373,7 +373,7 @@ describe("BOOT on a missing or broken sidecar", () => {
   const missing = (): string => `${tempFile("x", "")}.absent`;
   const broken = (): string => tempFile("orbit.toml", "[[produces]\n");
 
-  it("witness: a missing sidecar boots, star callers would_deny{no_acl}", () => {
+  it("witness: a missing sidecar boots, star callers would_deny{no_acl}", async () => {
     const lines: string[] = [];
     const pep = loadPep({
       star: "calliope",
@@ -386,7 +386,7 @@ describe("BOOT on a missing or broken sidecar", () => {
     expect(lines.join("\n")).toMatch(
       /no orbit sidecar .*STELLAR_ORBIT_SIDECAR/,
     );
-    const d = pep.adjudicate({
+    const d = await pep.adjudicate({
       peer: peerFor(star("athena")),
       verb: "read_container",
     });
