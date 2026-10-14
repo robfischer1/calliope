@@ -69,10 +69,17 @@ import { makeErosProvider } from "../eros-provider.js";
 import { reservedHeaders } from "@forge/stellar-core-ts/identitycore";
 import { makeWitness } from "./witness.js";
 import type { Witness } from "./witness.js";
-import { LoopbackPeers, serveMtlsDoor, withDoorPeers } from "./mtls-door.js";
-import { startPepMetrics } from "./pep/metrics.js";
-import { loadPep, pepConfigFromEnv } from "./pep/pep.js";
-import type { Pep } from "./pep/pep.js";
+import {
+  LoopbackPeers,
+  serveMtlsDoor,
+  withDoorPeers,
+} from "@forge/stellar-core-ts/mtlsdoor";
+import {
+  loadPep,
+  pepConfigFromEnv,
+  startPepMetrics,
+} from "@forge/stellar-core-ts/pep";
+import type { Pep } from "@forge/stellar-core-ts/pep";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
 const MCP_PATH = "/mcp";
@@ -377,7 +384,10 @@ async function main(): Promise<void> {
 
   // The mTLS door on port + 1, presenting this star's SVID. Fail-soft: with no
   // SPIRE socket it warns once and the star serves plaintext only.
-  await serveMtlsDoor(httpServer, peers, host);
+  await serveMtlsDoor(httpServer, peers, host, {
+    logPrefix: "calliope-mcp-http",
+    path: MCP_PATH,
+  });
 
   // Publish liveness to Pontus (the op-contract heartbeat) now that we serve.
   const heartbeat = startHeartbeat(heartbeatOptions());

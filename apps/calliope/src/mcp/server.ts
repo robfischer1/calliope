@@ -25,8 +25,8 @@ import {
   withHeartbeat,
 } from "@forge/stellar-core-ts";
 import { SOURCE_STAR } from "./consciousness-emit.js";
-import { pepToolCalls } from "./pep/intercept.js";
-import type { Pep } from "./pep/pep.js";
+import { pepToolCalls } from "@forge/stellar-core-ts/pep";
+import type { Pep } from "@forge/stellar-core-ts/pep";
 import { isAuthoredBy, validateWriteProvenance } from "../types.js";
 import type { AuthoredBy, BodyClient } from "../types.js";
 import type { RevisionStore } from "../revision-store.js";

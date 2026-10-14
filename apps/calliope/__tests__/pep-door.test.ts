@@ -9,16 +9,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import { RequestLog, runWithPeer } from "@forge/stellar-core-ts";
 import type { RequestRecord, ToolCallHandler } from "@forge/stellar-core-ts";
 import { createCalliopeHttpServer } from "../src/mcp/http.js";
-import { parseAcl } from "../src/mcp/pep/acl.js";
-import { pepHandler } from "../src/mcp/pep/intercept.js";
+import { parseAcl } from "@forge/stellar-core-ts/pep";
+import { pepHandler } from "@forge/stellar-core-ts/pep";
 import {
   DEFAULT_SIDECAR_PATH,
   PepBootError,
   enforcePreconditions,
   loadPep,
   pepConfigFromEnv,
-} from "../src/mcp/pep/pep.js";
-import type { Pep } from "../src/mcp/pep/pep.js";
+} from "@forge/stellar-core-ts/pep";
+import type { Pep } from "@forge/stellar-core-ts/pep";
 import { makeWitness } from "../src/mcp/witness.js";
 import type { Witness } from "../src/mcp/witness.js";
 import {

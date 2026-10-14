@@ -17,12 +17,12 @@ import {
   startMtlsDoor,
   tlsOptions,
   withDoorPeers,
-} from "../src/mcp/mtls-door.js";
+} from "@forge/stellar-core-ts/mtlsdoor";
 import type {
   DoorCredential,
   DoorSource,
   MtlsDoor,
-} from "../src/mcp/mtls-door.js";
+} from "@forge/stellar-core-ts/mtlsdoor";
 import type { Witness } from "../src/mcp/witness.js";
 import { makeIdentity } from "./helpers/tls-identity.js";
 import type { TlsIdentity } from "./helpers/tls-identity.js";
@@ -151,6 +151,7 @@ async function rig(bundle: string): Promise<Rig> {
     upstreamPort: (plain.address() as AddressInfo).port,
     port: 0,
     host: "127.0.0.1",
+    logPrefix: "calliope-mcp-http",
   });
   cleanup.push(() => door.close());
   return { door, peers, got, fake, doorIdentity };
@@ -319,6 +320,7 @@ describe("the door's lifetime", () => {
         upstreamPort: 1,
         port: 0,
         host: "not a host name!",
+        logPrefix: "calliope-mcp-http",
       }),
     ).rejects.toThrow();
   });
