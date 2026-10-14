@@ -92,6 +92,35 @@ const stderrLine = (line: string): void => {
   process.stderr.write(`${line}\n`);
 };
 
+/**
+ * Every reason an ENFORCING pep will refuse calls it would rather allow; empty
+ * when none. The TS peer of stellar-core-go `enforcePreconditions`. Like Go's
+ * they do not stop the boot (each gap's calls are refused, closed): they are
+ * the boot line an operator reads after the flip. A missing or unparseable
+ * sidecar never reaches here: {@link loadPep} refuses that start outright.
+ */
+export function enforcePreconditions(
+  acl: Acl | undefined,
+  hasPdp: boolean,
+): string[] {
+  const gaps: string[] = [];
+  if (acl === undefined) {
+    gaps.push("no orbit sidecar: every star caller is refused no_acl");
+  } else if (acl.size === 0) {
+    gaps.push("an EMPTY rule set: every star caller is refused no_edge");
+  } else if (!acl.allApproved()) {
+    gaps.push(
+      "generated contracts: their callers are refused edge_not_approved",
+    );
+  }
+  if (!hasPdp) {
+    gaps.push(
+      "no PDP: every gateway and non-star caller is refused pdp_not_consulted",
+    );
+  }
+  return gaps;
+}
+
 /** An armed policy enforcement point. */
 export class Pep {
   private readonly tally = new Map<string, number>();
@@ -207,6 +236,15 @@ export function loadPep(config: PepConfig): Pep {
     );
   }
   const pep = new Pep(config.star, mode, acl, config.pdp, config.onDecision);
+  if (mode === "enforce") {
+    const gaps = enforcePreconditions(acl, pep.hasPdp);
+    if (gaps.length > 0) {
+      log(
+        `${config.star}: pep: ENFORCING with unmet preconditions, the calls they cover are REFUSED: ` +
+          gaps.join("; "),
+      );
+    }
+  }
   log(
     `${config.star}: pep: ${mode === "enforce" ? "ENFORCING on" : "witnessing"} inbound calls ` +
       `(mode=${mode} sidecar=${path} consumers=${String(pep.consumers)} pdp=${String(pep.hasPdp)})`,
