@@ -25,6 +25,24 @@ class CountingBlobs extends FixtureBlobStore {
   }
 }
 
+/** Counts the dial round trips the batch makes. */
+class CountedDial extends FixtureChaosDial {
+  quads = 0;
+  scalars = 0;
+  override quadsFrom(
+    ...args: Parameters<FixtureChaosDial["quadsFrom"]>
+  ): ReturnType<FixtureChaosDial["quadsFrom"]> {
+    this.quads += 1;
+    return super.quadsFrom(...args);
+  }
+  override resolveScalars(
+    ...args: Parameters<FixtureChaosDial["resolveScalars"]>
+  ): ReturnType<FixtureChaosDial["resolveScalars"]> {
+    this.scalars += 1;
+    return super.resolveScalars(...args);
+  }
+}
+
 /** A dial that fails if the batch loops the per-node edge read. */
 class NoEdgesDial extends FixtureChaosDial {
   edgeCalls = 0;
@@ -153,6 +171,42 @@ describe("calliope_read_containers", () => {
       "notes",
     );
     expect(await rev(a)).not.toBe(changed);
+  });
+});
+
+describe("the batch makes a fixed number of queries whatever N", () => {
+  async function counted(n: number) {
+    const dial = new CountedDial();
+    const blobs = new CountingBlobs();
+    const facet = { blobs, dial };
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const res = await dial.admit(
+        [opCreate("Note", `n${String(i)}`)],
+        "notes",
+      );
+      const id = res.minted[0];
+      if (id === undefined) throw new Error("fixture minted nothing");
+      await writeContainer(facet, id, [
+        { op: "add", text: `one-${String(i)}`, position: "a0" },
+        { op: "add", text: `two-${String(i)}`, position: "a1" },
+      ]);
+      ids.push(id);
+    }
+    dial.quads = 0;
+    dial.scalars = 0;
+    blobs.fetches = 0;
+    const out = await readContainers(facet, ids, { texts: true });
+    expect(out.containers).toHaveLength(n);
+    return { dialCalls: dial.quads + dial.scalars, fetches: blobs.fetches };
+  }
+
+  it("N=1 and N=25 cost the same, at most 4 calls", async () => {
+    const one = await counted(1);
+    const many = await counted(25);
+    expect(many).toEqual(one);
+    expect(many.dialCalls).toBeLessThanOrEqual(4);
+    expect(many.fetches).toBe(1);
   });
 });
 
