@@ -30,7 +30,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@forge/stellar-core-ts": "0.62.0",
+    "@forge/stellar-core-ts": "0.64.0",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@noble/hashes": "^2.4.0",
     "@opentelemetry/api": "^1.9.1",
