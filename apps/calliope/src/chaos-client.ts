@@ -115,6 +115,37 @@ export function opAdd(
   };
 }
 
+/** One held value of an {@link ChaosExpect}: the tagged form themis `admit`
+ *  accepts (`$blob` is the decimal blob id). */
+export type ChaosHeld =
+  | { literal: string; dtype?: string; lang?: string }
+  | { node: string }
+  | { $blob: string };
+
+/**
+ * One slot precondition on an `admit` batch (chaos F19, passed through by
+ * themis): the batch commits only if EVERY expectation holds, else it is
+ * refused `conflict` and nothing is written. `held` states the slot's
+ * current object SET exactly (value-CAS: order-free, and blind to A-B-A).
+ * `g` empty/absent means every graph. The grammar is the batch-level
+ * `expect` array — there is no per-op form on the wire.
+ */
+export interface ChaosExpect {
+  s: string;
+  predicate: string;
+  g?: string;
+  held: ChaosHeld[];
+}
+
+/** Expect the (slot, tree-style predicate) to hold exactly one blob. */
+export function expectHeldBlob(
+  s: string,
+  predicate: string,
+  blobId: string,
+): ChaosExpect {
+  return { s, predicate, held: [{ $blob: blobId }] };
+}
+
 /** The gate's answer: admitted or refused-with-violations. */
 export interface AdmitResult {
   admitted: boolean;
@@ -129,7 +160,8 @@ export interface AdmitResult {
 export class ChaosClientError extends Error {
   constructor(
     message: string,
-    readonly code: "wire_error" | "admit_refused" | "bad_result" = "wire_error",
+    readonly code:
+      "wire_error" | "admit_refused" | "bad_result" | "conflict" = "wire_error",
     readonly violations: unknown[] = [],
   ) {
     super(message);
@@ -199,7 +231,17 @@ export function placedGraph(graph: string): string {
 
 /** The dial surface `create_note` needs — fixture-implementable. */
 export interface ChaosDial {
-  admit(ops: ChaosOp[], scope: string): Promise<AdmitResult>;
+  /**
+   * `expect` (optional) makes the batch conditional: any failed expectation
+   * refuses the whole batch with a {@link ChaosClientError} of code
+   * `conflict` (thrown, nothing written) — distinct from a gate refusal,
+   * which answers `admitted: false`.
+   */
+  admit(
+    ops: ChaosOp[],
+    scope: string,
+    expect?: ChaosExpect[],
+  ): Promise<AdmitResult>;
   findByName(kind: string, label: string): Promise<string[]>;
   resolveNodes(tokens: string[]): Promise<Record<string, string>>;
   /** The node's outbound edges — the heal-on-reuse read. */
@@ -444,6 +486,16 @@ async function rpc(
   }
   const result = body.result;
   if (result?.isError === true) {
+    // The fleet refusal form is `{code, detail}`; a failed `expect` is the
+    // registered `conflict`, which a caller must tell from a wire fault.
+    const refusal = result.structuredContent as
+      { code?: unknown; detail?: unknown } | undefined;
+    if (refusal?.code === "conflict") {
+      throw new ChaosClientError(
+        `${verb}: conflict: ${asStr(refusal.detail)}`,
+        "conflict",
+      );
+    }
     throw new ChaosClientError(`${verb}: ${JSON.stringify(result.content)}`);
   }
   if (result?.structuredContent === undefined) {
@@ -547,13 +599,20 @@ export class LiveChaosDial implements ChaosDial {
     return tlsFetchOptions(await this.identity, authorizeStar(peer));
   }
 
-  async admit(ops: ChaosOp[], scope: string): Promise<AdmitResult> {
+  async admit(
+    ops: ChaosOp[],
+    scope: string,
+    expect?: ChaosExpect[],
+  ): Promise<AdmitResult> {
     this.id += 1;
     const raw = (await rpc(
       this.themis,
       this.id,
       "admit",
-      { ops, scope },
+      // `expect` rides only when stated: an empty list is a plain admit.
+      expect !== undefined && expect.length > 0
+        ? { ops, scope, expect }
+        : { ops, scope },
       await this.tls(this.themis, "themis"),
     )) as {
       admitted?: boolean;
@@ -950,8 +1009,52 @@ export class FixtureChaosDial implements ChaosDial {
     return `${kind}${label.trim().toLowerCase()}`;
   }
 
-  admit(ops: ChaosOp[], scope: string): Promise<AdmitResult> {
+  /** Does the slot hold exactly `expect.held`? (themis's set semantics:
+   *  order-free, duplicates collapse; the fixture is single-graph, so `g`
+   *  is not consulted.) Answers "" when it holds, else the failure detail
+   *  in chaos's pinned shape. */
+  #expectFailure(i: number, x: ChaosExpect): string {
+    const key = (domain: string, value: string): string =>
+      `${domain}\u0000${value}`;
+    const want = new Set(
+      x.held.map((h) =>
+        "$blob" in h
+          ? key("blob", h.$blob)
+          : "node" in h
+            ? key("node", h.node)
+            : key("scalar", h.literal),
+      ),
+    );
+    const have = new Set(
+      (this.nodeEdges.get(x.s) ?? [])
+        .filter((e) => e.predicate === x.predicate)
+        .map((e) => key(e.domain, e.value)),
+    );
+    if (want.size === have.size && [...want].every((k) => have.has(k))) {
+      return "";
+    }
+    const rev = this.factLog.filter(
+      (f) => f.s === x.s && f.predicate === x.predicate,
+    ).length;
+    return `expect[${String(i)}] s=${x.s} predicate=${x.predicate} g=${x.g ?? "*"} want=held have=rev:${String(rev)}`;
+  }
+
+  admit(
+    ops: ChaosOp[],
+    scope: string,
+    expect?: ChaosExpect[],
+  ): Promise<AdmitResult> {
     this.admits.push({ ops, scope });
+    // Expectations are judged before ANY op applies: all of the batch or
+    // none of it, as the store does.
+    for (const [i, x] of (expect ?? []).entries()) {
+      const failure = this.#expectFailure(i, x);
+      if (failure !== "") {
+        return Promise.reject(
+          new ChaosClientError(`admit: conflict: ${failure}`, "conflict"),
+        );
+      }
+    }
     if (this.refuseWith !== null) {
       return Promise.resolve({
         admitted: false,
