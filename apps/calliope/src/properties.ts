@@ -108,7 +108,8 @@ export interface SetPropertiesResult {
   removed: string[];
   tags_added: string[];
   tags_removed: string[];
-  /** Tags dropped by the F11 junk rule. */
+  /** Tags not landed: the F11 junk rule, or the node's hasType is not Note
+   *  (tags are a Note-type side effect). */
   tags_skipped: string[];
   /** The graph transaction the edge batch landed as, when one did. */
   tx?: number;
@@ -289,14 +290,28 @@ export async function setProperties(
 
   const nodeId = input.container_id;
   const current = await dial.edges(nodeId);
-  if (
-    !current.some((e) => e.predicate === "hasType" && e.value === NOTE_KIND)
-  ) {
+  // The permission check keys on the node's KIND (Note), never its hasType:
+  // create_note mints every node with kind Note whatever `type` it names
+  // (Note, Law, Governance, Memory, ...), and the kind is what the
+  // `(Note, title)` reuse key resolves. Kind is not an edge, so it is read
+  // the way the reuse key reads it: the node must be among the Note-kind
+  // holders of its own hasName.
+  const name = current.find((e) => e.predicate === "hasName" && !e.isNode);
+  const holders =
+    name === undefined ? [] : await dial.findByName(NOTE_KIND, name.value);
+  if (!holders.includes(nodeId)) {
     return {
       code: "not_a_note",
-      detail: `${nodeId} carries no hasType=${NOTE_KIND} edge`,
+      detail: `${nodeId} is not a node of kind ${NOTE_KIND}`,
     };
   }
+  // The SIDE EFFECTS stay keyed on hasType=Note: the tag mirror feeds
+  // list_tags and the search lens, so a Governance/Law/Memory body must
+  // not be published to them as a note. Edges (frontmatter included) land
+  // for any hasType; tags only for a hasType=Note node.
+  const isNoteType = current.some(
+    (e) => e.predicate === "hasType" && e.value === NOTE_KIND,
+  );
 
   const targets = [
     ...new Set(
@@ -343,9 +358,12 @@ export async function setProperties(
   // chokepoint never admits it, and a retraction only ever finds rows that
   // reconcile wrote.
   const tagsSkipped = normalized.filter(isJunkTag);
+  // A non-Note hasType takes no tag side effect; its tags are reported
+  // skipped rather than silently dropped.
+  if (!isNoteType) tagsSkipped.push(...normalized.filter((t) => !isJunkTag(t)));
   let tagsAdded: string[] = [];
   let tagsRemoved: string[] = [];
-  if (tagStore !== undefined && normalized.length > 0) {
+  if (isNoteType && tagStore !== undefined && normalized.length > 0) {
     if (retract) {
       tagsRemoved = await retractTags(
         dial,

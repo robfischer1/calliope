@@ -1378,7 +1378,9 @@ export function createServer(
           "retract:true removes exactly the named values (the revert form). " +
           "Idempotent — a re-run is a read. Returns {node_id, added, " +
           "removed, tags_added, tags_removed, tags_skipped, tx?}; refusals " +
-          "are not_a_note / bad_args / admit_refused.",
+          "are not_a_note / bad_args / admit_refused. Works on any node of kind " +
+          "Note whatever its hasType (Note, Law, Governance, ...); tags[] " +
+          "only land for hasType=Note and are otherwise reported in tags_skipped.",
         inputSchema: z.strictObject({
           container_id: z
             .string()
