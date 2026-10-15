@@ -292,14 +292,11 @@ export async function setProperties(
   const current = await dial.edges(nodeId);
   // The permission check keys on the node's KIND (Note), never its hasType:
   // create_note mints every node with kind Note whatever `type` it names
-  // (Note, Law, Governance, Memory, ...), and the kind is what the
-  // `(Note, title)` reuse key resolves. Kind is not an edge, so it is read
-  // the way the reuse key reads it: the node must be among the Note-kind
-  // holders of its own hasName.
-  const name = current.find((e) => e.predicate === "hasName" && !e.isNode);
-  const holders =
-    name === undefined ? [] : await dial.findByName(NOTE_KIND, name.value);
-  if (!holders.includes(nodeId)) {
+  // (Note, Law, Governance, Memory, ...). The kind is read exactly, off the
+  // node dictionary (chaos resolve_node_refs), so a note whose hasName
+  // drifted or is absent is still a note.
+  const refs = await dial.resolveNodeRefs([nodeId]);
+  if (refs[nodeId]?.kind !== NOTE_KIND) {
     return {
       code: "not_a_note",
       detail: `${nodeId} is not a node of kind ${NOTE_KIND}`,

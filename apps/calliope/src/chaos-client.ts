@@ -244,6 +244,11 @@ export interface ChaosDial {
   ): Promise<AdmitResult>;
   findByName(kind: string, label: string): Promise<string[]>;
   resolveNodes(tokens: string[]): Promise<Record<string, string>>;
+  /** The node dictionary's rows for these tokens — `{label, kind}`; an
+   *  unknown token is omitted (chaos `resolve_node_refs`). */
+  resolveNodeRefs(
+    tokens: string[],
+  ): Promise<Record<string, { label: string; kind: string }>>;
   /** The node's outbound edges — the heal-on-reuse read. */
   edges(token: string): Promise<NodeEdge[]>;
   /** Idempotent graph ensure (chaos `register_graph` — an identity op on
@@ -433,6 +438,34 @@ export function shapeFromTextBlocks(content: unknown): unknown {
   return texts.map((t) => JSON.parse(t) as unknown);
 }
 
+/**
+ * The `{code, detail}` body of an isError result: the text block (JSON, the
+ * live door's only carrier) first, then structuredContent. Null when neither
+ * holds a code — the caller keeps the raw wire error.
+ */
+export function refusalOf(
+  content: unknown,
+  structured: unknown,
+): { code: string; detail: string } | null {
+  const fromObject = (v: unknown): { code: string; detail: string } | null => {
+    if (typeof v !== "object" || v === null) return null;
+    const { code, detail } = v as { code?: unknown; detail?: unknown };
+    return typeof code === "string" ? { code, detail: asStr(detail) } : null;
+  };
+  if (Array.isArray(content)) {
+    for (const block of content as { type?: unknown; text?: unknown }[]) {
+      if (block.type !== "text" || typeof block.text !== "string") continue;
+      try {
+        const hit = fromObject(JSON.parse(block.text));
+        if (hit !== null) return hit;
+      } catch {
+        // not JSON (a bare message): keep looking
+      }
+    }
+  }
+  return fromObject(structured);
+}
+
 /** POST one `tools/call` and unwrap FastMCP's `{result}` envelope. */
 async function rpc(
   endpoint: string,
@@ -488,11 +521,13 @@ async function rpc(
   if (result?.isError === true) {
     // The fleet refusal form is `{code, detail}`; a failed `expect` is the
     // registered `conflict`, which a caller must tell from a wire fault.
-    const refusal = result.structuredContent as
-      { code?: unknown; detail?: unknown } | undefined;
+    // MEASURED against the live door: mcpserve.ErrResult carries the body
+    // in a TEXT block only (structuredContent is skipped on isError), so
+    // the text block is the real source and structuredContent the fallback.
+    const refusal = refusalOf(result.content, result.structuredContent);
     if (refusal?.code === "conflict") {
       throw new ChaosClientError(
-        `${verb}: conflict: ${asStr(refusal.detail)}`,
+        `${verb}: conflict: ${refusal.detail}`,
         "conflict",
       );
     }
@@ -660,6 +695,24 @@ export class LiveChaosDial implements ChaosDial {
         String(v),
       ]),
     );
+  }
+
+  async resolveNodeRefs(
+    tokens: string[],
+  ): Promise<Record<string, { label: string; kind: string }>> {
+    this.id += 1;
+    const raw = await this.chaosRpc("resolve_node_refs", { tokens });
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      return {};
+    }
+    const out: Record<string, { label: string; kind: string }> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      const row = v as { label?: unknown; kind?: unknown } | null;
+      if (row !== null && typeof row === "object") {
+        out[k] = { label: asStr(row.label), kind: asStr(row.kind) };
+      }
+    }
+    return out;
   }
 
   async findByValue(
@@ -1000,6 +1053,7 @@ export class FixtureChaosDial implements ChaosDial {
   static readonly AUTHOR = "fixture";
   private readonly byName = new Map<string, string>();
   private readonly labels = new Map<string, string>();
+  private readonly kinds = new Map<string, string>();
   private readonly nodeEdges = new Map<string, NodeEdge[]>();
   private seq = 0;
   /** When set, every admit refuses with these violations. */
@@ -1077,6 +1131,7 @@ export class FixtureChaosDial implements ChaosDial {
       const label = asStr(op.label);
       this.byName.set(this.key(kind, label), token);
       this.labels.set(token, label);
+      this.kinds.set(token, kind);
       if (label !== "" && !batchLabels.has(label)) {
         batchLabels.set(label, token);
       }
@@ -1159,6 +1214,18 @@ export class FixtureChaosDial implements ChaosDial {
       if (label !== undefined) {
         out[t] = label;
       }
+    }
+    return Promise.resolve(out);
+  }
+
+  resolveNodeRefs(
+    tokens: string[],
+  ): Promise<Record<string, { label: string; kind: string }>> {
+    const out: Record<string, { label: string; kind: string }> = {};
+    for (const t of tokens) {
+      const kind = this.kinds.get(t);
+      if (kind !== undefined)
+        out[t] = { label: this.labels.get(t) ?? "", kind };
     }
     return Promise.resolve(out);
   }
@@ -1318,5 +1385,6 @@ export class FixtureChaosDial implements ChaosDial {
   seed(kind: string, label: string, token: string): void {
     this.byName.set(this.key(kind, label), token);
     this.labels.set(token, label);
+    this.kinds.set(token, kind);
   }
 }

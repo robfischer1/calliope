@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FixtureChaosDial, opAdd } from "../src/chaos-client.js";
+import { FixtureChaosDial, opAdd, opRemove } from "../src/chaos-client.js";
 import { createNote, isCreateNoteError } from "../src/mcp/tools.js";
 import { FixtureTagStore } from "../src/tag-store.js";
 import {
@@ -398,6 +398,22 @@ describe("set_properties — frontmatter as edges", () => {
     expect(r.tags_skipped).toEqual(["#governance/core"]);
     expect(await valuesOf(dial, made.node_id, "hasTag")).toEqual([]);
     expect(await store.byNode(made.node_id)).toEqual([]);
+  });
+
+  it("a Note whose hasName is gone is still a note (kind is read exactly)", async () => {
+    const dial = new FixtureChaosDial();
+    const id = await note(dial, undefined, "Drifted");
+    await dial.admit(
+      [opRemove(id, "hasName", { toLiteral: "Drifted" })],
+      SCOPE,
+    );
+    const r = ok(
+      await setProperties(dial, SCOPE, undefined, {
+        container_id: id,
+        properties: [{ predicate: "p", values: [{ literal: "v" }] }],
+      }),
+    );
+    expect(r.added).toEqual(["p=v"]);
   });
 
   it("still refuses a non-note node (no Note-kind holder) whatever its hasType", async () => {

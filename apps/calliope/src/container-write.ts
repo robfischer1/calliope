@@ -68,7 +68,7 @@ export interface ContainerWriteResult {
  * A refused batch throws {@link ChaosClientError} carrying the gate's
  * violations verbatim; any blobs minted in phase 1 stay behind as orphans.
  *
- * Every update is a real compare-and-set. `removeEdge` is ensure-absent and
+ * Every update and remove is a real compare-and-set. `removeEdge` is ensure-absent and
  * the cardinality guard only warns, so remove-old + add-new alone, after
  * another writer moved the slot, would remove nothing and land a SECOND
  * `tree_content`. Each update therefore rides an `expect` that the slot
@@ -136,6 +136,9 @@ export async function writeContainer(
         batch.push(...repositionOps(op.slot, op.oldPosition, op.position));
         break;
       case "remove":
+        // Same hole as an update: removeEdge is ensure-absent, so a stale
+        // blobId would remove nothing and report success.
+        expects.push(expectHeldBlob(op.slot, TREE_CONTENT, op.blobId));
         batch.push(
           ...slotRemoveOps(op.slot, containerToken, op.position, op.blobId),
         );

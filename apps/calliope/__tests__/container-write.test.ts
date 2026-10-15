@@ -211,6 +211,30 @@ describe("the container write (041 F4)", () => {
       expect(await contentOf(dial, s0.slot)).toEqual([b0]);
     });
 
+    it("a stale remove refuses conflict and changes nothing", async () => {
+      const { facet, dial, doc, s0, b0 } = await twoBlocks();
+      await writeContainer(facet, doc, [
+        { op: "update", slot: s0.slot, oldBlobId: b0, text: "one, theirs" },
+      ]);
+      const before = await readTree(dial, doc);
+      const err = await writeContainer(facet, doc, [
+        { op: "remove", slot: s0.slot, position: "a0", blobId: b0 },
+      ]).catch((e: unknown) => e);
+      expect((err as ChaosClientError).code).toBe("conflict");
+      expect((err as ChaosClientError).message).toContain(s0.slot);
+      expect(await readTree(dial, doc)).toEqual(before);
+    });
+
+    it("a fresh remove still succeeds", async () => {
+      const { facet, dial, doc, s0, b0 } = await twoBlocks();
+      await writeContainer(facet, doc, [
+        { op: "remove", slot: s0.slot, position: "a0", blobId: b0 },
+      ]);
+      expect((await readTree(dial, doc)).map((s) => s.slot)).not.toContain(
+        s0.slot,
+      );
+    });
+
     it("a slot already holding two contents refuses (held is exact)", async () => {
       const { facet, dial, doc, s0, b0 } = await twoBlocks();
       await dial.admit(

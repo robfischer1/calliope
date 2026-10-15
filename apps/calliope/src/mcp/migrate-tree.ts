@@ -30,6 +30,7 @@ import { BlobStore, type ProseStore } from "../blob-store.js";
 import {
   type AdmitResult,
   type ChaosDial,
+  type ChaosExpect,
   type ChaosOp,
   type HistoryEntry,
   LiveChaosDial,
@@ -150,9 +151,13 @@ export class RetryingDial implements ChaosDial {
   constructor(inner: ChaosDial) {
     this.#inner = inner;
   }
-  admit(ops: ChaosOp[], scope: string): Promise<AdmitResult> {
+  admit(
+    ops: ChaosOp[],
+    scope: string,
+    expect?: ChaosExpect[],
+  ): Promise<AdmitResult> {
     return withRetry(
-      () => this.#inner.admit(ops, scope),
+      () => this.#inner.admit(ops, scope, expect),
       (err) => ADMIT_RETRYABLE.test(String(err)),
       "admit",
     );
@@ -167,6 +172,15 @@ export class RetryingDial implements ChaosDial {
   resolveNodes(tokens: string[]): Promise<Record<string, string>> {
     return withRetry(
       () => this.#inner.resolveNodes(tokens),
+      () => true,
+      "read",
+    );
+  }
+  resolveNodeRefs(
+    tokens: string[],
+  ): Promise<Record<string, { label: string; kind: string }>> {
+    return withRetry(
+      () => this.#inner.resolveNodeRefs(tokens),
       () => true,
       "read",
     );

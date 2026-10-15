@@ -124,11 +124,16 @@ describe("the container read (042 F5)", () => {
     const [s0, s1] = tree;
     if (s0?.blobId == null || s1?.blobId == null) throw new Error("bad setup");
     // tx3: edit s1. tx4: remove s1. tx5: edit s0.
-    await writeContainer(facet, doc, [
+    const edited = await writeContainer(facet, doc, [
       { op: "update", slot: s1.slot, oldBlobId: s1.blobId, text: "b2" },
     ]);
     await writeContainer(facet, doc, [
-      { op: "remove", slot: s1.slot, position: "a1", blobId: "" },
+      {
+        op: "remove",
+        slot: s1.slot,
+        position: "a1",
+        blobId: edited.blobIds[0] ?? "",
+      },
     ]);
     await writeContainer(facet, doc, [
       { op: "update", slot: s0.slot, oldBlobId: s0.blobId, text: "a2" },
