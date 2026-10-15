@@ -67,7 +67,12 @@ import { type ContainerFacet, writeContainer } from "../container-write.js";
 import { isPatchError, patchContainer } from "../container-patch.js";
 import type { AuthorKind, NotePublisher } from "./consciousness-emit.js";
 import { projectNote } from "./note-projection.js";
-import { containerHistory, readContainer } from "../container-read.js";
+import {
+  containerHistory,
+  READ_CONTAINERS_MAX,
+  readContainer,
+  readContainers,
+} from "../container-read.js";
 import { containerBodies } from "../container-body.js";
 import { runBlobCensus } from "../blob-census.js";
 import type { TagStore } from "../tag-store.js";
@@ -1628,6 +1633,60 @@ export function createServer(
               text: `${String(result.blocks.length)} block(s)${
                 as_of_tx !== undefined ? ` as of tx ${String(as_of_tx)}` : ""
               }`,
+            },
+          ],
+          structuredContent: structured(result),
+        };
+      },
+    );
+
+    server.registerTool(
+      "read_containers",
+      {
+        outputSchema: outputSchemaOf("read_containers"),
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
+        title: "Read many containers at once (ordered blocks, batched)",
+        description:
+          "Batch read_container at HEAD: up to 500 containers in one tree " +
+          "query and ONE blob lookup — never N calls. Each container answers " +
+          "its revision (sha256 over the ordered slot:blobId pairs plus the " +
+          "frontmatter), its frontmatter (or null) and its blocks in " +
+          "position order, dangling surfaced exactly as read_container does. " +
+          "texts=false skips the blob fetch and answers text null. An id " +
+          "with no tree and no frontmatter is listed in missing. Fewer than " +
+          "1 or more than 500 ids is refused as bad_args; a repeated id is " +
+          "read once.",
+        inputSchema: z.strictObject({
+          containers: z
+            .array(nodeToken("A container node's 64-hex token."))
+            .min(1)
+            .max(READ_CONTAINERS_MAX)
+            .describe("Container node tokens (1 to 500)."),
+          texts: z
+            .boolean()
+            .default(true)
+            .describe("Fetch each block's prose; false answers text null."),
+        }),
+      },
+      async ({ containers, texts }) => {
+        if (containers.length < 1 || containers.length > READ_CONTAINERS_MAX) {
+          return refusalResult({
+            code: "bad_args",
+            detail: `${String(containers.length)} containers; one call takes 1 to ${String(READ_CONTAINERS_MAX)}`,
+          });
+        }
+        const result = await readContainers(facet, [...new Set(containers)], {
+          texts,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${String(result.containers.length)} container(s), ${String(result.missing.length)} missing`,
             },
           ],
           structuredContent: structured(result),
