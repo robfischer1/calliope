@@ -106,6 +106,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "look",
       "materialize_note",
       "read_container", // F5 — the ordered tree read
+      "read_containers", // the batch read: one call, not ~96
       "restore_note", // clears a suppression [Rob, 2026-10-06: delete = suppress]
       "revision_deltas", // stays [Rob, F12] — frozen archive, read-only
       "search", // Findability F2 — licensed by its Exposes row `search(query, scope)`
@@ -121,6 +122,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
     const MAP: Record<string, [boolean, boolean, boolean]> = {
       // reads
       read_container: [true, false, true],
+      read_containers: [true, false, true],
       blob_census: [false, true, false], // F7 — the sweep reaps marked blobs
 
       container_history: [true, false, true],

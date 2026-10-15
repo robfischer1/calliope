@@ -232,6 +232,10 @@ const CASES: Record<string, Case> = {
     valid: { container: NOTE },
     alternates: [{ container: NOTE, as_of_tx: 1 }],
   },
+  read_containers: {
+    valid: { containers: [NOTE] },
+    alternates: [{ containers: [NOTE], texts: false }],
+  },
   container_history: { valid: { container: NOTE } },
   blob_census: { valid: {}, alternates: [{ execute: true }] },
 };

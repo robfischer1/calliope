@@ -18,7 +18,7 @@ import { FixtureRevisionStore } from "../src/revision-store.js";
 import { createServer } from "../src/mcp/server.js";
 import { FixtureTagStore } from "../src/tag-store.js";
 
-/** The 19 verbs the gateway served without a schema, as calliope names them. */
+/** The 20 verbs the gateway served without a schema, as calliope names them. */
 const VERBS = [
   "blob_census",
   "container_history",
@@ -33,6 +33,7 @@ const VERBS = [
   "look",
   "materialize_note",
   "read_container",
+  "read_containers",
   "restore_note",
   "revision_deltas",
   "search",
@@ -170,6 +171,7 @@ describe("F17 batch 2a — calliope's output schemas", () => {
       ops: [{ op: "add", text: "alpha #beta", position: "a0" }],
     });
 
+    await run("read_containers", { containers: [id] });
     await run("container_history", { container: id });
     await run("export_note", { container_id: id });
     await run("materialize_note", { container_id: id });

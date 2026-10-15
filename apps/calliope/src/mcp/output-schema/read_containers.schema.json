@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_read_containers/v1",
+  "title": "calliope_read_containers \u2014 the answer",
+  "description": "Each requested container (once) with its revision, frontmatter and ordered blocks; a block whose prose is absent, or whose text was not asked for, has null text (dangling is only a fact of the graph). missing lists ids with no tree and no frontmatter. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml.",
+  "type": "object",
+  "properties": {
+    "containers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "container": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "frontmatter": {
+            "type": ["string", "null"]
+          },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slot": {
+                  "type": "string"
+                },
+                "position": {
+                  "type": "string"
+                },
+                "blobId": {
+                  "type": ["string", "null"]
+                },
+                "text": {
+                  "type": ["string", "null"]
+                },
+                "dangling": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["slot", "position", "blobId", "text", "dangling"]
+            }
+          }
+        },
+        "required": ["container", "revision", "frontmatter", "blocks"]
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": ["containers", "missing"]
+}

@@ -23,6 +23,7 @@ import list_tags from "./output-schema/list_tags.schema.json" with { type: "json
 import look from "./output-schema/look.schema.json" with { type: "json" };
 import materialize_note from "./output-schema/materialize_note.schema.json" with { type: "json" };
 import read_container from "./output-schema/read_container.schema.json" with { type: "json" };
+import read_containers from "./output-schema/read_containers.schema.json" with { type: "json" };
 import restore_note from "./output-schema/restore_note.schema.json" with { type: "json" };
 import revision_deltas from "./output-schema/revision_deltas.schema.json" with { type: "json" };
 import search from "./output-schema/search.schema.json" with { type: "json" };
@@ -44,6 +45,7 @@ const DOCUMENTS = {
   look,
   materialize_note,
   read_container,
+  read_containers,
   restore_note,
   revision_deltas,
   search,

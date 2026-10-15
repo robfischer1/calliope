@@ -99,7 +99,7 @@ build of chaosstore, linux and windows).
 
 ## MCP tools — the post-cut surface (F12)
 
-The fleet serves **eighteen verbs**, pinned (names AND annotations) by an
+The fleet serves **twenty verbs**, pinned (names AND annotations) by an
 executable fence in `__tests__/mcp-http.test.ts` — change the surface only
 alongside the plan that licenses it:
 
@@ -113,6 +113,10 @@ The container surface (the ONE write path):
   of `ops` / `replacements` per call
 - `read_container(container, as_of_tx?)` — ordered blocks (slot, position,
   blobId, text); dangling blobs surfaced, never fabricated
+- `read_containers(containers, texts?)` — the batch read: 1 to 500 containers in
+  one tree query and one blob lookup, each with its `revision` (sha256 over
+  the ordered `slot:blobId` pairs plus the frontmatter) and `frontmatter`;
+  unknown ids in `missing`; `texts:false` skips the blob fetch
 - `container_history(container)` — the container's transactions (history
   IS the graph)
 - `blob_census()` — the F7 GC (roster-gated mark-and-sweep)
