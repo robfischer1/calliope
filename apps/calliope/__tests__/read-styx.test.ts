@@ -304,6 +304,54 @@ describe("read_containers by styx", () => {
     expect(r.tokens.get(made[0]?.styx ?? "")).toBe(made[0]?.token);
     expect(r.tokens.get(made[1]?.styx ?? "")).toBe(made[1]?.token);
   });
+
+  it("joins on the echoed ref: twins resolve in two calls, none singly", async () => {
+    const dial = new CountingDial();
+    const made: { token: string; styx: string }[] = [];
+    for (const styx of ["alpha-bravo-charli", "delta-echoes-foxtro"]) {
+      const res = await dial.admit([opCreate("Note", "twin")], "notes");
+      const token = res.minted[0] ?? "";
+      dial.assignStyx(token, styx);
+      made.push({ token, styx });
+    }
+    dial.reset();
+    const r = await resolveStyx(
+      dial,
+      made.map((m) => m.styx),
+    );
+    expect(dial.echo).toBe(1);
+    expect(dial.legacy).toBe(1);
+    expect(r.tokens.get(made[0]?.styx ?? "")).toBe(made[0]?.token);
+    expect(r.tokens.get(made[1]?.styx ?? "")).toBe(made[1]?.token);
+  });
+
+  it("a chaos that predates the echo: each ref is asked singly, still right", async () => {
+    class PreEchoDial extends CountingDial {
+      override async resolveNodeRefs(
+        ...a: Parameters<FixtureChaosDial["resolveNodeRefs"]>
+      ): ReturnType<FixtureChaosDial["resolveNodeRefs"]> {
+        const rows = await super.resolveNodeRefs(...a);
+        for (const row of Object.values(rows)) delete row.ref;
+        return rows;
+      }
+    }
+    const dial = new PreEchoDial();
+    const made: { token: string; styx: string }[] = [];
+    for (const styx of ["alpha-bravo-charli", "delta-echoes-foxtro"]) {
+      const res = await dial.admit([opCreate("Note", "twin")], "notes");
+      const token = res.minted[0] ?? "";
+      dial.assignStyx(token, styx);
+      made.push({ token, styx });
+    }
+    dial.reset();
+    const r = await resolveStyx(
+      dial,
+      made.map((m) => m.styx),
+    );
+    expect(dial.legacy).toBe(3);
+    expect(r.tokens.get(made[0]?.styx ?? "")).toBe(made[0]?.token);
+    expect(r.tokens.get(made[1]?.styx ?? "")).toBe(made[1]?.token);
+  });
 });
 
 describe("a fixed number of calls whatever the batch size", () => {

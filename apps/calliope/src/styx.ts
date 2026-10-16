@@ -11,16 +11,16 @@
  * HOW A REF BECOMES A TOKEN. `resolve_node_refs` answers in two shapes:
  *   - `missing_ok:true` — `{refs, missing}` in input order, each ref echoed as
  *     sent, no token (names the misses without refusing);
- *   - the legacy default — keyed by token, one row per node, but it refuses
- *     the whole call on an unknown address and its keys carry no order.
- * Neither alone gives ref -> token. Together they do, in TWO calls whatever
- * the batch size: the echo names the found refs and their rows, the legacy map
- * (asked only of the found refs, so it cannot refuse) names the tokens, and
- * the rows join them. A row shared by two tokens (same label, kind, location
- * and owner) cannot be told apart by its content; only those refs are asked
- * singly (one extra call each — the legacy map of a single ref has one key).
+ *   - the legacy default — keyed by token, each row echoing the ref as sent,
+ *     but it refuses the whole call on an unknown address.
+ * So: the echo names the misses, the legacy map (asked only of the found
+ * refs, so it cannot refuse) names each found ref's token, and the two join
+ * on `ref` — two calls whatever the batch size. A found ref with no row
+ * echoing it (two refs naming one node share the row, which echoes the first
+ * sent; or a chaos that predates the echo) is asked singly — the legacy map
+ * of a single ref has one key.
  */
-import type { ChaosDial, NodeRefRow } from "./chaos-client.js";
+import type { ChaosDial } from "./chaos-client.js";
 import { NODE_TOKEN_RE } from "./types.js";
 
 /** The styx grammar chaos pins on the wire (stellar-core kafkatopics
@@ -38,9 +38,6 @@ export const NODE_REF_RE = new RegExp(
 export function isStyx(ref: string): boolean {
   return STYX_RE.test(ref);
 }
-
-const rowKey = (r: NodeRefRow): string =>
-  JSON.stringify([r.label, r.kind, r.location ?? null, r.owner ?? null]);
 
 /** What {@link resolveStyx} found: ref (as sent) -> token, and the refs that
  *  name no live node. */
@@ -67,18 +64,13 @@ export async function resolveStyx(
   if (found.length === 0) return out;
 
   const byToken = await dial.resolveNodeRefs(found.map((r) => r.ref));
-  const tokensOf = new Map<string, string[]>();
+  const tokenOf = new Map<string, string>();
   for (const [token, row] of Object.entries(byToken)) {
-    const key = rowKey(row);
-    tokensOf.set(key, [...(tokensOf.get(key) ?? []), token]);
+    if (row.ref !== undefined) tokenOf.set(row.ref, token);
   }
   for (const r of found) {
-    const candidates = tokensOf.get(rowKey(r)) ?? [];
-    // Indistinguishable by content (or the row moved between the calls):
-    // ask this ref alone — a single-ref map has exactly one key.
     const token =
-      (candidates.length === 1 ? candidates[0] : undefined) ??
-      Object.keys(await dial.resolveNodeRefs([r.ref]))[0];
+      tokenOf.get(r.ref) ?? Object.keys(await dial.resolveNodeRefs([r.ref]))[0];
     if (token === undefined) out.missing.add(r.ref);
     else out.tokens.set(r.ref, token);
   }

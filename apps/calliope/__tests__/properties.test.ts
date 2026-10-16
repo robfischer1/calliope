@@ -416,6 +416,24 @@ describe("set_properties — frontmatter as edges", () => {
     expect(r.added).toEqual(["p=v"]);
   });
 
+  it("reads the kind off the row that echoes the ref, not the token key", async () => {
+    const id = "ab".repeat(32);
+    const other = "cd".repeat(32);
+    // A dial whose rows are keyed so the token key would mislead: the row for
+    // the asked ref says Note, and it is found by its echoed ref.
+    const dial = new FixtureChaosDial();
+    const base = dial.resolveNodeRefs.bind(dial);
+    dial.resolveNodeRefs = async (tokens) => {
+      await base(tokens);
+      return { [other]: { ref: id, label: "N", kind: "Note" } };
+    };
+    const r = await setProperties(dial, SCOPE, undefined, {
+      container_id: id,
+      properties: [{ predicate: "p", values: [{ literal: "v" }] }],
+    });
+    expect(isSetPropertiesError(r)).toBe(false);
+  });
+
   it("still refuses a non-note node (no Note-kind holder) whatever its hasType", async () => {
     const dial = new FixtureChaosDial();
     const id = "ee".repeat(32);
