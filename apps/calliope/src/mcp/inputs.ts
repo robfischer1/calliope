@@ -7,6 +7,7 @@
  * its handler.
  */
 import { z } from "zod";
+import { NODE_REF_RE } from "../styx.js";
 import { NODE_TOKEN_RE } from "../types.js";
 
 export { NODE_TOKEN_RE };
@@ -14,4 +15,10 @@ export { NODE_TOKEN_RE };
 /** A described node-token string. */
 export function nodeToken(description: string): z.ZodString {
   return z.string().regex(NODE_TOKEN_RE).describe(description);
+}
+
+/** A described container ref: a 64-hex token OR a styx address (bare or
+ *  `styx://`). The pattern is the hex-or-styx grammar chaos pins. */
+export function containerRef(description: string): z.ZodString {
+  return z.string().regex(NODE_REF_RE).describe(description);
 }

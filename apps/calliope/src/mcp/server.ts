@@ -62,7 +62,8 @@ import {
 } from "./tools.js";
 import type { ChaosFacet } from "../chaos-client.js";
 import { ChaosClientError, TENANTS } from "../chaos-client.js";
-import { NODE_TOKEN_RE, nodeToken } from "./inputs.js";
+import { NODE_TOKEN_RE, containerRef, nodeToken } from "./inputs.js";
+import { isStyx, resolveStyx } from "../styx.js";
 import { type ContainerFacet, writeContainer } from "../container-write.js";
 import { isPatchError, patchContainer } from "../container-patch.js";
 import type { AuthorKind, NotePublisher } from "./consciousness-emit.js";
@@ -1610,10 +1611,11 @@ export function createServer(
           "blob surfaces as dangling (text null) — reported, never " +
           "fabricated.",
         inputSchema: z.strictObject({
-          container: z
-            .string()
-            .regex(NODE_TOKEN_RE)
-            .describe("The container node's 64-hex token."),
+          container: containerRef(
+            "The container node's 64-hex token, or its styx address " +
+              "(able-frost-casual, bare or styx://). An address that names " +
+              "no node refuses not_found.",
+          ),
           as_of_tx: z
             .number()
             .int()
@@ -1623,9 +1625,18 @@ export function createServer(
         }),
       },
       async ({ container, as_of_tx }) => {
+        let token = container;
+        if (isStyx(container)) {
+          // A hex token never reaches the dictionary: only an address does.
+          const hit = (await resolveStyx(facet.dial, [container])).tokens.get(
+            container,
+          );
+          if (hit === undefined) return refuse("not_found", container);
+          token = hit;
+        }
         const result = await readContainer(
           facet,
-          container,
+          token,
           as_of_tx !== undefined ? { asOfTx: as_of_tx } : undefined,
         );
         return {
@@ -1664,10 +1675,19 @@ export function createServer(
           "read once.",
         inputSchema: z.strictObject({
           containers: z
-            .array(nodeToken("A container node's 64-hex token."))
+            .array(
+              containerRef(
+                "A container node's 64-hex token, or its styx address " +
+                  "(bare or styx://).",
+              ),
+            )
             .min(1)
             .max(READ_CONTAINERS_MAX)
-            .describe("Container node tokens (1 to 500)."),
+            .describe(
+              "Container tokens or styx addresses (1 to 500). Each answer " +
+                "echoes the ref as sent; an address naming no node is " +
+                "listed in missing.",
+            ),
           texts: z
             .boolean()
             .default(true)
@@ -1681,9 +1701,35 @@ export function createServer(
             detail: `${String(containers.length)} containers; one call takes 1 to ${String(READ_CONTAINERS_MAX)}`,
           });
         }
-        const result = await readContainers(facet, [...new Set(containers)], {
-          texts,
-        });
+        const asked = [...new Set(containers)];
+        // Hex goes straight through, byte for byte as before; only styx
+        // addresses are resolved (two chaos calls for the whole batch), read
+        // by token and answered under the address sent.
+        const { tokens, missing: unresolved } = await resolveStyx(
+          facet.dial,
+          asked.filter(isStyx),
+        );
+        const readable = asked.filter((c) => !unresolved.has(c));
+        const tokenOf = (c: string): string => tokens.get(c) ?? c;
+        const result =
+          readable.length === 0
+            ? { containers: [], missing: [] }
+            : await readContainers(facet, [...new Set(readable.map(tokenOf))], {
+                texts,
+              });
+        if (tokens.size > 0 || unresolved.size > 0) {
+          // One row per ref as sent, in the order sent: an address and the
+          // hex of the same node are two asks and two answers.
+          const rowOf = new Map(result.containers.map((r) => [r.container, r]));
+          const gone = new Set(result.missing);
+          result.containers = readable.flatMap((c) => {
+            const row = rowOf.get(tokenOf(c));
+            return row === undefined ? [] : [{ ...row, container: c }];
+          });
+          result.missing = asked.filter(
+            (c) => unresolved.has(c) || gone.has(tokenOf(c)),
+          );
+        }
         return {
           content: [
             {

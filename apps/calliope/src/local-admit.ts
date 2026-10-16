@@ -30,8 +30,10 @@ import {
   type HistoryEntry,
   LiveChaosDial,
   type NodeEdge,
+  type NodeRefRow,
   type PlacedEdge,
   type QuadRow,
+  type RefsEcho,
 } from "./chaos-client.js";
 
 /** sha256 over the 0x1f-joined canonical scalar form — themis ContentHash. */
@@ -209,10 +211,11 @@ export class LocalChaosDial implements ChaosDial {
   resolveNodes(tokens: string[]): Promise<Record<string, string>> {
     return this.#reads.resolveNodes(tokens);
   }
-  resolveNodeRefs(
-    tokens: string[],
-  ): Promise<Record<string, { label: string; kind: string }>> {
+  resolveNodeRefs(tokens: string[]): Promise<Record<string, NodeRefRow>> {
     return this.#reads.resolveNodeRefs(tokens);
+  }
+  resolveRefsEcho(refs: string[]): Promise<RefsEcho> {
+    return this.#reads.resolveRefsEcho(refs);
   }
   edges(token: string): Promise<NodeEdge[]> {
     return this.#reads.edges(token);

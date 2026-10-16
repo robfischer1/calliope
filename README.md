@@ -112,11 +112,15 @@ The container surface (the ONE write path):
   sending the block; any count miss refuses the whole batch. Exactly one
   of `ops` / `replacements` per call
 - `read_container(container, as_of_tx?)` — ordered blocks (slot, position,
-  blobId, text); dangling blobs surfaced, never fabricated
+  blobId, text); dangling blobs surfaced, never fabricated. `container` is a
+  64-hex token or a styx address (`able-frost-casual`, bare or `styx://`); an
+  address naming no node refuses `not_found`
 - `read_containers(containers, texts?)` — the batch read: 1 to 500 containers in
   one tree query and one blob lookup, each with its `revision` (sha256 over
   the ordered `slot:blobId` pairs plus the frontmatter) and `frontmatter`;
-  unknown ids in `missing`; `texts:false` skips the blob fetch
+  unknown ids in `missing`; `texts:false` skips the blob fetch. Each entry is
+  a token or a styx address and is answered as sent (never a token the caller
+  did not send); a batch's addresses resolve in at most two chaos calls
 - `container_history(container)` — the container's transactions (history
   IS the graph)
 - `blob_census()` — the F7 GC (roster-gated mark-and-sweep)
