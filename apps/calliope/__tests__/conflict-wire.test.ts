@@ -130,6 +130,23 @@ describe("resolveNodeRefs on the wire", () => {
     expect(await live().resolveNodeRefs([SLOT])).toEqual({});
   });
 
+  it("keeps the echoed ref when the wire row carries it", async () => {
+    result = {
+      structuredContent: {
+        [SLOT]: {
+          ref: "styx://able-frost-casual",
+          label: "A",
+          kind: "Note",
+          location: null,
+          owner: null,
+        },
+      },
+    };
+    expect(await live().resolveNodeRefs(["styx://able-frost-casual"])).toEqual({
+      [SLOT]: { ref: "styx://able-frost-casual", label: "A", kind: "Note" },
+    });
+  });
+
   it("keeps location and owner when the wire row carries them", async () => {
     result = {
       structuredContent: {

@@ -74,6 +74,7 @@ function asStr(v: unknown): string {
 function refRow(v: object): NodeRefRow {
   const row = v as Record<string, unknown>;
   const out: NodeRefRow = { label: asStr(row.label), kind: asStr(row.kind) };
+  if (typeof row.ref === "string") out.ref = row.ref;
   if (typeof row.location === "string") out.location = row.location;
   if (typeof row.owner === "string") out.owner = row.owner;
   return out;
@@ -239,8 +240,11 @@ export function placedGraph(graph: string): string {
 }
 
 /** One node-dictionary row off `resolve_node_refs`. `location` / `owner` are
- *  present only when the wire row carried a string (null is omitted). */
+ *  present only when the wire row carried a string (null is omitted). `ref`
+ *  is the ref as the caller sent it (the first one sent, when two name one
+ *  node); a chaos that predates the echo sends none. */
 export interface NodeRefRow {
+  ref?: string;
   label: string;
   kind: string;
   location?: string;
@@ -268,10 +272,11 @@ export interface ChaosDial {
   ): Promise<AdmitResult>;
   findByName(kind: string, label: string): Promise<string[]>;
   resolveNodes(tokens: string[]): Promise<Record<string, string>>;
-  /** The node dictionary's rows for these refs — `{label, kind}` (plus
+  /** The node dictionary's rows for these refs — `{ref, label, kind}` (plus
    *  `location` / `owner` when the wire carries one), keyed by the node's
-   *  hex TOKEN. An unknown token is omitted; an unknown styx address refuses
-   *  the whole call (chaos `resolve_node_refs`, the legacy default). */
+   *  hex TOKEN; `ref` echoes the ref as sent, so a caller joins on it. An
+   *  unknown token is omitted; an unknown styx address refuses the whole
+   *  call (chaos `resolve_node_refs`, the legacy default). */
   resolveNodeRefs(tokens: string[]): Promise<Record<string, NodeRefRow>>;
   /** The same dictionary, `missing_ok:true`: rows in INPUT order, each echoing
    *  the ref as sent and carrying NO token; well-formed refs naming no live
@@ -1308,8 +1313,9 @@ export class FixtureChaosDial implements ChaosDial {
         continue;
       }
       const kind = this.kinds.get(token);
-      if (kind !== undefined)
-        out[token] = { label: this.labels.get(token) ?? "", kind };
+      // Chaos echoes the FIRST ref sent for a node: a later one is the same row.
+      if (kind !== undefined && out[token] === undefined)
+        out[token] = { ref: t, label: this.labels.get(token) ?? "", kind };
     }
     return Promise.resolve(out);
   }

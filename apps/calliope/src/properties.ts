@@ -294,9 +294,11 @@ export async function setProperties(
   // create_note mints every node with kind Note whatever `type` it names
   // (Note, Law, Governance, Memory, ...). The kind is read exactly, off the
   // node dictionary (chaos resolve_node_refs), so a note whose hasName
-  // drifted or is absent is still a note.
+  // drifted or is absent is still a note. The row is the one echoing the ref
+  // as sent (a chaos that predates the echo is read by its token key).
   const refs = await dial.resolveNodeRefs([nodeId]);
-  if (refs[nodeId]?.kind !== NOTE_KIND) {
+  const row = Object.values(refs).find((r) => r.ref === nodeId) ?? refs[nodeId];
+  if (row?.kind !== NOTE_KIND) {
     return {
       code: "not_a_note",
       detail: `${nodeId} is not a node of kind ${NOTE_KIND}`,
