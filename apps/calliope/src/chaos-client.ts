@@ -70,6 +70,15 @@ function asStr(v: unknown): string {
   return "";
 }
 
+/** A wire row as a {@link NodeRefRow}: location / owner only when a string. */
+function refRow(v: object): NodeRefRow {
+  const row = v as Record<string, unknown>;
+  const out: NodeRefRow = { label: asStr(row.label), kind: asStr(row.kind) };
+  if (typeof row.location === "string") out.location = row.location;
+  if (typeof row.owner === "string") out.owner = row.owner;
+  return out;
+}
+
 /** One admit op — the friendly wire dict themis `_ops_from_wire` parses. */
 export type ChaosOp = Record<string, unknown> & { op: string };
 
@@ -229,6 +238,21 @@ export function placedGraph(graph: string): string {
   return graph === "" ? "" : graphToken(graph);
 }
 
+/** One node-dictionary row off `resolve_node_refs`. `location` / `owner` are
+ *  present only when the wire row carried a string (null is omitted). */
+export interface NodeRefRow {
+  label: string;
+  kind: string;
+  location?: string;
+  owner?: string;
+}
+
+/** `resolve_node_refs` with `missing_ok:true`: no tokens, input order. */
+export interface RefsEcho {
+  refs: (NodeRefRow & { ref: string })[];
+  missing: string[];
+}
+
 /** The dial surface `create_note` needs — fixture-implementable. */
 export interface ChaosDial {
   /**
@@ -244,11 +268,15 @@ export interface ChaosDial {
   ): Promise<AdmitResult>;
   findByName(kind: string, label: string): Promise<string[]>;
   resolveNodes(tokens: string[]): Promise<Record<string, string>>;
-  /** The node dictionary's rows for these tokens — `{label, kind}`; an
-   *  unknown token is omitted (chaos `resolve_node_refs`). */
-  resolveNodeRefs(
-    tokens: string[],
-  ): Promise<Record<string, { label: string; kind: string }>>;
+  /** The node dictionary's rows for these refs — `{label, kind}` (plus
+   *  `location` / `owner` when the wire carries one), keyed by the node's
+   *  hex TOKEN. An unknown token is omitted; an unknown styx address refuses
+   *  the whole call (chaos `resolve_node_refs`, the legacy default). */
+  resolveNodeRefs(tokens: string[]): Promise<Record<string, NodeRefRow>>;
+  /** The same dictionary, `missing_ok:true`: rows in INPUT order, each echoing
+   *  the ref as sent and carrying NO token; well-formed refs naming no live
+   *  node land in `missing`. A malformed ref still refuses. */
+  resolveRefsEcho(refs: string[]): Promise<RefsEcho>;
   /** The node's outbound edges — the heal-on-reuse read. */
   edges(token: string): Promise<NodeEdge[]>;
   /** Idempotent graph ensure (chaos `register_graph` — an identity op on
@@ -697,22 +725,47 @@ export class LiveChaosDial implements ChaosDial {
     );
   }
 
-  async resolveNodeRefs(
-    tokens: string[],
-  ): Promise<Record<string, { label: string; kind: string }>> {
+  async resolveNodeRefs(tokens: string[]): Promise<Record<string, NodeRefRow>> {
     this.id += 1;
     const raw = await this.chaosRpc("resolve_node_refs", { tokens });
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return {};
     }
-    const out: Record<string, { label: string; kind: string }> = {};
+    const out: Record<string, NodeRefRow> = {};
     for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-      const row = v as { label?: unknown; kind?: unknown } | null;
-      if (row !== null && typeof row === "object") {
-        out[k] = { label: asStr(row.label), kind: asStr(row.kind) };
-      }
+      if (v !== null && typeof v === "object") out[k] = refRow(v);
     }
     return out;
+  }
+
+  async resolveRefsEcho(refs: string[]): Promise<RefsEcho> {
+    this.id += 1;
+    const raw = await this.chaosRpc("resolve_node_refs", {
+      tokens: refs,
+      missing_ok: true,
+    });
+    const shaped = raw as { refs?: unknown; missing?: unknown } | null;
+    if (
+      shaped === null ||
+      typeof shaped !== "object" ||
+      !Array.isArray(shaped.refs) ||
+      !Array.isArray(shaped.missing)
+    ) {
+      // A chaos that predates missing_ok answers the legacy token map.
+      throw new ChaosClientError(
+        "resolve_node_refs: missing_ok answered no {refs, missing}",
+        "bad_result",
+      );
+    }
+    return {
+      refs: shaped.refs
+        .filter((r): r is object => r !== null && typeof r === "object")
+        .map((r) => ({
+          ref: asStr((r as { ref?: unknown }).ref),
+          ...refRow(r),
+        })),
+      missing: shaped.missing.map(asStr),
+    };
   }
 
   async findByValue(
@@ -1218,14 +1271,59 @@ export class FixtureChaosDial implements ChaosDial {
     return Promise.resolve(out);
   }
 
-  resolveNodeRefs(
-    tokens: string[],
-  ): Promise<Record<string, { label: string; kind: string }>> {
-    const out: Record<string, { label: string; kind: string }> = {};
+  /** A fixture node's styx address (bare body), when one was assigned. */
+  readonly styxOf = new Map<string, string>();
+
+  /** Give a fixture node a styx address — what chaos mints and the dial
+   *  resolves (test helper). */
+  assignStyx(token: string, styx: string): void {
+    this.styxOf.set(token, styx);
+  }
+
+  /** A ref as sent (hex, bare styx or `styx://`) to the token it names, or
+   *  undefined when it names no node. */
+  #tokenOf(ref: string): string | undefined {
+    const body = ref.startsWith("styx://") ? ref.slice("styx://".length) : ref;
+    if (/^[0-9a-f]{64}$/.test(body)) {
+      return this.kinds.has(body) ? body : undefined;
+    }
+    for (const [token, styx] of this.styxOf) if (styx === body) return token;
+    return undefined;
+  }
+
+  resolveNodeRefs(tokens: string[]): Promise<Record<string, NodeRefRow>> {
+    const out: Record<string, NodeRefRow> = {};
     for (const t of tokens) {
-      const kind = this.kinds.get(t);
+      const token = this.#tokenOf(t);
+      if (token === undefined) {
+        // The door refuses the whole call on an unknown ADDRESS (a hex
+        // token is merely omitted).
+        if (!/^[0-9a-f]{64}$/.test(t)) {
+          return Promise.reject(
+            new ChaosClientError(
+              `resolve_node_refs: bad_args: ${t} resolves to no live node`,
+            ),
+          );
+        }
+        continue;
+      }
+      const kind = this.kinds.get(token);
       if (kind !== undefined)
-        out[t] = { label: this.labels.get(t) ?? "", kind };
+        out[token] = { label: this.labels.get(token) ?? "", kind };
+    }
+    return Promise.resolve(out);
+  }
+
+  resolveRefsEcho(refs: string[]): Promise<RefsEcho> {
+    const out: RefsEcho = { refs: [], missing: [] };
+    for (const ref of refs) {
+      const token = this.#tokenOf(ref);
+      const kind = token === undefined ? undefined : this.kinds.get(token);
+      if (token === undefined || kind === undefined) {
+        out.missing.push(ref);
+        continue;
+      }
+      out.refs.push({ ref, label: this.labels.get(token) ?? "", kind });
     }
     return Promise.resolve(out);
   }

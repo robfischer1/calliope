@@ -15,15 +15,18 @@ import { writeContainer } from "../src/container-write.js";
 
 const realFetch = globalThis.fetch;
 let result: Record<string, unknown> = {};
+let sent = "";
 
 beforeEach(() => {
-  globalThis.fetch = () =>
-    Promise.resolve(
+  globalThis.fetch = (_url, init) => {
+    sent = typeof init?.body === "string" ? init.body : "";
+    return Promise.resolve(
       new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
     );
+  };
 });
 afterEach(() => {
   globalThis.fetch = realFetch;
@@ -125,5 +128,66 @@ describe("resolveNodeRefs on the wire", () => {
     });
     result = { structuredContent: [] };
     expect(await live().resolveNodeRefs([SLOT])).toEqual({});
+  });
+
+  it("keeps location and owner when the wire row carries them", async () => {
+    result = {
+      structuredContent: {
+        [SLOT]: { label: "A", kind: "Note", location: "kg", owner: "rob" },
+      },
+    };
+    expect(await live().resolveNodeRefs([SLOT])).toEqual({
+      [SLOT]: { label: "A", kind: "Note", location: "kg", owner: "rob" },
+    });
+  });
+
+  it("missing_ok: refs in input order as sent, misses apart, no token", async () => {
+    result = {
+      structuredContent: {
+        refs: [
+          {
+            ref: "styx://able-frost-casual",
+            label: "A",
+            kind: "Note",
+            location: null,
+            owner: "rob",
+          },
+        ],
+        missing: ["ghost-town-void"],
+      },
+    };
+    expect(
+      await live().resolveRefsEcho([
+        "styx://able-frost-casual",
+        "ghost-town-void",
+      ]),
+    ).toEqual({
+      refs: [
+        {
+          ref: "styx://able-frost-casual",
+          label: "A",
+          kind: "Note",
+          owner: "rob",
+        },
+      ],
+      missing: ["ghost-town-void"],
+    });
+    expect(JSON.parse(sent)).toMatchObject({
+      params: {
+        name: "resolve_node_refs",
+        arguments: {
+          tokens: ["styx://able-frost-casual", "ghost-town-void"],
+          missing_ok: true,
+        },
+      },
+    });
+  });
+
+  it("missing_ok against a chaos that ignores it is a bad_result, not a silent miss", async () => {
+    result = { structuredContent: { [SLOT]: { label: "A", kind: "Note" } } };
+    const err = await live()
+      .resolveRefsEcho(["able-frost-casual"])
+      .catch((e: unknown) => e);
+    expect((err as ChaosClientError).code).toBe("bad_result");
   });
 });

@@ -35,10 +35,12 @@ import {
   type HistoryEntry,
   LiveChaosDial,
   type NodeEdge,
+  type NodeRefRow,
   opAdd,
   opCreate,
   opRemove,
   type QuadRow,
+  type RefsEcho,
   type Tenant,
   tenantScope,
 } from "../chaos-client.js";
@@ -176,11 +178,16 @@ export class RetryingDial implements ChaosDial {
       "read",
     );
   }
-  resolveNodeRefs(
-    tokens: string[],
-  ): Promise<Record<string, { label: string; kind: string }>> {
+  resolveNodeRefs(tokens: string[]): Promise<Record<string, NodeRefRow>> {
     return withRetry(
       () => this.#inner.resolveNodeRefs(tokens),
+      () => true,
+      "read",
+    );
+  }
+  resolveRefsEcho(refs: string[]): Promise<RefsEcho> {
+    return withRetry(
+      () => this.#inner.resolveRefsEcho(refs),
       () => true,
       "read",
     );
