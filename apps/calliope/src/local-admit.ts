@@ -23,7 +23,9 @@ function asStr(v: unknown): string {
 import {
   type AdmitResult,
   type ChaosDial,
+  type ChaosExpect,
   ChaosClientError,
+  refusalOf,
   type ChaosOp,
   type HistoryEntry,
   LiveChaosDial,
@@ -170,12 +172,18 @@ export class LocalChaosDial implements ChaosDial {
     this.#author = author;
   }
 
-  async admit(ops: ChaosOp[], scope: string): Promise<AdmitResult> {
+  async admit(
+    ops: ChaosOp[],
+    scope: string,
+    expect?: ChaosExpect[],
+  ): Promise<AdmitResult> {
     const wire = toCaptureOps(ops, scope);
     this.#id += 1;
+    // chaos `capture` speaks the same `expect` grammar themis passes through.
     const raw = (await localRpc(this.#chaosUrl, this.#id, "capture", {
       ops: wire,
       author: this.#author,
+      ...(expect !== undefined && expect.length > 0 ? { expect } : {}),
     })) as {
       tx?: unknown;
       results?: { op?: unknown; id?: unknown }[];
@@ -200,6 +208,11 @@ export class LocalChaosDial implements ChaosDial {
   }
   resolveNodes(tokens: string[]): Promise<Record<string, string>> {
     return this.#reads.resolveNodes(tokens);
+  }
+  resolveNodeRefs(
+    tokens: string[],
+  ): Promise<Record<string, { label: string; kind: string }>> {
+    return this.#reads.resolveNodeRefs(tokens);
   }
   edges(token: string): Promise<NodeEdge[]> {
     return this.#reads.edges(token);
@@ -294,6 +307,13 @@ async function localRpc(
   }
   const result = body.result;
   if (result?.isError === true) {
+    const refusal = refusalOf(result.content, result.structuredContent);
+    if (refusal?.code === "conflict") {
+      throw new ChaosClientError(
+        `local ${verb}: conflict: ${refusal.detail}`,
+        "conflict",
+      );
+    }
     throw new ChaosClientError(
       `local ${verb}: ${JSON.stringify(result.content ?? [])}`,
       "wire_error",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FixtureChaosDial, opAdd } from "../src/chaos-client.js";
+import { FixtureChaosDial, opAdd, opRemove } from "../src/chaos-client.js";
 import { createNote, isCreateNoteError } from "../src/mcp/tools.js";
 import { FixtureTagStore } from "../src/tag-store.js";
 import {
@@ -372,6 +372,68 @@ describe("set_properties — frontmatter as edges", () => {
     expect(dial.admits).toHaveLength(0);
   });
 
+  it("accepts a Governance-typed note: edges and frontmatter land, tags and the mirror do not", async () => {
+    const dial = new FixtureChaosDial();
+    const store = new FixtureTagStore();
+    const made = await createNote(dial, SCOPE, {
+      title: "Law/Rule",
+      type: "Governance",
+    });
+    if (isCreateNoteError(made)) throw new Error(made.detail);
+    const r = ok(
+      await setProperties(dial, SCOPE, store, {
+        container_id: made.node_id,
+        properties: [{ predicate: "status", values: [{ literal: "law" }] }],
+        tags: ["Governance/Core"],
+        frontmatter: "status: law",
+      }),
+    );
+    expect(r.added.sort()).toEqual(["frontmatter=status: law", "status=law"]);
+    expect(await valuesOf(dial, made.node_id, "status")).toEqual(["law"]);
+    expect(await valuesOf(dial, made.node_id, "hasType")).toEqual([
+      "Governance",
+    ]);
+    // side effects stay on hasType=Note
+    expect(r.tags_added).toEqual([]);
+    expect(r.tags_skipped).toEqual(["#governance/core"]);
+    expect(await valuesOf(dial, made.node_id, "hasTag")).toEqual([]);
+    expect(await store.byNode(made.node_id)).toEqual([]);
+  });
+
+  it("a Note whose hasName is gone is still a note (kind is read exactly)", async () => {
+    const dial = new FixtureChaosDial();
+    const id = await note(dial, undefined, "Drifted");
+    await dial.admit(
+      [opRemove(id, "hasName", { toLiteral: "Drifted" })],
+      SCOPE,
+    );
+    const r = ok(
+      await setProperties(dial, SCOPE, undefined, {
+        container_id: id,
+        properties: [{ predicate: "p", values: [{ literal: "v" }] }],
+      }),
+    );
+    expect(r.added).toEqual(["p=v"]);
+  });
+
+  it("still refuses a non-note node (no Note-kind holder) whatever its hasType", async () => {
+    const dial = new FixtureChaosDial();
+    const id = "ee".repeat(32);
+    await dial.admit(
+      [
+        opAdd(id, "hasName", { toLiteral: "Law/Imposter" }),
+        opAdd(id, "hasType", { toLiteral: "Governance" }),
+      ],
+      SCOPE,
+    );
+    const r = await setProperties(dial, SCOPE, undefined, {
+      container_id: id,
+      properties: [{ predicate: "p", values: [{ literal: "v" }] }],
+    });
+    expect(isSetPropertiesError(r) && r.code).toBe("not_a_note");
+    expect(dial.admits).toHaveLength(1); // only the setup
+  });
+
   it("refuses reserved, blank and padded predicates before any read", async () => {
     const dial = new FixtureChaosDial();
     for (const predicate of [
@@ -563,7 +625,7 @@ describe("set_properties over MCP, and the round trip through export", () => {
     expect(r.content).toEqual([
       {
         type: "text",
-        text: `not_a_note: ${"cd".repeat(32)} carries no hasType=Note edge`,
+        text: `not_a_note: ${"cd".repeat(32)} is not a node of kind Note`,
       },
     ]);
     expect((r.structuredContent as { code: string }).code).toBe("not_a_note");
@@ -816,7 +878,9 @@ describe("set_properties' published surface", () => {
         "retract:true removes exactly the named values (the revert form). " +
         "Idempotent — a re-run is a read. Returns {node_id, added, " +
         "removed, tags_added, tags_removed, tags_skipped, tx?}; refusals " +
-        "are not_a_note / bad_args / admit_refused.",
+        "are not_a_note / bad_args / admit_refused. Works on any node of kind " +
+        "Note whatever its hasType (Note, Law, Governance, ...); tags[] " +
+        "only land for hasType=Note and are otherwise reported in tags_skipped.",
     );
     const props = tool?.inputSchema.properties as Record<
       string,

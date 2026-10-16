@@ -14,11 +14,14 @@ import type { GcStore, ProseStore } from "./blob-store.js";
 import {
   ChaosClientError,
   type ChaosDial,
+  type ChaosExpect,
   type ChaosOp,
+  expectHeldBlob,
   type Tenant,
   tenantScope,
 } from "./chaos-client.js";
 import {
+  TREE_CONTENT,
   repointOps,
   repositionOps,
   slotBirthOps,
@@ -64,6 +67,13 @@ export interface ContainerWriteResult {
  * through the F3 builders into ONE admit batch at the tenant's scope.
  * A refused batch throws {@link ChaosClientError} carrying the gate's
  * violations verbatim; any blobs minted in phase 1 stay behind as orphans.
+ *
+ * Every update and remove is a real compare-and-set. `removeEdge` is ensure-absent and
+ * the cardinality guard only warns, so remove-old + add-new alone, after
+ * another writer moved the slot, would remove nothing and land a SECOND
+ * `tree_content`. Each update therefore rides an `expect` that the slot
+ * holds exactly its `oldBlobId`; a stale base refuses the whole batch as
+ * `conflict` (code `conflict`, naming the slot), nothing written.
  */
 export async function writeContainer(
   facet: ContainerFacet,
@@ -97,6 +107,7 @@ export async function writeContainer(
 
   // Phase 2 — one batch of tree facts, F3 builders only.
   const batch: ChaosOp[] = [];
+  const expects: ChaosExpect[] = [];
   const addSlots: { index: number; mintOrdinal: number }[] = [];
   let mintOrdinal = 0;
   for (const { index, op, blobId } of surviving) {
@@ -117,6 +128,7 @@ export async function writeContainer(
       }
       case "update": {
         if (blobId === undefined) throw new Error("update without a blob id");
+        expects.push(expectHeldBlob(op.slot, TREE_CONTENT, op.oldBlobId));
         batch.push(...repointOps(op.slot, op.oldBlobId, blobId));
         break;
       }
@@ -124,6 +136,9 @@ export async function writeContainer(
         batch.push(...repositionOps(op.slot, op.oldPosition, op.position));
         break;
       case "remove":
+        // Same hole as an update: removeEdge is ensure-absent, so a stale
+        // blobId would remove nothing and report success.
+        expects.push(expectHeldBlob(op.slot, TREE_CONTENT, op.blobId));
         batch.push(
           ...slotRemoveOps(op.slot, containerToken, op.position, op.blobId),
         );
@@ -131,7 +146,15 @@ export async function writeContainer(
     }
   }
 
-  const res = await facet.dial.admit(batch, scope);
+  let res;
+  try {
+    res = await facet.dial.admit(batch, scope, expects);
+  } catch (err) {
+    if (err instanceof ChaosClientError && err.code === "conflict") {
+      throw conflictError(err, expects);
+    }
+    throw err;
+  }
   if (!res.admitted) {
     throw new ChaosClientError(
       "write_container: the gate refused the batch (minted blobs remain as " +
@@ -152,4 +175,28 @@ export async function writeContainer(
     blobIds,
     ...(res.tx !== undefined ? { tx: res.tx } : {}),
   };
+}
+
+/**
+ * A failed expectation, said in calliope's words and naming the slot. The
+ * store's detail leads `expect[<i>] s=<slot> ...`; the index (or, failing
+ * that, the slot token) picks the slot, and an unreadable detail names every
+ * slot the batch was conditional on rather than none.
+ */
+function conflictError(
+  err: ChaosClientError,
+  expects: readonly ChaosExpect[],
+): ChaosClientError {
+  const idx = /expect\[(\d+)\]/.exec(err.message)?.[1];
+  const named = idx === undefined ? undefined : expects[Number(idx)];
+  const slots =
+    named !== undefined ? [named.s] : [...new Set(expects.map((x) => x.s))];
+  return new ChaosClientError(
+    `write_container: conflict — slot ${slots.join(", ")} no longer holds ` +
+      "the content the update was based on (another writer changed it " +
+      "after oldBlobId was read); re-read the container and retry. " +
+      "Nothing was written (blobs minted for this save remain as orphans " +
+      `for the census). [${err.message}]`,
+    "conflict",
+  );
 }

@@ -462,6 +462,7 @@ describe("deleteNotes — arguments and failure paths", () => {
       admit: (o, s) => full.admit(o, s),
       findByName: (k, l) => full.findByName(k, l),
       resolveNodes: (t) => full.resolveNodes(t),
+      resolveNodeRefs: (t) => full.resolveNodeRefs(t),
       edges: (t) => full.edges(t),
       registerGraph: (n) => full.registerGraph(n),
       quadsFrom: (s, a, p, g) => full.quadsFrom(s, a, p, g),

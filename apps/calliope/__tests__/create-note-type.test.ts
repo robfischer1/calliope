@@ -2,8 +2,9 @@
  * create_note's `type` — the hasType edge a caller names (a mnemosyne body
  * is "Memory"), while the node's kind stays Note so `(Note, title)` keeps
  * reusing the one node. Everything note-only keys off hasType=Note, so a
- * Memory-typed body falls out of the tag path, set_properties, and the
- * notes listing.
+ * Memory-typed body falls out of the tag path and the notes listing.
+ * set_properties keys on KIND (any hasType passes), keeping its tag side
+ * effect on hasType=Note.
  */
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -87,14 +88,21 @@ describe("a Memory-typed node is not a note", () => {
     expect(await store.byNode(node_id)).toEqual([]);
   });
 
-  it("set_properties refuses it as not_a_note", async () => {
+  it("set_properties accepts it (kind Note) but lands no tags", async () => {
     const dial = new FixtureChaosDial();
+    const store = new FixtureTagStore();
     const { node_id } = await mint(dial, "memory:m:p", "Memory");
-    const res = await setProperties(dial, SCOPE, undefined, {
+    const res = await setProperties(dial, SCOPE, store, {
       container_id: node_id,
-      properties: [],
+      properties: [{ predicate: "status", values: [{ literal: "x" }] }],
+      tags: ["Interest/Health"],
     });
-    expect(res).toMatchObject({ code: "not_a_note" });
+    expect(res).toMatchObject({
+      added: ["status=x"],
+      tags_added: [],
+      tags_skipped: ["#interest/health"],
+    });
+    expect(await store.byNode(node_id)).toEqual([]);
   });
 
   it("the hasType=Note extent (the notes listing) leaves it out", async () => {
