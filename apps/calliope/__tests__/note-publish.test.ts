@@ -80,8 +80,9 @@ describe("the write verbs publish the note (pass 4)", () => {
     expect(p?.schemaType).toBe("Note");
     // Tags ride as the graph stores them — the `#tag` form `hasTag` carries.
     expect(p?.tags).toEqual(["#alpha"]);
-    expect(p?.createdAt).toBe("2026-09-01T00:00:00Z");
-    expect(p?.updatedAt).toBe("2026-09-04T00:00:00Z");
+    // instants read back as chaos renders them: Eastern, explicit offset
+    expect(p?.createdAt).toBe("2026-08-31T20:00:00-04:00");
+    expect(p?.updatedAt).toBe("2026-09-03T20:00:00-04:00");
     expect(p?.lifecycle).toBe("active");
     expect(p?.authorKind).toBe("human");
     expect(p?.revision).toBeGreaterThanOrEqual(1);

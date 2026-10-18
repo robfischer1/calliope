@@ -50,6 +50,7 @@ import {
   opRemove,
   type PlacedEdge,
 } from "./chaos-client.js";
+import { retractTargets } from "./instant.js";
 import type { TagStore } from "./tag-store.js";
 import { TREE_CONTENT, TREE_MEMBER } from "./tree.js";
 
@@ -148,9 +149,13 @@ function bump(counts: Record<string, number>, predicate: string): void {
   counts[predicate] = (counts[predicate] ?? 0) + 1;
 }
 
-function targetOf(e: PlacedEdge): EdgeTarget {
-  if (e.domain === "blob") return { toBlob: e.value };
-  return e.isNode ? { toNode: e.value } : { toLiteral: e.value };
+/** The targets that retract `e`: a time fact reads back as its rendering,
+ *  so it goes in both forms (as read, and typed). */
+function targetsOf(e: PlacedEdge): EdgeTarget[] {
+  if (e.domain === "blob") return [{ toBlob: e.value }];
+  return e.isNode
+    ? [{ toNode: e.value }]
+    : retractTargets(e.predicate, e.value);
 }
 
 const semantic = (edges: PlacedEdge[]): PlacedEdge[] =>
@@ -311,13 +316,10 @@ async function plan(
   // is retracted once.
   const ops = new Map<string, ChaosOp>();
   for (const e of retract) {
-    const op = opRemove(
-      e.subject,
-      e.predicate,
-      targetOf(e),
-      e.graph || undefined,
-    );
-    ops.set(JSON.stringify(op), op);
+    for (const target of targetsOf(e)) {
+      const op = opRemove(e.subject, e.predicate, target, e.graph || undefined);
+      ops.set(JSON.stringify(op), op);
+    }
   }
   return { deletion, ops: [...ops.values()] };
 }

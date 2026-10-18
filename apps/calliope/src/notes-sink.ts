@@ -32,6 +32,7 @@ import {
   type ChaosOp,
 } from "./chaos-client.js";
 import { factOps, observe } from "./converge-witness.js";
+import { literalTarget, retractTargets, sameValue } from "./instant.js";
 import type { TagStore } from "./tag-store.js";
 import {
   type CreateNoteResult,
@@ -123,24 +124,33 @@ function reconcileOps(
     const standing = current.filter((e) => e.predicate === predicate);
     let kept = false;
     for (const held of standing) {
-      if (!kept && !held.isNode && held.value === value) {
+      if (!kept && !held.isNode && sameValue(predicate, held.value, value)) {
         kept = true;
         continue;
       }
-      const target = held.isNode
-        ? { toNode: held.value }
-        : { toLiteral: held.value };
-      ops.push(
-        opRemove(
-          nodeId,
-          predicate,
-          target,
-          held.graph === "" ? undefined : held.graph,
-        ),
-      );
+      // A time fact reads back as its rendering, not its stored form, so a
+      // literal is retracted in both: as read (a legacy fact) and typed (an
+      // instant fact). A node-form value retracts as a node.
+      // The exception is a duplicate of the instant being kept: its typed
+      // retract would normalise to the kept fact and take it too.
+      const targets = held.isNode
+        ? [{ toNode: held.value }]
+        : kept && sameValue(predicate, held.value, value)
+          ? [{ toLiteral: held.value }]
+          : retractTargets(predicate, held.value);
+      for (const target of targets) {
+        ops.push(
+          opRemove(
+            nodeId,
+            predicate,
+            target,
+            held.graph === "" ? undefined : held.graph,
+          ),
+        );
+      }
     }
     if (!kept) {
-      ops.push(opAdd(nodeId, predicate, { toLiteral: value }));
+      ops.push(opAdd(nodeId, predicate, literalTarget(predicate, value)));
     }
   }
   return ops;
@@ -157,11 +167,14 @@ function additiveOps(
   for (const [predicate, value] of pairs) {
     const k = `${predicate}\u0000${value}`;
     const standing = current.some(
-      (e) => e.predicate === predicate && !e.isNode && e.value === value,
+      (e) =>
+        e.predicate === predicate &&
+        !e.isNode &&
+        sameValue(predicate, e.value, value),
     );
     if (!standing && !seen.has(k)) {
       seen.add(k);
-      ops.push(opAdd(nodeId, predicate, { toLiteral: value }));
+      ops.push(opAdd(nodeId, predicate, literalTarget(predicate, value)));
     }
   }
   return ops;

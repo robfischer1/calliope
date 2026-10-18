@@ -35,6 +35,7 @@ import {
   type ChaosDial,
   type ChaosOp,
 } from "../chaos-client.js";
+import { retractTargets } from "../instant.js";
 import { assertAdditiveAttrs, sinkNoteVersion } from "../notes-sink.js";
 import type { DocumentRow } from "../document-store.js";
 
@@ -161,12 +162,11 @@ export async function migrateNotes(
         const edges = (await dial.edges(stale)).filter((e) =>
           SINK_PREDICATES.has(e.predicate),
         );
-        const ops: ChaosOp[] = edges.map((e) =>
-          opRemove(
-            stale,
-            e.predicate,
-            e.isNode ? { toNode: e.value } : { toLiteral: e.value },
-          ),
+        const ops: ChaosOp[] = edges.flatMap((e) =>
+          (e.isNode
+            ? [{ toNode: e.value }]
+            : retractTargets(e.predicate, e.value)
+          ).map((target) => opRemove(stale, e.predicate, target)),
         );
         if (ops.length > 0) {
           const res = await dial.admit(ops, scope);

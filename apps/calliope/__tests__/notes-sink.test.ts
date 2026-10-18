@@ -58,7 +58,8 @@ describe("sinkNoteVersion (F6)", () => {
     expect(attr("source_path")).toBe("Brain Soup/Idea.md");
     expect(attr("raw_hash")).toBe(sha256("# Idea\n\nprose #brain-soup"));
     expect(attr("source_kind")).toBe("vault-note");
-    expect(attr("mtime")).toBe("2026-07-01T00:00:00Z");
+    // an instant reads back as chaos renders it: Eastern, explicit offset
+    expect(attr("mtime")).toBe("2026-06-30T20:00:00-04:00");
     expect(attr("title")).toBe("Idea");
     expect(attr("schema_type")).toBe("DigitalDocument");
     // Absent columns → absent attributes.
