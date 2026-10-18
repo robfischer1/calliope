@@ -68,7 +68,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "format": "date-time"
           },
           "git_blob_sha": {
             "type": [
@@ -86,7 +87,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "format": "date-time"
           }
         },
         "required": [
