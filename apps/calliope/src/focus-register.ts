@@ -42,6 +42,7 @@ import {
   decodeWritingDeltaEvent,
 } from "@forge/stellar-core-ts/kafkatopics";
 import type { WritingDeltaEvent } from "@forge/stellar-core-ts/kafkatopics";
+import { isDateTime } from "./instant.js";
 import type { BodyPointer } from "./types.js";
 import { isBodyPointer } from "./types.js";
 
@@ -156,14 +157,22 @@ export function handleTelemetryMessage(
   // `pointer.kind` as an open string (a future kind is a widening, not a
   // rewrite), and this register only understands `kind: "body"`. A pointer
   // kind it does not know is tolerated and ignored, never thrown on.
-  if (event.type === "selection-change" && isBodyPointer(event.pointer)) {
+  // The pointer's `ts` reaches `look` as a `format: date-time` field: a
+  // pointer whose capture moment is not an instant is skipped like any other
+  // record this register cannot read.
+  if (
+    event.type === "selection-change" &&
+    isBodyPointer(event.pointer) &&
+    isDateTime(event.pointer.ts)
+  ) {
     register.set(event.pointer, now().toISOString());
   } else if (
     // 029 (F6): the deliberate grain — same guard, append not LWW.
     event.type === "pointer-pin" &&
     event.pinId !== null &&
     event.pinId !== "" &&
-    isBodyPointer(event.pointer)
+    isBodyPointer(event.pointer) &&
+    isDateTime(event.pointer.ts)
   ) {
     register.pin(event.pinId, event.pointer, now().toISOString());
   } else if (event.type === "pointer-live-clear") {

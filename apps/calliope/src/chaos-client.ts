@@ -31,6 +31,7 @@ import {
   tlsFetchOptions,
   type TlsFetchOptions,
 } from "@forge/stellar-core-ts";
+import { asDateTime } from "./instant.js";
 
 // ⚑ https AND 8201, for the same reason as chaos below: over plaintext 8200
 // themis typed every calliope admit `unidentified` (30 of 30 in the
@@ -934,7 +935,10 @@ export class LiveChaosDial implements ChaosDial {
       const row = (t ?? {}) as Record<string, unknown>;
       return {
         tx: typeof row.tx === "number" ? row.tx : Number(asStr(row.tx)),
-        at: row.at === null || row.at === undefined ? null : asStr(row.at),
+        // `container_history.at` is `format: date-time` on the wire.
+        at: asDateTime(
+          row.at === null || row.at === undefined ? null : asStr(row.at),
+        ),
         author: asStr(row.author),
         note: asStr(row.note),
       };

@@ -77,6 +77,7 @@ import {
 import { containerBodies } from "../container-body.js";
 import { runBlobCensus } from "../blob-census.js";
 import type { TagStore } from "../tag-store.js";
+import { asDateTime } from "../instant.js";
 import { outputSchemaOf } from "./output-schemas.js";
 import { refuse, refusalResult } from "../refusal.js";
 import type { RefusalResult } from "../refusal.js";
@@ -746,7 +747,16 @@ export function createServer(
           content: [
             { type: "text", text: `${String(rows.length)} revision(s).` },
           ],
-          structuredContent: { revisions: rows },
+          // `summary_generated_at` was archived as the text cast of a
+          // timestamptz (`2026-08-01 09:15:00.5-04`), which is not a date-time
+          // the client accepts; both stamps are emitted as one or as null.
+          structuredContent: {
+            revisions: rows.map((row) => ({
+              ...row,
+              summary_generated_at: asDateTime(row.summary_generated_at),
+              captured_at: asDateTime(row.captured_at),
+            })),
+          },
         };
       },
     );

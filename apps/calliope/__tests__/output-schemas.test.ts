@@ -74,6 +74,23 @@ async function rig(): Promise<Client> {
     parent_blob_sha: null,
     captured_at: "2026-05-27T10:39:48.080Z",
   });
+  // The archive's `summary_generated_at` is the text cast of a timestamptz.
+  await revisions.importRevision({
+    id: 2,
+    schema_type: "FileRevision",
+    repo: "vault",
+    commit_sha: "d".repeat(40),
+    file_path: "b.md",
+    prior_file_path: null,
+    change_type: "modify",
+    authorship: "ai",
+    summary: "s",
+    summary_model: "m",
+    summary_generated_at: "2026-05-27 06:39:48.5-04",
+    git_blob_sha: "bd9587b1",
+    parent_blob_sha: null,
+    captured_at: "2026-05-27T10:39:48.080Z",
+  });
   await revisions.importDelta({
     id: 1,
     revision_id: 1,
@@ -204,6 +221,14 @@ describe("F17 batch 2a — calliope's output schemas", () => {
     await run("restore_note", { ids: [id] });
 
     expect([...seen].sort()).toEqual([...VERBS].sort());
+  });
+
+  it("emits the revision stamps as date-times the client accepts", async () => {
+    const mcp = await rig();
+    const answer = await call(mcp, "file_revisions", { id: 2 });
+    const [row] = answer.revisions as Record<string, unknown>[];
+    expect(row?.summary_generated_at).toBe("2026-05-27T06:39:48.5-04:00");
+    expect(row?.captured_at).toBe("2026-05-27T10:39:48.080Z");
   });
 
   it("answers every refusal as an isError {code, detail}, nothing else", async () => {
