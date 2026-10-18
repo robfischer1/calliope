@@ -47,6 +47,7 @@ import {
   prepareBackend,
 } from "./backend.js";
 import { createServer } from "./server.js";
+import type { ServerOptions } from "./server.js";
 import type { ChaosFacet } from "../chaos-client.js";
 import type { TagStore } from "../tag-store.js";
 import {
@@ -80,6 +81,9 @@ import {
   startPepMetrics,
 } from "@forge/stellar-core-ts/pep";
 import type { Pep } from "@forge/stellar-core-ts/pep";
+import { RouteMux } from "@forge/stellar-core-ts/rest";
+import type { RestMount } from "@forge/stellar-core-ts/rest";
+import { mountRestFace } from "./rest.js";
 
 /** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
 const MCP_PATH = "/mcp";
@@ -147,6 +151,42 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(raw) as unknown;
 }
 
+/** The collaborators a server is built from (the MCP door's and REST's alike). */
+export interface ServerDeps {
+  revisions?: RevisionStore | undefined;
+  chaos?: ChaosFacet | undefined;
+  tags?: TagStore | undefined;
+  focus?: FocusRegister | undefined;
+  containers?: ContainerFacet | undefined;
+  consciousness?: NotePublisher | undefined;
+  witness?: RequestLog | undefined;
+  pep?: Pep | undefined;
+}
+
+/** The {@link createServer} options for `deps`: one place, so MCP and REST serve one surface. */
+export function serverOptions(deps: ServerDeps): ServerOptions {
+  // Findability F4: the pg arm — eros-routed when CALLIOPE_EROS_URL is set;
+  // absent, the search verb answers honest darkness (F2's contract).
+  const search = makeErosProvider();
+  return {
+    ...(deps.revisions !== undefined ? { revisions: deps.revisions } : {}),
+    ...(deps.chaos !== undefined ? { chaos: deps.chaos } : {}),
+    ...(deps.tags !== undefined ? { tags: deps.tags } : {}),
+    ...(deps.focus !== undefined ? { focus: deps.focus } : {}),
+    ...(search !== undefined ? { search } : {}),
+    // F12 audit finding: the container surface (F4/F5) was wired in
+    // the BACKEND but never passed to the server — the fleet entry
+    // points served body verbs only. With the families retired, the
+    // container verbs ARE the write path; they ship from here.
+    ...(deps.containers !== undefined ? { containers: deps.containers } : {}),
+    ...(deps.consciousness !== undefined
+      ? { consciousness: deps.consciousness }
+      : {}),
+    witness: deps.witness,
+    pep: deps.pep,
+  };
+}
+
 /**
  * Serve one POST /mcp request statelessly: build a fresh server bound to the
  * SHARED backend client, attach a session-less transport, and hand the parsed
@@ -169,24 +209,19 @@ async function handleMcp(
   witness?: RequestLog,
   pep?: Pep,
 ): Promise<void> {
-  // Findability F4: the pg arm — eros-routed when CALLIOPE_EROS_URL is set;
-  // absent, the search verb answers honest darkness (F2's contract).
-  const search = makeErosProvider();
-  const server = createServer(client, {
-    ...(revisions !== undefined ? { revisions } : {}),
-    ...(chaos !== undefined ? { chaos } : {}),
-    ...(tags !== undefined ? { tags } : {}),
-    ...(focus !== undefined ? { focus } : {}),
-    ...(search !== undefined ? { search } : {}),
-    // F12 audit finding: the container surface (F4/F5) was wired in
-    // the BACKEND but never passed to the server — the fleet entry
-    // points served body verbs only. With the families retired, the
-    // container verbs ARE the write path; they ship from here.
-    ...(containers !== undefined ? { containers } : {}),
-    ...(consciousness !== undefined ? { consciousness } : {}),
-    witness,
-    pep,
-  });
+  const server = createServer(
+    client,
+    serverOptions({
+      revisions,
+      chaos,
+      tags,
+      focus,
+      containers,
+      consciousness,
+      witness,
+      pep,
+    }),
+  );
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session id, no server-initiated streams to keep alive.
     sessionIdGenerator: undefined,
@@ -198,6 +233,11 @@ async function handleMcp(
   await server.connect(transport);
   const body = await readBody(req);
   await transport.handleRequest(req, res, body);
+}
+
+/** The paths REST owns: the spec and the `/v1/` verbs. */
+export function isRestPath(path: string | undefined): boolean {
+  return path === "/openapi.json" || (path?.startsWith("/v1/") ?? false);
 }
 
 /** Build the bare Node HTTP server (exported for tests). */
@@ -220,6 +260,9 @@ export function createCalliopeHttpServer(
   // The endpoint PEP, armed once at boot (the servers are per-request, the
   // ACL is not). Absent = no PEP; `main()` always passes one.
   pep?: Pep,
+  // REST's route table (`/openapi.json`, `/v1/`): empty until `mountRestFace`
+  // registers on it after the door is armed. Absent = no REST routes at all.
+  restMux?: RouteMux,
 ): ReturnType<typeof createHttpServer> {
   // THE IDENTITY CORE LOADS WHEN THE SERVER IS BUILT, not at the first mTLS
   // peer. Lazily, a core that cannot load (stellar-core-ts 0.17.0 read its
@@ -248,10 +291,15 @@ export function createCalliopeHttpServer(
     tagStore ??= backend.tags;
     containerFacet ??= backend.containers;
   }
+  const restRoutes = restMux?.listener();
   const serve: RequestListener = (req, res) => {
     const url = req.url ?? "";
     const path = url.split("?", 1)[0];
 
+    if (restMux !== undefined && isRestPath(path)) {
+      restRoutes?.(req, res);
+      return;
+    }
     if (path !== MCP_PATH) {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "not found", path }));
@@ -358,6 +406,7 @@ async function main(): Promise<void> {
   // calliope._ops.calls when KAFKA_BOOTSTRAP names a broker.
   const witness = makeWitness();
   const peers = new LoopbackPeers();
+  const restMux = new RouteMux();
 
   const httpServer = createCalliopeHttpServer(
     kind,
@@ -372,6 +421,7 @@ async function main(): Promise<void> {
     witness,
     peers,
     pep,
+    restMux,
   );
 
   await new Promise<void>((resolve) => {
@@ -389,11 +439,36 @@ async function main(): Promise<void> {
     path: MCP_PATH,
   });
 
+  // REST goes up AFTER the MCP door is armed (the witness and the PEP are
+  // wired into every server built above), behind STELLAR_REST=1. A refused
+  // mount throws: the star does not serve half a door. The server REST dials is
+  // its own, built the way an MCP request's is.
+  const rest: RestMount | undefined = await mountRestFace({
+    build: () =>
+      createServer(
+        backend.client,
+        serverOptions({
+          revisions: backend.revisions,
+          chaos: backend.chaos,
+          tags: backend.tags,
+          focus: focusRegister,
+          containers: backend.containers,
+          consciousness,
+          witness: witness.log,
+          pep,
+        }),
+      ),
+    witness,
+    peers,
+    mux: restMux,
+  });
+
   // Publish liveness to Pontus (the op-contract heartbeat) now that we serve.
   const heartbeat = startHeartbeat(heartbeatOptions());
 
   const shutdown = (): void => {
     void heartbeat.stop();
+    void rest?.close();
     void focusConsumer.stop();
     // Flush what the batch processor is holding; a SIGTERM'd pod otherwise
     // drops its last window of spans, which is exactly the window that

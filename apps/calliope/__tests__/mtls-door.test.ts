@@ -193,23 +193,15 @@ function dial(
   });
 }
 
-describe("the door's client-certificate semantics (verify if given)", () => {
+describe("the door's client-certificate semantics (require and verify)", () => {
   const themis = makeIdentity("URI:spiffe://notusmi.com/star/themis");
   const hades = makeIdentity("URI:spiffe://notusmi.com/star/hades");
   const bundle = themis.cert + hades.cert;
 
-  it("no certificate is served, unidentified, path unknown", async () => {
+  it("no certificate is refused and leaves no record (#166)", async () => {
     const r = await rig(bundle);
-    const { status } = await dial(r, undefined);
-    expect(status).toBe(200);
-    expect(r.got).toHaveLength(1);
-    expect(r.got[0]).toMatchObject({
-      verb: "list_tags",
-      caller_class: "unidentified",
-      path: "unknown",
-    });
-    expect(r.got[0]?.caller_identity).toBeUndefined();
-    expect(r.door.refused()).toBe(0);
+    await expect(dial(r, undefined)).rejects.toThrow();
+    expect(r.got).toHaveLength(0);
   });
 
   it("a verified star is the caller, path direct", async () => {
@@ -235,8 +227,8 @@ describe("the door's client-certificate semantics (verify if given)", () => {
   it("a certificate from a foreign CA is refused and leaves no record", async () => {
     const r = await rig(bundle);
     const stranger = makeIdentity("URI:spiffe://notusmi.com/star/hades");
+    // Refused at the TLS handshake now (rejectUnauthorized), before accept().
     await expect(dial(r, stranger)).rejects.toThrow();
-    expect(r.door.refused()).toBe(1);
     expect(r.got).toHaveLength(0);
   });
 
@@ -248,11 +240,11 @@ describe("the door's client-certificate semantics (verify if given)", () => {
     });
   });
 
-  it("a later anonymous call does not inherit an earlier caller's identity", async () => {
+  it("a later anonymous call is refused, never served as an earlier caller", async () => {
     const r = await rig(bundle);
     await dial(r, themis);
-    await dial(r, undefined);
-    expect(r.got.map((x) => x.caller_class)).toEqual(["star", "unidentified"]);
+    await expect(dial(r, undefined)).rejects.toThrow();
+    expect(r.got.map((x) => x.caller_class)).toEqual(["star"]);
   });
 });
 
@@ -374,13 +366,13 @@ describe("the loopback table", () => {
 });
 
 describe("the TLS options", () => {
-  it("ask for a client certificate and never insist on one", () => {
+  it("require a client certificate and reject one the bundle does not verify", () => {
     expect(tlsOptions({ certPem: "c", keyPem: "k", bundlePem: "b" })).toEqual({
       cert: "c",
       key: "k",
       ca: "b",
       requestCert: true,
-      rejectUnauthorized: false,
+      rejectUnauthorized: true,
     });
   });
 
@@ -474,6 +466,8 @@ describe("accept — one connection, scripted", () => {
   function accepted(
     o: {
       der?: Buffer;
+      /** Presents no certificate at all. */
+      anonymous?: boolean;
       authorized?: boolean;
       localPort?: number;
       readableEnded?: boolean;
@@ -486,7 +480,9 @@ describe("accept — one connection, scripted", () => {
     refused: () => number;
   } {
     const peers = new LoopbackPeers();
-    const sock = new FakeSock(o.der);
+    const sock = new FakeSock(
+      o.anonymous === true ? undefined : (o.der ?? der),
+    );
     sock.authorized = o.authorized ?? true;
     sock.readableEnded = o.readableEnded ?? false;
     const up = new FakeSock(undefined);
@@ -520,16 +516,19 @@ describe("accept — one connection, scripted", () => {
     expect(a.sock.listenerCount("data")).toBe(0);
   });
 
-  it("serves a verified certificate, and a caller with none, whatever authorized says", () => {
+  it("serves a verified certificate and refuses a caller with none, whatever authorized says", () => {
+    const served = accepted({ der, authorized: true });
+    expect(served.refused()).toBe(0);
+    expect(served.sock.destroyed).toBe(0);
+    expect(served.dialed).toHaveLength(1);
     for (const o of [
-      { der, authorized: true },
-      { authorized: false },
-      { authorized: true },
+      { anonymous: true, authorized: false },
+      { anonymous: true, authorized: true },
     ]) {
       const a = accepted(o);
-      expect(a.refused()).toBe(0);
-      expect(a.sock.destroyed).toBe(0);
-      expect(a.dialed).toHaveLength(1);
+      expect(a.refused()).toBe(1);
+      expect(a.sock.destroyed).toBe(1);
+      expect(a.dialed).toEqual([]);
     }
   });
 
@@ -586,10 +585,7 @@ describe("accept — one connection, scripted", () => {
     ).toBe("spiffe://notusmi.com/star/themis");
   });
 
-  it("registers nobody for an anonymous caller, or when the port is unknown", () => {
-    const anon = accepted({ localPort: 5555 });
-    anon.up.emit("connect");
-    expect(anon.peers.size).toBe(0);
+  it("registers nobody when the port is unknown", () => {
     const noPort = accepted({ der });
     noPort.up.emit("connect");
     expect(noPort.peers.size).toBe(0);
