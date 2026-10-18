@@ -14,6 +14,8 @@
 
 import { createHash } from "node:crypto";
 
+import { canonicalInstant, canonicalWallclock } from "./instant.js";
+
 /** Coerce an unknown wire field to string (typeof-narrowed, never [object]). */
 function asStr(v: unknown): string {
   if (typeof v === "string") return v;
@@ -53,6 +55,29 @@ export function contentHash(value: string, dtype = "", lang = ""): string {
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
+
+/**
+ * The value a typed literal is interned and hashed as. The scalar's identity
+ * is content-hash(canonical, dtype, ""), so an `instant` is hashed as its
+ * canonical epoch microseconds — never as the offset-bearing text it came
+ * in as — and a `wallclock` as its canonical naive form.
+ */
+function canonicalLiteral(value: string, dtype: string): string {
+  if (dtype === "") return value;
+  const canonical =
+    dtype === "instant"
+      ? canonicalInstant(value)
+      : dtype === "wallclock"
+        ? canonicalWallclock(value)
+        : null;
+  if (canonical === null) {
+    throw new ChaosClientError(
+      `local admit: ${JSON.stringify(value)} is not a valid ${dtype} literal`,
+      "bad_result",
+    );
+  }
+  return canonical;
+}
 
 /** One translated capture op (chaos's decodeOps dialect). */
 type CaptureOp = Record<string, unknown> & { op: string };
@@ -125,9 +150,14 @@ export function toCaptureOps(ops: ChaosOp[], scope: string): CaptureOp[] {
         } else if (toNode !== null && toNode !== undefined) {
           o = wireRef(toNode);
         } else {
-          const value = asStr(toLiteral);
-          out.push({ op: "intern", value });
-          o = contentHash(value);
+          const dtype = typeof op.dtype === "string" ? op.dtype : "";
+          const value = canonicalLiteral(asStr(toLiteral), dtype);
+          out.push(
+            dtype === ""
+              ? { op: "intern", value }
+              : { op: "intern", value, dtype },
+          );
+          o = contentHash(value, dtype);
         }
         const g =
           op.op === "removeEdge" &&

@@ -34,6 +34,7 @@ import {
   opCreate,
   opRemove,
 } from "../chaos-client.js";
+import { literalTarget } from "../instant.js";
 import {
   computeTagDelta,
   extractInlineTags,
@@ -463,7 +464,7 @@ export async function createNote(
   // ops in the same batch, as tree.ts slotBirthOps does), so the Note floor
   // (hasName) lands in the same transaction as the node (chaos#14929).
   const attrOps = [...(input.attrs ?? [])].map(([p, v]) =>
-    opAdd(title, p, { toLiteral: v }),
+    opAdd(title, p, literalTarget(p, v)),
   );
   const mint = await dial.admit(
     [opCreate(NOTE_KIND, title), ...edgeBatch(title, parent), ...attrOps],

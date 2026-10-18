@@ -26,6 +26,7 @@ import type {
 import { sha256 } from "./document-store.js";
 import type { ChaosDial, NodeEdge } from "./chaos-client.js";
 import type { TagStore } from "./tag-store.js";
+import { compareTimes } from "./instant.js";
 import { sinkNoteVersion, type SinkResult } from "./notes-sink.js";
 
 /** The write result, extended with the sink's outcome (structural superset). */
@@ -121,7 +122,7 @@ export class NotesDocumentStore implements DocumentStore {
       const row = await this.#rowOf(node);
       if (row !== null) rows.push(row);
     }
-    return rows.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return rows.sort((a, b) => compareTimes(b.created_at, a.created_at));
   }
 
   async list(query?: ListDocumentsQuery): Promise<DocumentRow[]> {
@@ -140,7 +141,7 @@ export class NotesDocumentStore implements DocumentStore {
       if (row !== null) rows.push(row);
       if (rows.length >= limit * 2) break; // bound the reconstruction work
     }
-    rows.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    rows.sort((a, b) => compareTimes(b.created_at, a.created_at));
     const capped = rows.slice(0, limit);
     return query?.omit_body === true
       ? capped.map((r) => ({ ...r, body_text: "" }))

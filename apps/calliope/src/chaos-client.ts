@@ -26,6 +26,12 @@
 import { createHash } from "node:crypto";
 
 import {
+  canonicalInstant,
+  canonicalWallclock,
+  renderEastern,
+} from "./instant.js";
+
+import {
   X509Source,
   authorizeStar,
   tlsFetchOptions,
@@ -94,6 +100,8 @@ export function opCreate(kind: string, label = ""): ChaosOp {
  *  (decimal string — bigint-safe; themis translates to {"$blob": id}). */
 export interface EdgeTarget {
   toLiteral?: string;
+  /** The literal's dtype (`instant` | `wallclock`) — themis normalises it. */
+  dtype?: string;
   toNode?: string;
   toBlob?: string;
 }
@@ -108,6 +116,9 @@ function edgeFields(target: EdgeTarget): Record<string, unknown> {
   // compatible spelling of "not a blob edge".
   if (target.toBlob !== undefined) {
     fields.to_blob = target.toBlob;
+  }
+  if (target.dtype !== undefined) {
+    fields.dtype = target.dtype;
   }
   return fields;
 }
@@ -1094,6 +1105,23 @@ export function notesScope(env: NodeJS.ProcessEnv = process.env): string {
 // ── the fixture dial (tests + the standalone fixture server) ─────────────────
 
 /** In-memory ChaosDial: deterministic tokens, name-keyed reuse, no network. */
+/** What chaos stores for a typed literal (the fixture's normaliser). */
+function storedLiteral(value: string, dtype: string): string {
+  const canonical =
+    dtype === "instant"
+      ? canonicalInstant(value)
+      : dtype === "wallclock"
+        ? canonicalWallclock(value)
+        : null;
+  if (canonical === null) {
+    throw new ChaosClientError(
+      `fixture: ${JSON.stringify(value)} is not a valid ${dtype} literal`,
+      "bad_result",
+    );
+  }
+  return canonical;
+}
+
 export class FixtureChaosDial implements ChaosDial {
   readonly admits: { ops: ChaosOp[]; scope: string }[] = [];
   readonly graphs = new Set<string>();
@@ -1117,6 +1145,10 @@ export class FixtureChaosDial implements ChaosDial {
   private readonly labels = new Map<string, string>();
   private readonly kinds = new Map<string, string>();
   private readonly nodeEdges = new Map<string, NodeEdge[]>();
+  /** The stored form of a typed scalar, as chaos holds it: the edge's
+   *  `value` is what a READ answers (an instant's Eastern rendering), while
+   *  the identity a retract must hit is dtype + canonical value. */
+  readonly #typed = new WeakMap<NodeEdge, { dtype: string; stored: string }>();
   private seq = 0;
   /** When set, every admit refuses with these violations. */
   refuseWith: unknown[] | null = null;
@@ -1223,6 +1255,13 @@ export class FixtureChaosDial implements ChaosDial {
           isNode,
           domain: hasBlob ? "blob" : isNode ? "node" : "scalar",
         };
+        const dtype = typeof op.dtype === "string" ? op.dtype : "";
+        if (!isNode && !hasBlob && dtype !== "") {
+          const stored = storedLiteral(asStr(op.to_literal), dtype);
+          this.#typed.set(edge, { dtype, stored });
+          edge.value =
+            dtype === "instant" ? renderEastern(BigInt(stored)) : stored;
+        }
         list.push(edge);
         this.nodeEdges.set(from, list);
         this.factLog.push({
@@ -1241,12 +1280,20 @@ export class FixtureChaosDial implements ChaosDial {
         const value = hasBlob
           ? asStr(toBlob)
           : resolveRef(op.to_node) || asStr(op.to_literal);
-        const removed = (this.nodeEdges.get(from) ?? []).find(
-          (e) => e.predicate === asStr(op.predicate) && e.value === value,
-        );
-        const list = (this.nodeEdges.get(from) ?? []).filter(
-          (e) => !(e.predicate === asStr(op.predicate) && e.value === value),
-        );
+        // A typed retract hits the typed fact of that canonical value; an
+        // untyped one hits only an untyped fact of that exact text.
+        const rdtype = typeof op.dtype === "string" ? op.dtype : "";
+        const rstored =
+          rdtype === "" || hasBlob ? "" : storedLiteral(value, rdtype);
+        const hits = (e: NodeEdge): boolean => {
+          if (e.predicate !== asStr(op.predicate)) return false;
+          const t = this.#typed.get(e);
+          return rdtype === ""
+            ? t === undefined && e.value === value
+            : t?.dtype === rdtype && t.stored === rstored;
+        };
+        const removed = (this.nodeEdges.get(from) ?? []).find(hits);
+        const list = (this.nodeEdges.get(from) ?? []).filter((e) => !hits(e));
         this.nodeEdges.set(from, list);
         if (removed !== undefined) {
           this.factLog.push({

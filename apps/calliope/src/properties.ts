@@ -39,6 +39,12 @@ import {
   opRemove,
   type ChaosOp,
 } from "./chaos-client.js";
+import {
+  literalTarget,
+  parseInstantMicros,
+  retractTargets,
+  TIME_PREDICATES,
+} from "./instant.js";
 import type { TagStore } from "./tag-store.js";
 import { isJunkTag, normalizeTag } from "./tags.js";
 import { HAS_TAG, NOTE_KIND, reconcileNoteTags } from "./mcp/tools.js";
@@ -131,8 +137,21 @@ const TOKEN_RE = NODE_TOKEN_RE;
 
 /** One edge's identity for set arithmetic: domain-tagged so a literal that
  *  happens to look like a token never equals a node edge. */
-function keyOf(isNode: boolean, value: string): string {
-  return JSON.stringify([isNode, value]);
+function keyOf(predicate: string, isNode: boolean, value: string): string {
+  // A time fact reads back as its Eastern rendering, so two spellings of one
+  // instant are one value: key them by the parsed instant.
+  const micros =
+    !isNode && TIME_PREDICATES.has(predicate)
+      ? parseInstantMicros(value)
+      : null;
+  return JSON.stringify(
+    micros === null ? [isNode, value] : [isNode, "instant", micros.toString()],
+  );
+}
+
+/** The retract targets for a held edge: a time fact in both forms. */
+function heldTargets(predicate: string, e: NodeEdge) {
+  return e.isNode ? [{ toNode: e.value }] : retractTargets(predicate, e.value);
 }
 
 function spell(predicate: string, value: string): string {
@@ -198,38 +217,32 @@ function edgeOps(
   for (const [predicate, values] of desired) {
     const standing = current.filter((e) => e.predicate === predicate);
     const have = new Map<string, NodeEdge>(
-      standing.map((e) => [keyOf(e.isNode, e.value), e]),
+      standing.map((e) => [keyOf(predicate, e.isNode, e.value), e]),
     );
     const want = new Map<string, PropertyValue>(
       values.map((v) => [
-        "node" in v ? keyOf(true, v.node) : keyOf(false, v.literal),
+        "node" in v
+          ? keyOf(predicate, true, v.node)
+          : keyOf(predicate, false, v.literal),
         v,
       ]),
     );
     if (retract) {
       for (const [k, v] of want) {
-        if (!have.has(k)) continue;
-        const value = "node" in v ? v.node : v.literal;
-        ops.push(
-          opRemove(
-            nodeId,
-            predicate,
-            "node" in v ? { toNode: value } : { toLiteral: value },
-          ),
-        );
-        removed.push(spell(predicate, value));
+        const held = have.get(k);
+        if (held === undefined) continue;
+        for (const target of heldTargets(predicate, held)) {
+          ops.push(opRemove(nodeId, predicate, target));
+        }
+        removed.push(spell(predicate, "node" in v ? v.node : v.literal));
       }
       continue;
     }
     for (const [k, e] of have) {
       if (want.has(k)) continue;
-      ops.push(
-        opRemove(
-          nodeId,
-          predicate,
-          e.isNode ? { toNode: e.value } : { toLiteral: e.value },
-        ),
-      );
+      for (const target of heldTargets(predicate, e)) {
+        ops.push(opRemove(nodeId, predicate, target));
+      }
       removed.push(spell(predicate, e.value));
     }
     for (const [k, v] of want) {
@@ -239,7 +252,7 @@ function edgeOps(
         opAdd(
           nodeId,
           predicate,
-          "node" in v ? { toNode: value } : { toLiteral: value },
+          "node" in v ? { toNode: value } : literalTarget(predicate, value),
         ),
       );
       added.push(spell(predicate, value));
