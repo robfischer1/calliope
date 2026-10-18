@@ -358,3 +358,24 @@ describe("pointer-live-clear (030 / Look At This F7)", () => {
     expect(reg.current()?.pointer.section).toBe("s1");
   });
 });
+
+describe("the pointer's capture moment is an instant or the event is skipped", () => {
+  it("drops a selection or pin whose ts is not an RFC 3339 date-time", () => {
+    const reg = new FocusRegister();
+    const now = () => new Date("2026-08-13T12:00:00.000Z");
+    for (const ts of ["", "yesterday", "1760000000", "2026-08-13T00:00:00"]) {
+      handleTelemetryMessage(
+        reg,
+        msg({ type: "selection-change", pointer: pointer({ ts }) }),
+        now,
+      );
+      handleTelemetryMessage(
+        reg,
+        msg({ type: "pointer-pin", pinId: "p", pointer: pointer({ ts }) }),
+        now,
+      );
+    }
+    expect(reg.current()).toBeNull();
+    expect(reg.pins()).toEqual([]);
+  });
+});

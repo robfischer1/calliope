@@ -8,6 +8,7 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { FixtureBlobGc, FixtureBlobStore } from "../src/blob-store.js";
@@ -16,6 +17,7 @@ import { FixtureBodyClient } from "../src/fixture-client.js";
 import { FocusRegister } from "../src/focus-register.js";
 import { FixtureRevisionStore } from "../src/revision-store.js";
 import { createServer } from "../src/mcp/server.js";
+import { compileOutputSchema } from "../src/mcp/output-schemas.js";
 import { FixtureTagStore } from "../src/tag-store.js";
 
 /** The 20 verbs the gateway served without a schema, as calliope names them. */
@@ -71,6 +73,23 @@ async function rig(): Promise<Client> {
     summary_model: null,
     summary_generated_at: null,
     git_blob_sha: "bd9587b0",
+    parent_blob_sha: null,
+    captured_at: "2026-05-27T10:39:48.080Z",
+  });
+  // The archive's `summary_generated_at` is the text cast of a timestamptz.
+  await revisions.importRevision({
+    id: 2,
+    schema_type: "FileRevision",
+    repo: "vault",
+    commit_sha: "d".repeat(40),
+    file_path: "b.md",
+    prior_file_path: null,
+    change_type: "modify",
+    authorship: "ai",
+    summary: "s",
+    summary_model: "m",
+    summary_generated_at: "2026-05-27 06:39:48.5-04",
+    git_blob_sha: "bd9587b1",
     parent_blob_sha: null,
     captured_at: "2026-05-27T10:39:48.080Z",
   });
@@ -206,6 +225,14 @@ describe("F17 batch 2a — calliope's output schemas", () => {
     expect([...seen].sort()).toEqual([...VERBS].sort());
   });
 
+  it("emits the revision stamps as date-times the client accepts", async () => {
+    const mcp = await rig();
+    const answer = await call(mcp, "file_revisions", { id: 2 });
+    const [row] = answer.revisions as Record<string, unknown>[];
+    expect(row?.summary_generated_at).toBe("2026-05-27T06:39:48.5-04:00");
+    expect(row?.captured_at).toBe("2026-05-27T10:39:48.080Z");
+  });
+
   it("answers every refusal as an isError {code, detail}, nothing else", async () => {
     const mcp = await rig();
     const refusals: [string, Record<string, unknown>, string][] = [
@@ -271,5 +298,91 @@ describe("F17 batch 2a — calliope's output schemas", () => {
     expect(desc("copy_reference")).toContain(
       "Unknown node → a not_found refusal.",
     );
+  });
+});
+
+describe("date-time fields compile to what the authority says", () => {
+  const doc = {
+    type: "object",
+    properties: {
+      at: { type: "string", format: "date-time" },
+      maybe: { type: ["string", "null"], format: "date-time" },
+      or_empty: {
+        type: "string",
+        anyOf: [{ format: "date-time" }, { maxLength: 0 }],
+      },
+      nested: {
+        anyOf: [
+          { type: "null" },
+          {
+            type: "object",
+            properties: {
+              ts: { type: "string", format: "date-time", description: "d" },
+            },
+            required: ["ts"],
+          },
+        ],
+      },
+    },
+    required: ["at", "maybe", "or_empty", "nested"],
+  };
+  const schema = compileOutputSchema(doc);
+
+  it("accepts Z, +00:00 and Eastern offsets, and the empty string where the form allows it", () => {
+    for (const at of [
+      "2026-10-17T19:42:41-04:00",
+      "2026-01-02T03:04:05.250000-05:00",
+      "2026-10-17T12:00:00+00:00",
+      "2026-10-17T12:00:00Z",
+    ]) {
+      const ok = schema.safeParse({
+        at,
+        maybe: at,
+        or_empty: at,
+        nested: { ts: at },
+      });
+      expect(ok.success, at).toBe(true);
+    }
+    expect(
+      schema.safeParse({
+        at: "2026-10-17T19:42:41-04:00",
+        maybe: null,
+        or_empty: "",
+        nested: null,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("advertises format date-time with no Z-only pattern, and keeps the anyOf form", () => {
+    const rendered = z.toJSONSchema(schema, { io: "output" });
+    const text = JSON.stringify(rendered);
+    expect(text).not.toContain("pattern");
+    const props = rendered.properties as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(props.at).toMatchObject({ type: "string", format: "date-time" });
+    expect(props.maybe).toMatchObject({ format: "date-time" });
+    expect(props.or_empty).toEqual({
+      type: "string",
+      anyOf: [{ format: "date-time" }, { maxLength: 0 }],
+    });
+    expect(JSON.stringify(props.nested)).toContain(
+      '"ts":{"type":"string","format":"date-time","description":"d"}',
+    );
+  });
+});
+
+describe("the advertised schemas keep the authority's date-time fields", () => {
+  it("lists format date-time on look and file_revisions with no Z-only pattern", async () => {
+    const mcp = await rig();
+    const { tools } = await mcp.listTools();
+    for (const verb of ["look", "file_revisions"]) {
+      const text = JSON.stringify(
+        tools.find((t) => t.name === verb)?.outputSchema,
+      );
+      expect(text, verb).toContain('"format":"date-time"');
+      expect(text, verb).not.toContain("pattern");
+    }
   });
 });

@@ -59,11 +59,74 @@ export type SchemaVerb = keyof typeof DOCUMENTS;
 
 const compiled = new Map<SchemaVerb, z.ZodType>();
 
+/**
+ * `format: "date-time"` is an annotation the CLIENT enforces (Ajv with
+ * ajv-formats: an RFC 3339 instant with any `Z` or `±HH:MM` offset). zod's
+ * converter reads it as `z.iso.datetime()`, which accepts only `Z`, and
+ * renders a Z-only `pattern` into the advertised schema, so a New York stamp
+ * (`-04:00`) would fail on the server and be refused by every client. The
+ * walk below lifts the two date-time shapes out of the document before zod
+ * sees them and puts them back, verbatim, as annotations on the compiled
+ * node: zod then accepts the string and advertises exactly what the authority
+ * says.
+ *
+ *   {"format": "date-time"}                                  (beside its type)
+ *   "anyOf": [{"format": "date-time"}, {"maxLength": 0}]     (an instant, or "")
+ */
+const KEEP = "x-advertised";
+const INSTANT_OR_EMPTY = JSON.stringify([
+  { format: "date-time" },
+  { maxLength: 0 },
+]);
+
+function liftDateTime(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(liftDateTime);
+  if (node === null || typeof node !== "object") return node;
+  const src = node as Record<string, unknown>;
+  const instantOrEmpty = JSON.stringify(src.anyOf) === INSTANT_OR_EMPTY;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(src)) {
+    if (instantOrEmpty && key === "anyOf") continue;
+    // A literal is data, not a schema: never walk into one.
+    out[key] =
+      key === "enum" || key === "const" || key === "default"
+        ? value
+        : liftDateTime(value);
+  }
+  if (instantOrEmpty) {
+    out[KEEP] = { anyOf: src.anyOf };
+  } else if (out.format === "date-time") {
+    delete out.format;
+    out[KEEP] = { format: "date-time" };
+  }
+  return out;
+}
+
+/** The registry zod writes a node's annotations to: the kept keys go back under their own names. */
+const registry = {
+  add(schema: z.core.$ZodType, meta: Record<string, unknown>) {
+    const { [KEEP]: kept, ...rest } = meta;
+    z.globalRegistry.add(schema, {
+      ...rest,
+      ...(kept as Record<string, unknown> | undefined),
+    });
+    return this;
+  },
+} as unknown as typeof z.globalRegistry;
+
+/** The zod form of one output-schema document. */
+export function compileOutputSchema(document: unknown): z.ZodType {
+  return z.fromJSONSchema(
+    liftDateTime(document) as z.core.JSONSchema.JSONSchema,
+    { registry },
+  );
+}
+
 /** The zod form of a verb's output schema, compiled once. */
 export function outputSchemaOf(verb: SchemaVerb): z.ZodType {
   let schema = compiled.get(verb);
   if (schema === undefined) {
-    schema = z.fromJSONSchema(DOCUMENTS[verb] as z.core.JSONSchema.JSONSchema);
+    schema = compileOutputSchema(DOCUMENTS[verb]);
     compiled.set(verb, schema);
   }
   return schema;

@@ -37,7 +37,8 @@
                   "type": "string"
                 },
                 "ts": {
-                  "type": "string"
+                  "type": "string",
+                  "format": "date-time"
                 }
               },
               "required": [
@@ -51,7 +52,8 @@
               ]
             },
             "received_at": {
-              "type": "string"
+              "type": "string",
+              "format": "date-time"
             },
             "drift": {
               "enum": [
@@ -101,7 +103,8 @@
                 "type": "string"
               },
               "ts": {
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               }
             },
             "required": [
@@ -115,7 +118,8 @@
             ]
           },
           "received_at": {
-            "type": "string"
+            "type": "string",
+            "format": "date-time"
           },
           "drift": {
             "enum": [
