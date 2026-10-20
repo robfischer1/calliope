@@ -174,6 +174,8 @@ describe("buildQuery", () => {
       heldLineage: [],
       bodies: [],
       cues: [],
+      childSets: [],
+      retire: [],
     });
   });
 

@@ -180,6 +180,8 @@ export function buildQuery(o: Observation): FactsQuery {
     heldLineage: [],
     bodies: [],
     cues: [],
+    childSets: [],
+    retire: [],
   };
 }
 

@@ -1,10 +1,7 @@
 // Test-only helpers for the endpoint PEP suites: a typed Peer from a SPIFFE id
 // through the REAL certificate path (`peerFromCertificate`, the typing rule the
-// fleet's doors use), and small sidecar/records builders.
+// fleet's doors use), and a recording request log.
 
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { peerFromCertificate, RequestLog } from "@forge/stellar-core-ts";
 import type { Peer, RequestRecord } from "@forge/stellar-core-ts";
 import { withDenyDecision } from "@forge/stellar-core-ts/pep";
@@ -30,22 +27,6 @@ export function peerFor(spiffeId: string | undefined): Peer | undefined {
     );
   }
   return peers.get(spiffeId);
-}
-
-/** A scratch file under the OS temp dir. */
-export function tempFile(name: string, body: string): string {
-  const path = join(mkdtempSync(join(tmpdir(), "calliope-pep-")), name);
-  writeFileSync(path, body);
-  return path;
-}
-
-/** urania's athena edge, approved, and its themis edge at `themisStatus`. */
-export function sidecarWith(themisStatus: string): string {
-  return tempFile(
-    "orbit.toml",
-    '[[produces]]\nto = "athena"\ncontract = "urania-athena"\nstatus = "approved"\nverbs = ["neighbors"]\n' +
-      `[[produces]]\nto = "themis"\ncontract = "urania-themis"\nstatus = "${themisStatus}"\nverbs = ["neighbors"]\n`,
-  );
 }
 
 /** A request log that keeps every record, through the same sink wrapper the
