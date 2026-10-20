@@ -45,7 +45,6 @@ describe("witness-mode PEP decides every verb on the served route", () => {
       const pep = loadPep({
         star: "calliope",
         mode: "witness",
-        sidecarPath: "/nonexistent/orbit.toml",
         log: () => undefined,
       });
       const server = createCalliopeHttpServer(

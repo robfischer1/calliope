@@ -2,18 +2,14 @@ import {
   createServer as createHttpsServer,
   request as httpsRequest,
 } from "node:https";
-import { spawnSync } from "node:child_process";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { RequestLog, runWithPeer } from "@forge/stellar-core-ts";
 import type { RequestRecord, ToolCallHandler } from "@forge/stellar-core-ts";
 import { createCalliopeHttpServer } from "../src/mcp/http.js";
-import { parseAcl } from "@forge/stellar-core-ts/pep";
 import { pepHandler } from "@forge/stellar-core-ts/pep";
 import {
-  DEFAULT_SIDECAR_PATH,
-  PepBootError,
   enforcePreconditions,
   loadPep,
   pepConfigFromEnv,
@@ -21,21 +17,16 @@ import {
 import type { Pep } from "@forge/stellar-core-ts/pep";
 import { makeWitness } from "../src/mcp/witness.js";
 import type { Witness } from "../src/mcp/witness.js";
-import {
-  SESSION,
-  peerFor,
-  recordingLog,
-  sidecarWith,
-  tempFile,
-} from "./helpers/pep.js";
+import { SESSION, peerFor, recordingLog } from "./helpers/pep.js";
 import { makeIdentity } from "./helpers/tls-identity.js";
 import type { TlsIdentity } from "./helpers/tls-identity.js";
 
 /**
  * The PEP on the dispatcher, mirroring stellar-core-go `policy/middleware_test.go`
  * and `enforce_test.go`: every caller shape, what it was answered, the ONE record
- * it left, and the counter. `urania` is the Go suite's star; the sidecar is its
- * athena edge (approved) and themis edge (generated).
+ * it left, and the counter. `urania` is the Go suite's star. Since
+ * stellar-core-ts 0.82.0 there is no ACL: the network (mTLS + NetworkPolicy)
+ * admits star/job/ci callers, so the PEP allows them `network_enforced`.
  */
 
 const stamp = (principal: string): Record<string, unknown> => ({
@@ -94,20 +85,28 @@ function door(pep: Pep, withLog = true): Door {
 }
 
 const quiet = (): void => undefined;
-const arm = (mode: string, path: string): Pep =>
-  loadPep({ star: "urania", mode, sidecarPath: path, log: quiet });
+const arm = (mode: string): Pep =>
+  loadPep({ star: "urania", mode, log: quiet });
 
 describe("TestWitnessRecordsAndRefusesNothing", () => {
   it("every caller shape is decided, recorded on the call's one record, counted, and answered by the verb", async () => {
-    const d = door(arm("witness", sidecarWith("generated")));
+    const d = door(arm("witness"));
     const cases = [
-      [star("athena"), "neighbors", undefined, "allow", "edge_allows", "", ""],
+      [
+        star("athena"),
+        "neighbors",
+        undefined,
+        "allow",
+        "network_enforced",
+        "",
+        "",
+      ],
       [
         star("athena"),
         "declare_litigant",
         undefined,
-        "would_deny",
-        "verb_not_on_edge",
+        "allow",
+        "network_enforced",
         "",
         "",
       ],
@@ -115,8 +114,8 @@ describe("TestWitnessRecordsAndRefusesNothing", () => {
         star("chaos"),
         "neighbors",
         stamp(SESSION),
-        "would_deny",
-        "no_edge",
+        "allow",
+        "network_enforced",
         "",
         "",
       ],
@@ -129,6 +128,15 @@ describe("TestWitnessRecordsAndRefusesNothing", () => {
         "pdp_not_consulted",
         SESSION,
         "session",
+      ],
+      [
+        star("hades"),
+        "neighbors",
+        undefined,
+        "allow",
+        "network_enforced",
+        "",
+        "",
       ],
     ] as const;
     for (const [caller, verb, meta] of cases) {
@@ -146,42 +154,37 @@ describe("TestWitnessRecordsAndRefusesNothing", () => {
       );
     });
     expect(d.pep.counts()).toEqual({
-      "witness/allow/edge_allows": 1,
+      "witness/allow/network_enforced": 4,
       "witness/would_consult/pdp_not_consulted": 1,
-      "witness/would_deny/no_edge": 1,
       "witness/would_deny/unidentified": 1,
-      "witness/would_deny/verb_not_on_edge": 1,
     });
   });
 
   it("outside a witnessed call the PEP still counts, and still refuses nothing", async () => {
-    const d = door(arm("witness", sidecarWith("generated")), false);
-    const res = await d.call(star("chaos"), "neighbors");
+    const d = door(arm("witness"), false);
+    const res = await d.call("", "neighbors");
     expect(res.isError).toBeUndefined();
     expect(d.got).toHaveLength(0); // no sink, no record
-    expect(d.pep.counts()).toEqual({ "witness/would_deny/no_edge": 1 });
+    expect(d.pep.counts()).toEqual({ "witness/would_deny/unidentified": 1 });
   });
 });
 
 describe("TestEnforceRefusesBeforeTheHandler", () => {
   // Go's matrix minus the policy-plane rows (no PDP wired here: the gateway
   // and session paths are refused pdp_not_consulted, which Go's TestEnforceFailsClosed
-  // "no PDP" row pins; the wired-PDP rows are pep-pdp.test.ts).
+  // "no PDP" row pins; the wired-PDP rows are pep-pdp.test.ts). Star callers
+  // are allowed network_enforced whatever the verb: there is no per-edge ACL.
   const other =
     "spiffe://notusmi.com/session/00000000-0000-0000-0000-000000000000";
   const cases = [
     { caller: star("athena"), verb: "neighbors", reason: "" },
-    {
-      caller: star("athena"),
-      verb: "declare_litigant",
-      reason: "verb_not_on_edge",
-    },
-    { caller: star("themis"), verb: "neighbors", reason: "edge_not_approved" },
+    { caller: star("athena"), verb: "declare_litigant", reason: "" },
+    { caller: star("themis"), verb: "neighbors", reason: "" },
     {
       caller: star("chaos"),
       verb: "neighbors",
       meta: stamp(SESSION),
-      reason: "no_edge",
+      reason: "",
     },
     { caller: "", verb: "neighbors", reason: "unidentified" },
     {
@@ -204,7 +207,8 @@ describe("TestEnforceRefusesBeforeTheHandler", () => {
       meta: AGENT,
       reason: "pdp_not_consulted",
     },
-    { caller: star("hades"), verb: "neighbors", reason: "no_edge" },
+    // An unstamped hades call is served: the network admitted the gateway.
+    { caller: star("hades"), verb: "neighbors", reason: "" },
     {
       caller: SESSION,
       verb: "neighbors",
@@ -214,7 +218,7 @@ describe("TestEnforceRefusesBeforeTheHandler", () => {
   ] as const;
 
   it("refuses what is not allowed, never reaching the verb, with one record each", async () => {
-    const d = door(arm("enforce", sidecarWith("generated")));
+    const d = door(arm("enforce"));
     for (const c of cases) {
       const res = await d.call(
         c.caller,
@@ -231,7 +235,7 @@ describe("TestEnforceRefusesBeforeTheHandler", () => {
         });
       }
     }
-    expect(d.ran()).toBe(1); // only the allowed call
+    expect(d.ran()).toBe(5); // only the allowed calls
     expect(d.got).toHaveLength(cases.length);
     cases.forEach((c, i) => {
       const r = d.got[i];
@@ -244,40 +248,47 @@ describe("TestEnforceRefusesBeforeTheHandler", () => {
       expect(r?.principal).toBe("principal" in c ? c.principal : undefined);
     });
     expect(d.pep.counts()).toEqual({
-      "enforce/allow/edge_allows": 1,
-      "enforce/deny/edge_not_approved": 1,
-      "enforce/deny/no_edge": 2,
+      "enforce/allow/network_enforced": 5,
       "enforce/deny/pdp_not_consulted": 4,
       "enforce/deny/unidentified": 1,
-      "enforce/deny/verb_not_on_edge": 1,
     });
   });
 
   it("outside a witnessed call an enforcing PEP still refuses and still counts", async () => {
-    const d = door(arm("enforce", sidecarWith("approved")), false);
-    const res = await d.call(star("chaos"), "neighbors");
+    const d = door(arm("enforce"), false);
+    const res = await d.call("", "neighbors");
     expect(res.isError).toBe(true);
     expect(d.got).toHaveLength(0);
-    expect(d.pep.counts()).toEqual({ "enforce/deny/no_edge": 1 });
+    expect(d.pep.counts()).toEqual({ "enforce/deny/unidentified": 1 });
   });
 
   it("a refusal is the Go body: a tool error naming the caller and where it is mended", async () => {
-    const d = door(arm("enforce", sidecarWith("approved")));
-    const res = await d.call(star("chaos"), "neighbors");
-    expect(res.structuredContent).toEqual({
+    const d = door(arm("enforce"));
+    const anon = await d.call("", "neighbors");
+    expect(anon.structuredContent).toEqual({
       refused: "pep",
       star: "urania",
       verb: "neighbors",
-      caller: star("chaos"),
-      reason: "no_edge",
-      fix: "foundry-dies/orbits/urania-chaos.toml",
+      caller: "unidentified",
+      reason: "unidentified",
+      fix: "dial the star's mTLS port (plaintext port + 1) presenting a SPIFFE SVID",
+    });
+    const session = await d.call(SESSION, "neighbors");
+    expect(session.structuredContent).toEqual({
+      refused: "pep",
+      star: "urania",
+      verb: "neighbors",
+      caller: SESSION,
+      principal: SESSION,
+      reason: "pdp_not_consulted",
+      fix: "foundry-dies/policy/authz_grants/data.json",
     });
   });
 });
 
 describe("TestEnforceFailsClosed (the no-PDP row)", () => {
   it("no policy plane refuses the gateway path pdp_not_consulted, with the star up", async () => {
-    const d = door(arm("enforce", sidecarWith("approved")));
+    const d = door(arm("enforce"));
     const res = await d.call(star("hades"), "neighbors", stamp(SESSION));
     expect(res.structuredContent).toMatchObject({
       reason: "pdp_not_consulted",
@@ -291,75 +302,48 @@ describe("TestEnforceFailsClosed (the no-PDP row)", () => {
 
 describe("enforce preconditions at boot (enforcePreconditions)", () => {
   const pdp = { decide: () => Promise.reject(new Error("unused")) } as never;
-  const boot = (mode: string, path: string, withPdp: boolean): string => {
+  const boot = (mode: string, withPdp: boolean): string => {
     const lines: string[] = [];
     loadPep({
       star: "urania",
       mode,
-      sidecarPath: path,
       pdp: withPdp ? pdp : undefined,
       log: (l) => lines.push(l),
     });
     return lines.join("\n");
   };
 
-  it("approved contracts and a PDP: no gap, no warning", () => {
-    expect(boot("enforce", sidecarWith("approved"), true)).not.toContain(
-      "unmet preconditions",
-    );
-    expect(enforcePreconditions(parseAcl("urania", ""), true)).toHaveLength(1);
+  it("a PDP: no gap, no warning", () => {
+    expect(boot("enforce", true)).not.toContain("unmet preconditions");
+    expect(enforcePreconditions(true)).toHaveLength(0);
   });
 
   it("no PDP names pdp_not_consulted", () => {
-    const out = boot("enforce", sidecarWith("approved"), false);
+    const out = boot("enforce", false);
     expect(out).toContain("ENFORCING on inbound calls");
     expect(out).toContain("unmet preconditions");
     expect(out).toContain("no PDP");
     expect(out).toContain("pdp_not_consulted");
   });
 
-  it("a generated contract names edge_not_approved", () => {
-    const out = boot("enforce", sidecarWith("generated"), true);
-    expect(out).toContain("edge_not_approved");
-    expect(out).not.toContain("no PDP");
+  it("the one gap is the missing PDP", () => {
+    expect(enforcePreconditions(false)).toHaveLength(1);
   });
 
-  it("an empty rule set names no_edge", () => {
-    const out = boot("enforce", tempFile("orbit.toml", ""), true);
-    expect(out).toContain("EMPTY rule set");
-    expect(out).toContain("no_edge");
-  });
-
-  it("joins every gap", () => {
-    const gaps = enforcePreconditions(parseAcl("urania", ""), false);
-    expect(gaps).toHaveLength(2);
-  });
-
-  it("an absent sidecar in enforce still refuses the start", () => {
-    expect(() => boot("enforce", "/nonexistent/orbit.toml", true)).toThrow(
-      PepBootError,
-    );
+  it("enforce reads nothing from disk: it boots with no sidecar anywhere", () => {
+    expect(() => boot("enforce", true)).not.toThrow();
   });
 
   it("witness never warns", () => {
-    expect(boot("witness", sidecarWith("generated"), false)).not.toContain(
-      "unmet preconditions",
-    );
+    expect(boot("witness", false)).not.toContain("unmet preconditions");
   });
 });
 
 describe("the mode machine at boot (TestNewModes, TestAnUnknownModeRunsWitnessLoudly, TestConfigFromEnv)", () => {
-  const sidecar = sidecarWith("approved");
-
-  it("witness is the default and arms with the sidecar's consumer count", () => {
+  it("witness is the default", () => {
     const lines: string[] = [];
-    const pep = loadPep({
-      star: "urania",
-      sidecarPath: sidecar,
-      log: (l) => lines.push(l),
-    });
+    const pep = loadPep({ star: "urania", log: (l) => lines.push(l) });
     expect(pep.mode).toBe("witness");
-    expect(pep.consumers).toBe(2);
     expect(lines.join("\n")).toContain("witnessing inbound calls");
     expect(lines.join("\n")).not.toContain("ENFORCING");
   });
@@ -369,7 +353,6 @@ describe("the mode machine at boot (TestNewModes, TestAnUnknownModeRunsWitnessLo
     const pep = loadPep({
       star: "urania",
       mode: "enforce",
-      sidecarPath: sidecar,
       log: (l) => lines.push(l),
     });
     expect(pep.mode).toBe("enforce");
@@ -383,7 +366,6 @@ describe("the mode machine at boot (TestNewModes, TestAnUnknownModeRunsWitnessLo
       const pep = loadPep({
         star: "urania",
         mode: raw,
-        sidecarPath: sidecar,
         log: (l) => lines.push(l),
       });
       expect(pep.mode).toBe("witness");
@@ -397,125 +379,35 @@ describe("the mode machine at boot (TestNewModes, TestAnUnknownModeRunsWitnessLo
   it("a real mode is not called mis-set", () => {
     for (const mode of ["", "witness", "enforce"]) {
       const lines: string[] = [];
-      loadPep({
-        star: "urania",
-        mode,
-        sidecarPath: sidecar,
-        log: (l) => lines.push(l),
-      });
+      loadPep({ star: "urania", mode, log: (l) => lines.push(l) });
       expect(lines.join("\n")).not.toContain("is not a PEP mode");
     }
   });
 
-  it("reads mode and sidecar from STELLAR_PEP_MODE and STELLAR_ORBIT_SIDECAR", () => {
-    expect(
-      pepConfigFromEnv("calliope", {
-        STELLAR_PEP_MODE: "enforce",
-        STELLAR_ORBIT_SIDECAR: "/x/orbit.toml",
-      }),
-    ).toEqual({
-      star: "calliope",
-      mode: "enforce",
-      sidecarPath: "/x/orbit.toml",
+  it("reads the mode from STELLAR_PEP_MODE and nothing else from the environment", () => {
+    const cfg = pepConfigFromEnv("calliope", {
+      STELLAR_PEP_MODE: "enforce",
+      STELLAR_ORBIT_SIDECAR: "/x/orbit.toml",
     });
-    expect(pepConfigFromEnv("calliope", {})).toEqual({
+    expect(cfg).toMatchObject({ star: "calliope", mode: "enforce" });
+    expect(cfg).not.toHaveProperty("sidecarPath");
+    expect(pepConfigFromEnv("calliope", {})).toMatchObject({
       star: "calliope",
       mode: undefined,
-      sidecarPath: undefined,
     });
   });
 });
 
-describe("BOOT on a missing or broken sidecar", () => {
-  // Go: TestWitnessBootsWithoutASidecar (boots, records would_deny{no_acl}) —
-  // matched here; TestWitnessRefusesABrokenSidecar (refuses) — matched;
-  // TestEnforceSidecarFaults and TestEnforceRefusesEveryCallOnABrokenSidecar
-  // (boot, refuse every call) — here an enforcing star refuses the boot.
-  const missing = (): string => `${tempFile("x", "")}.absent`;
-  const broken = (): string => tempFile("orbit.toml", "[[produces]\n");
-
-  it("witness: a missing sidecar boots, star callers would_deny{no_acl}", async () => {
-    const lines: string[] = [];
-    const pep = loadPep({
-      star: "calliope",
-      mode: "witness",
-      sidecarPath: missing(),
-      log: (l) => lines.push(l),
-    });
-    expect(pep.mode).toBe("witness");
-    expect(pep.consumers).toBe(0);
-    expect(lines.join("\n")).toMatch(
-      /no orbit sidecar .*STELLAR_ORBIT_SIDECAR/,
-    );
+describe("BOOT reads nothing from disk", () => {
+  it("a star caller is allowed network_enforced and the PEP refuses nothing", async () => {
+    const pep = loadPep({ star: "calliope", mode: "witness", log: quiet });
     const d = await pep.adjudicate({
       peer: peerFor(star("athena")),
       verb: "read_container",
     });
-    expect([d.verdict, d.reason]).toEqual(["deny", "no_acl"]);
+    expect([d.verdict, d.reason]).toEqual(["allow", "network_enforced"]);
     expect(pep.refuses(d)).toBe(false);
   });
-
-  it.each(["enforce"])(
-    "%s: a missing sidecar refuses to start, naming the path and the env",
-    (mode) => {
-      const path = missing();
-      expect(() =>
-        loadPep({ star: "calliope", mode, sidecarPath: path, log: quiet }),
-      ).toThrow(PepBootError);
-      expect(() =>
-        loadPep({ star: "calliope", mode, sidecarPath: path, log: quiet }),
-      ).toThrow(
-        new RegExp(
-          `${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*STELLAR_ORBIT_SIDECAR.*missing or unparseable`,
-        ),
-      );
-    },
-  );
-
-  it.each(["witness", "enforce"])(
-    "%s: an unparseable sidecar refuses to start with the parser's reason",
-    (mode) => {
-      expect(() =>
-        loadPep({ star: "calliope", mode, sidecarPath: broken(), log: quiet }),
-      ).toThrow(/calliope: orbit sidecar does not parse: /);
-    },
-  );
-
-  it("an unset path reads the mount point", () => {
-    // The sandbox has no /etc/stellar/orbit.toml; the point is where it looked.
-    expect(() =>
-      loadPep({ star: "calliope", mode: "enforce", log: quiet }),
-    ).toThrow(new RegExp(DEFAULT_SIDECAR_PATH));
-  });
-});
-
-describe("the process refuses to start (main(), as the pod runs it)", () => {
-  const bun = spawnSync("bun", ["--version"]);
-  it.skipIf(bun.status !== 0)(
-    "exits non-zero before it binds when the sidecar is broken (witness) or missing (enforce)",
-    () => {
-      const entry = new URL("../src/mcp/http.ts", import.meta.url).pathname;
-      for (const [mode, sidecar] of [
-        ["enforce", `${tempFile("x", "")}.absent`],
-        ["witness", tempFile("orbit.toml", "[[produces]\n")],
-      ] as const) {
-        const run = spawnSync("bun", [entry], {
-          encoding: "utf8",
-          timeout: 30_000,
-          env: {
-            ...process.env,
-            STELLAR_PEP_MODE: mode,
-            STELLAR_ORBIT_SIDECAR: sidecar,
-            PORT: "0",
-          },
-        });
-        expect(run.status).toBe(1);
-        expect(run.stderr).toContain("pep: refusing to start");
-        expect(run.stderr).not.toContain("serving");
-      }
-    },
-    60_000,
-  );
 });
 
 describe("the served route, through a real TLS handshake and the real transport", () => {
@@ -631,15 +523,8 @@ describe("the served route, through a real TLS handshake and the real transport"
       ...(meta ? { _meta: meta } : {}),
     });
 
-  it("enforce: an edge-less star is refused on the wire and leaves one denied record; an unidentified caller too; tools/list is not decided", async () => {
-    const pep = arm(
-      "enforce",
-      tempFile(
-        "orbit.toml",
-        '[[produces]]\nto = "athena"\ncontract = "calliope-athena"\nstatus = "approved"\nverbs = ["list_tags"]\n',
-      ),
-    );
-    const { server, got } = served(pep);
+  it("enforce: a star is served on its network identity; an unidentified caller is refused on the wire; tools/list is not decided", async () => {
+    const { server, got } = served(arm("enforce"));
     open = server;
     const athena = makeIdentity(
       "URI:spiffe://notusmi.com/star/athena",
@@ -651,11 +536,11 @@ describe("the served route, through a real TLS handshake and the real transport"
     );
     const bundle = athena.cert + themis.cert;
 
-    const refused = await dial(server, themis, bundle, call("list_tags"));
-    expect(refused).toContain('\\"refused\\":\\"pep\\"');
-    expect(refused).toContain("no_edge");
+    const served1 = await dial(server, themis, bundle, call("list_tags"));
+    expect(served1).not.toContain("refused");
 
     const anon = await dial(server, undefined, bundle, call("list_tags"));
+    expect(anon).toContain('\\"refused\\":\\"pep\\"');
     expect(anon).toContain("unidentified");
 
     const allowed = await dial(server, athena, bundle, call("list_tags"));
@@ -670,9 +555,9 @@ describe("the served route, through a real TLS handshake and the real transport"
     expect(listed).toContain("list_tags");
 
     expect(got.map((r) => [r.outcome, r.reason, r.decision])).toEqual([
-      ["denied", "no_edge", "deny"],
+      ["ok", "network_enforced", "allow"],
       ["denied", "unidentified", "deny"],
-      ["ok", "edge_allows", "allow"],
+      ["ok", "network_enforced", "allow"],
     ]);
     expect(got[0]).toMatchObject({
       caller_class: "star",
@@ -681,29 +566,22 @@ describe("the served route, through a real TLS handshake and the real transport"
     });
   });
 
-  it("witness: the same edge-less caller is answered and recorded would_deny", async () => {
-    const pep = arm(
-      "witness",
-      tempFile(
-        "orbit.toml",
-        '[[produces]]\nto = "athena"\ncontract = "calliope-athena"\nstatus = "approved"\nverbs = ["list_tags"]\n',
-      ),
-    );
-    const { server, got } = served(pep);
+  it("witness: an unidentified caller is answered and recorded would_deny", async () => {
+    const { server, got } = served(arm("witness"));
     open = server;
     const themis = makeIdentity(
       "URI:spiffe://notusmi.com/star/themis",
       "themis",
     );
-    const text = await dial(server, themis, themis.cert, call("list_tags"));
+    const text = await dial(server, undefined, themis.cert, call("list_tags"));
     expect(text).not.toContain("refused");
     expect(got).toMatchObject([
-      { outcome: "ok", decision: "would_deny", reason: "no_edge" },
+      { outcome: "ok", decision: "would_deny", reason: "unidentified" },
     ]);
   });
 
   it("probes are never gated: /healthz and /ready on an enforcing star are not the PEP's to answer", async () => {
-    const pep = arm("enforce", tempFile("orbit.toml", ""));
+    const pep = arm("enforce");
     const { server } = served(pep);
     open = server;
     await new Promise<void>((resolve) =>
@@ -730,12 +608,12 @@ describe("the production witness records a refusal as decision deny", () => {
       close: () => Promise.resolve(),
     }));
     const call = w.log.observe("neighbors", { path: "direct" });
-    call.denied("no_edge");
-    call.decided("deny", "no_edge"); // ignored by the library; the sink supplies it
+    call.denied("unidentified");
+    call.decided("deny", "unidentified"); // ignored by the library; the sink supplies it
     call.finish();
     expect(seen[0]).toMatchObject({
       outcome: "denied",
-      reason: "no_edge",
+      reason: "unidentified",
       decision: "deny",
     });
     const ok = w.log.record("neighbors", { outcome: "ok" });
