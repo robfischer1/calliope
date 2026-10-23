@@ -13,6 +13,7 @@ import {
   enforcePreconditions,
   loadPep,
   pepConfigFromEnv,
+  verifierFromEnv,
 } from "@forge/stellar-core-ts/pep";
 import type { Pep } from "@forge/stellar-core-ts/pep";
 import { makeWitness } from "../src/mcp/witness.js";
@@ -85,8 +86,13 @@ function door(pep: Pep, withLog = true): Door {
 }
 
 const quiet = (): void => undefined;
+/** stellar-core-ts >= 0.87 refuses ENFORCE with no F9 verifier, so every PEP
+ *  here arms one as production does (STELLAR_KAIROS_JWKS_URL). The keyset is
+ *  fetched lazily, on the first stamp, so no server is needed. */
+const JWKS_URL = "http://127.0.0.1:9/jwks";
+const F9 = verifierFromEnv({ STELLAR_KAIROS_JWKS_URL: JWKS_URL });
 const arm = (mode: string): Pep =>
-  loadPep({ star: "urania", mode, log: quiet });
+  loadPep({ star: "urania", mode, verifier: F9, log: quiet });
 
 describe("TestWitnessRecordsAndRefusesNothing", () => {
   it("every caller shape is decided, recorded on the call's one record, counted, and answered by the verb", async () => {
@@ -308,6 +314,7 @@ describe("enforce preconditions at boot (enforcePreconditions)", () => {
       star: "urania",
       mode,
       pdp: withPdp ? pdp : undefined,
+      verifier: F9,
       log: (l) => lines.push(l),
     });
     return lines.join("\n");
@@ -353,6 +360,7 @@ describe("the mode machine at boot (TestNewModes, TestAnUnknownModeRunsWitnessLo
     const pep = loadPep({
       star: "urania",
       mode: "enforce",
+      verifier: F9,
       log: (l) => lines.push(l),
     });
     expect(pep.mode).toBe("enforce");
@@ -379,7 +387,12 @@ describe("the mode machine at boot (TestNewModes, TestAnUnknownModeRunsWitnessLo
   it("a real mode is not called mis-set", () => {
     for (const mode of ["", "witness", "enforce"]) {
       const lines: string[] = [];
-      loadPep({ star: "urania", mode, log: (l) => lines.push(l) });
+      loadPep({
+        star: "urania",
+        mode,
+        verifier: F9,
+        log: (l) => lines.push(l),
+      });
       expect(lines.join("\n")).not.toContain("is not a PEP mode");
     }
   });
@@ -395,6 +408,26 @@ describe("the mode machine at boot (TestNewModes, TestAnUnknownModeRunsWitnessLo
       star: "calliope",
       mode: undefined,
     });
+  });
+
+  it("the boot config arms the F9 verifier from STELLAR_KAIROS_JWKS_URL, in either mode", () => {
+    const boot = (env: NodeJS.ProcessEnv): Pep =>
+      loadPep({ ...pepConfigFromEnv("calliope", env), log: quiet });
+    expect(
+      boot({ STELLAR_PEP_MODE: "enforce", STELLAR_KAIROS_JWKS_URL: JWKS_URL })
+        .verifies,
+    ).toBe(true);
+    expect(boot({ STELLAR_KAIROS_JWKS_URL: JWKS_URL }).verifies).toBe(true);
+    expect(boot({}).verifies).toBe(false);
+  });
+
+  it("refuses to boot enforce with no F9 verifier", () => {
+    expect(() =>
+      loadPep({
+        ...pepConfigFromEnv("calliope", { STELLAR_PEP_MODE: "enforce" }),
+        log: quiet,
+      }),
+    ).toThrow(/no F9 verifier/);
   });
 });
 
