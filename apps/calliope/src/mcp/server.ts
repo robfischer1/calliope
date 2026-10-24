@@ -1459,8 +1459,13 @@ export function createServer(
               .describe(
                 `Closed set (${SLOT_FACT_PREDICATES.join(", ")}), checked ` +
                   "server-side: anything else refuses bad_args. Node-valued (authoredBy, writtenIn, " +
-                  "fromCheckpoint, quotes, links) take node OR literal; " +
-                  "writtenAt, authorKind, contentHash take a literal.",
+                  "fromCheckpoint, quotes, links, authored) take node OR " +
+                  "literal (quotes: a JSON-object string with session_uuid, " +
+                  "seq, ts, sha is checked); writtenAt (instant), " +
+                  "authorKind, signedAs, inSeat, legacyId (digits), " +
+                  "contentHash take a literal. quotes, links and authored " +
+                  "repeat; a read answers them sorted by value, not in " +
+                  "write order (put an ordinal in the literal to keep one).",
               ),
             node: z
               .string()
@@ -1490,7 +1495,7 @@ export function createServer(
       .optional()
       .describe(
         "Facts written on the slot in the SAME batch. On update only " +
-          "contentHash (replaced), quotes and links (added) are allowed.",
+          "contentHash (replaced), quotes, links and authored (added) are allowed.",
       );
     const containerOpField = z
       .discriminatedUnion("op", [
