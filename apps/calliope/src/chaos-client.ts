@@ -1070,13 +1070,17 @@ export interface ChaosFacet {
  *  intent node, scoped to graph:issues so the structure stays invisible
  *  from every other tenant's graph while the bytes dedupe in the one
  *  blob store. Mnemosyne stays graph-native on its own and joins only if
- *  it adopts the shared store. */
+ *  it adopts the shared store.
+ *  `threads` is the seventh (Glaucus Threads become containers): each
+ *  signed thread segment is a Block slot under the Thread's node, its
+ *  metadata facts on the slot, scoped to graph:threads. */
 export const TENANTS = [
   "notes",
   "documents",
   "comments",
   "governance",
   "issues",
+  "threads",
 ] as const;
 export type Tenant = (typeof TENANTS)[number];
 
@@ -1093,6 +1097,7 @@ export function tenantScope(
     comments: env.CALLIOPE_COMMENTS_SCOPE,
     governance: env.CALLIOPE_GOVERNANCE_SCOPE,
     issues: env.CALLIOPE_ISSUES_SCOPE,
+    threads: env.CALLIOPE_THREADS_SCOPE,
   };
   return overrides[tenant] ?? tenant;
 }

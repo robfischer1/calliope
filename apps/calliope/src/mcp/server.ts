@@ -66,6 +66,8 @@ import { NODE_TOKEN_RE, containerRef, nodeToken } from "./inputs.js";
 import { isStyx, resolveStyx } from "../styx.js";
 import { type ContainerFacet, writeContainer } from "../container-write.js";
 import { isPatchError, patchContainer } from "../container-patch.js";
+import { MoveBlocksError, moveBlocks } from "../container-move.js";
+import { SLOT_FACT_PREDICATES, SlotFactError } from "../slot-facts.js";
 import type { AuthorKind, NotePublisher } from "./consciousness-emit.js";
 import { projectNote } from "./note-projection.js";
 import {
@@ -1448,6 +1450,48 @@ export function createServer(
   if (options?.containers !== undefined) {
     const facet = options.containers;
     const slotField = nodeToken("The block slot's 64-hex token.");
+    const factsField = z
+      .array(
+        z
+          .strictObject({
+            predicate: z
+              .string()
+              .describe(
+                `Closed set (${SLOT_FACT_PREDICATES.join(", ")}), checked ` +
+                  "server-side: anything else refuses bad_args. Node-valued (authoredBy, writtenIn, " +
+                  "fromCheckpoint, quotes, links) take node OR literal; " +
+                  "writtenAt, authorKind, contentHash take a literal.",
+              ),
+            node: z
+              .string()
+              .regex(NODE_TOKEN_RE)
+              .optional()
+              .describe("An existing node's 64-hex token."),
+            literal: z
+              .string()
+              .min(1)
+              .optional()
+              .describe(
+                "A literal — the placeholder where the node does not exist " +
+                  "yet (a persona name, session uuid, URL, ...). contentHash: " +
+                  "optional sha256 hex of the text, checked server-side.",
+              ),
+            dtype: z
+              .string()
+              .optional()
+              .describe(
+                "writtenAt only: instant (default) or wallclock; checked " +
+                  "server-side.",
+              ),
+          })
+          .describe("One fact on the slot: node or literal, not both."),
+      )
+      .min(1)
+      .optional()
+      .describe(
+        "Facts written on the slot in the SAME batch. On update only " +
+          "contentHash (replaced), quotes and links (added) are allowed.",
+      );
     const containerOpField = z
       .discriminatedUnion("op", [
         z.strictObject({
@@ -1457,6 +1501,7 @@ export function createServer(
             .string()
             .min(1)
             .describe("Fractional order key (bytewise order; client-minted)."),
+          facts: factsField,
         }),
         z.strictObject({
           op: z.literal("update").describe("Rewrite a block's prose."),
@@ -1466,6 +1511,7 @@ export function createServer(
             .min(1)
             .describe("The blob the slot holds now (compare-before-write)."),
           text: z.string().describe("The block's new prose."),
+          facts: factsField,
         }),
         z.strictObject({
           op: z.literal("reorder").describe("Move a block."),
@@ -1588,6 +1634,94 @@ export function createServer(
             structuredContent: structured({ ...result, ...tagOutcome }),
           };
         } catch (err) {
+          if (err instanceof SlotFactError) {
+            return refuse("bad_args", err.message);
+          }
+          if (err instanceof ChaosClientError) {
+            return refusalResult({
+              code: err.code,
+              detail: err.message,
+              violations: err.violations,
+            });
+          }
+          throw err;
+        }
+      },
+    );
+
+    server.registerTool(
+      "move_blocks",
+      {
+        outputSchema: outputSchemaOf("move_blocks"),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+        },
+        title: "Move blocks between containers (one graph transaction)",
+        description:
+          "Move block slots from one container to another of the SAME " +
+          "tenant in ONE graph transaction. The slots keep their token, " +
+          "blob and facts; they land contiguous, in their original relative " +
+          "order, at position (end by default, start, or after a slot " +
+          "already in `to`). Every slot must be a member of `from` now, else " +
+          "the whole batch refuses (not_found); a changed source, " +
+          "destination or position refuses conflict. container_history " +
+          "reaches a moved slot from both containers.",
+        inputSchema: z.strictObject({
+          from: z
+            .string()
+            .regex(NODE_TOKEN_RE)
+            .describe("The source container's 64-hex token."),
+          to: z
+            .string()
+            .regex(NODE_TOKEN_RE)
+            .describe("The destination container's 64-hex token."),
+          slots: z
+            .array(
+              z
+                .string()
+                .regex(NODE_TOKEN_RE)
+                .describe("A member slot's 64-hex token."),
+            )
+            .min(1)
+            .describe("The slot tokens to move (members of from)."),
+          position: z
+            .union([z.enum(["end", "start"]), z.string().regex(NODE_TOKEN_RE)])
+            .meta({ type: "string" })
+            .optional()
+            .describe(
+              'Default "end". "start", or a 64-hex slot token in `to` to ' +
+                "land after.",
+            ),
+          tenant: z.enum(TENANTS).optional().describe("Default: notes."),
+        }),
+      },
+      async ({ from, to, slots, position, tenant }) => {
+        try {
+          const moved = await moveBlocks(
+            facet,
+            {
+              from,
+              to,
+              slots,
+              ...(position !== undefined ? { position } : {}),
+            },
+            tenant ?? "notes",
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: `moved ${String(moved.moved.length)} block(s)`,
+              },
+            ],
+            structuredContent: structured({ ...moved }),
+          };
+        } catch (err) {
+          if (err instanceof MoveBlocksError) {
+            return refuse(err.code, err.message);
+          }
           if (err instanceof ChaosClientError) {
             return refusalResult({
               code: err.code,
@@ -1632,9 +1766,16 @@ export function createServer(
             .positive()
             .optional()
             .describe("Read the container as it stood at this transaction."),
+          facts: z
+            .boolean()
+            .default(false)
+            .describe(
+              "Also answer each block's slot facts, each with its form " +
+                "(node or literal).",
+            ),
         }),
       },
-      async ({ container, as_of_tx }) => {
+      async ({ container, as_of_tx, facts }) => {
         let token = container;
         if (isStyx(container)) {
           // A hex token never reaches the dictionary: only an address does.
@@ -1644,11 +1785,10 @@ export function createServer(
           if (hit === undefined) return refuse("not_found", container);
           token = hit;
         }
-        const result = await readContainer(
-          facet,
-          token,
-          as_of_tx !== undefined ? { asOfTx: as_of_tx } : undefined,
-        );
+        const result = await readContainer(facet, token, {
+          ...(as_of_tx !== undefined ? { asOfTx: as_of_tx } : {}),
+          facts,
+        });
         return {
           content: [
             {
@@ -1702,9 +1842,16 @@ export function createServer(
             .boolean()
             .default(true)
             .describe("Fetch each block's prose; false answers text null."),
+          facts: z
+            .boolean()
+            .default(false)
+            .describe(
+              "Also answer each block's slot facts, each with its form " +
+                "(node or literal).",
+            ),
         }),
       },
-      async ({ containers, texts }) => {
+      async ({ containers, texts, facts }) => {
         if (containers.length < 1 || containers.length > READ_CONTAINERS_MAX) {
           return refusalResult({
             code: "bad_args",
@@ -1726,6 +1873,7 @@ export function createServer(
             ? { containers: [], missing: [] }
             : await readContainers(facet, [...new Set(readable.map(tokenOf))], {
                 texts,
+                facts,
               });
         if (tokens.size > 0 || unresolved.size > 0) {
           // One row per ref as sent, in the order sent: an address and the

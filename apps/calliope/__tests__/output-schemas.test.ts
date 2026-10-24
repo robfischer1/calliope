@@ -34,6 +34,7 @@ const VERBS = [
   "list_tags",
   "look",
   "materialize_note",
+  "move_blocks",
   "read_container",
   "read_containers",
   "restore_note",
@@ -192,6 +193,15 @@ describe("F17 batch 2a — calliope's output schemas", () => {
 
     await run("read_containers", { containers: [id] });
     await run("container_history", { container: id });
+    const other = await call(mcp, "create_note", { title: "Schema target" });
+    const [moving] = (
+      await run("read_container", { container: id, facts: true })
+    ).blocks as { slot: string }[];
+    await run("move_blocks", {
+      from: id,
+      to: other.node_id,
+      slots: [moving?.slot],
+    });
     await run("export_note", { container_id: id });
     await run("materialize_note", { container_id: id });
     await run("copy_reference", { node_id: id });

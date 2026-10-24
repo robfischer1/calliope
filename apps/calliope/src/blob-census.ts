@@ -25,6 +25,8 @@ export const CENSUS_ROSTER: Tenant[] = [
   "documents",
   "comments",
   "governance",
+  "issues",
+  "threads",
 ];
 
 export interface CensusReporter {

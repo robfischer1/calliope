@@ -99,7 +99,7 @@ build of chaosstore, linux and windows).
 
 ## MCP tools — the post-cut surface (F12)
 
-The fleet serves **twenty verbs**, pinned (names AND annotations) by an
+The fleet serves **twenty-one verbs**, pinned (names AND annotations) by an
 executable fence in `__tests__/mcp-http.test.ts` — change the surface only
 alongside the plan that licenses it:
 
@@ -110,12 +110,33 @@ The container surface (the ONE write path):
   nets out. `replacements` (literal `{find, replace, expected_count}`,
   optionally scoped to one `slot`) is applied server-side instead of
   sending the block; any count miss refuses the whole batch. Exactly one
-  of `ops` / `replacements` per call
-- `read_container(container, as_of_tx?)` — ordered blocks (slot, position,
-  blobId, text); dangling blobs surfaced, never fabricated. `container` is a
+  of `ops` / `replacements` per call. An `add` op (and an `update`, for
+  `contentHash`/`quotes`/`links` only) may carry `facts: [{predicate, node?
+  | literal?, dtype?}]`, written on the new slot in the SAME batch. The
+  predicate set is closed: `authoredBy`, `writtenIn`, `fromCheckpoint`,
+  `quotes`, `links`, `authored` (node OR literal placeholder —
+  Persona/Session/Moment nodes do not exist yet; a `quotes` literal may be a
+  JSON object string carrying `session_uuid`, `seq`, `ts`, `sha`), `writtenAt`
+  (instant literal), `authorKind`, `signedAs`, `inSeat`, `legacyId` (digits),
+  `contentHash` (sha256 of the text; computed server-side, a mismatching
+  caller value refuses `bad_args`). On an `update` only `contentHash`
+  (replaced), `quotes`, `links`, `authored` (added). Repeatable facts read
+  back sorted by value, not write order: put an ordinal in the literal to keep
+  one. `tenant` is any of notes, documents,
+  comments, governance, issues, threads (`CALLIOPE_THREADS_SCOPE`)
+- `move_blocks(from, to, slots, position?, tenant?)` — re-home slots between
+  two containers of one tenant in one transaction; slot, blob and facts
+  unchanged, positions re-keyed so they land contiguous in original order at
+  `end` (default), `start`, or after a slot of `to`. A slot not in `from`
+  refuses the whole batch (`not_found`); a source/destination/position that
+  changed since read refuses `conflict`; `container_history` reaches a
+  moved slot from both containers
+- `read_container(container, as_of_tx?, facts?)` — ordered blocks (slot, position,
+  blobId, text; `facts:true` adds each slot's `{predicate, form: node|literal,
+  value}` facts); dangling blobs surfaced, never fabricated. `container` is a
   64-hex token or a styx address (`able-frost-casual`, bare or `styx://`); an
   address naming no node refuses `not_found`
-- `read_containers(containers, texts?)` — the batch read: 1 to 500 containers in
+- `read_containers(containers, texts?, facts?)` — the batch read: 1 to 500 containers in
   one tree query and one blob lookup, each with its `revision` (sha256 over
   the ordered `slot:blobId` pairs plus the frontmatter) and `frontmatter`;
   unknown ids in `missing`; `texts:false` skips the blob fetch. Each entry is

@@ -105,6 +105,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "list_tags",
       "look",
       "materialize_note",
+      "move_blocks", // Threads: re-home slots between containers of one tenant
       "read_container", // F5 — the ordered tree read
       "read_containers", // the batch read: one call, not ~96
       "restore_note", // clears a suppression [Rob, 2026-10-06: delete = suppress]
@@ -152,6 +153,8 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       // nothing, but the verb itself is not idempotent (adds mint slots).
       // Destructive: its remove op deletes a section (the dies classify it so)
       write_container: [false, true, false],
+      // re-homes slots (retracts membership + position); not idempotent
+      move_blocks: [false, true, false],
     };
     await rpc(initEnvelope(1));
     const listed = (await rpc({

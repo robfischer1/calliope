@@ -90,6 +90,7 @@ const token = (i: number): string => i.toString(16).padStart(64, "f");
 
 const NOTE = "0".repeat(63) + "2";
 const SLOT = "0".repeat(63) + "3";
+const DEST = "0".repeat(63) + "4";
 const SESSION =
   "spiffe://notusmi.com/session/00000000-0000-4000-8000-000000000000";
 
@@ -219,6 +220,21 @@ const CASES: Record<string, Case> = {
       },
       {
         container: NOTE,
+        ops: [
+          {
+            op: "add",
+            text: "gamma",
+            position: "b1",
+            facts: [
+              { predicate: "authoredBy", literal: "Scotty" },
+              { predicate: "writtenAt", literal: "2026-10-24T01:02:03Z" },
+            ],
+          },
+        ],
+        tenant: "threads",
+      },
+      {
+        container: NOTE,
         ops: [{ op: "reorder", slot: SLOT, oldPosition: "a0", position: "c0" }],
       },
       {
@@ -230,13 +246,27 @@ const CASES: Record<string, Case> = {
   },
   read_container: {
     valid: { container: NOTE },
-    alternates: [{ container: NOTE, as_of_tx: 1 }],
+    alternates: [{ container: NOTE, as_of_tx: 1, facts: true }],
   },
   read_containers: {
     valid: { containers: [NOTE] },
-    alternates: [{ containers: [NOTE], texts: false }],
+    alternates: [{ containers: [NOTE], texts: false, facts: true }],
   },
   container_history: { valid: { container: NOTE } },
+  move_blocks: {
+    valid: { from: NOTE, to: DEST, slots: [SLOT] },
+    alternates: [
+      {
+        from: NOTE,
+        to: DEST,
+        slots: [SLOT],
+        position: "start",
+        tenant: "threads",
+      },
+      { from: NOTE, to: DEST, slots: [SLOT], position: SLOT },
+    ],
+    vocab: { tenant: TENANTS },
+  },
   blob_census: { valid: {}, alternates: [{ execute: true }] },
 };
 

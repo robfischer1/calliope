@@ -125,8 +125,8 @@ apps/calliope/
                           pg/urania clients with the similarity-index push (below);
                           hades is NOT wrapped (the gateway does its own push).
       server.ts          createServer(client, options) -> McpServer. Since the
-                          F12 cut the fleet surface is 16 verbs: the container
-                          surface (write_container/read_container/
+                          F12 cut the fleet surface is 17 verbs: the container
+                          surface (write_container/move_blocks/read_container/
                           container_history, iff containers facet; blob_census
                           iff its gc) + the _note four (iff chaos facet) + tags
                           (iff tags) + search/look/unpin/copy_reference +

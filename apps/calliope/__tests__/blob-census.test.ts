@@ -89,7 +89,7 @@ describe("the blob census (F7)", () => {
     const { dial, gc } = await setup();
     const report = await runBlobCensus({ gc, dial });
     expect(report.complete).toBe(true);
-    expect(report.reporters).toHaveLength(4);
+    expect(report.reporters).toHaveLength(6);
     expect(report.reporters.every((r) => r.ok && r.count === 0)).toBe(true);
   });
 

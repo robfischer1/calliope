@@ -34,7 +34,7 @@ import { argv, execPath, exit } from "node:process";
 import { pathToFileURL } from "node:url";
 import { Pool } from "pg";
 import { BlobStore } from "../blob-store.js";
-import { tenantScope } from "../chaos-client.js";
+import { TENANTS, tenantScope } from "../chaos-client.js";
 import type { ContainerFacet } from "../container-write.js";
 import { FocusRegister } from "../focus-register.js";
 import { LocalChaosDial } from "../local-admit.js";
@@ -321,12 +321,7 @@ function main(): void {
     const pool = new Pool({ connectionString: engine.databaseUrl });
     await new PgBodyClient(pool).ensureSchema();
     const dial = new LocalChaosDial(engine.chaosUrl);
-    for (const tenant of [
-      "notes",
-      "documents",
-      "comments",
-      "governance",
-    ] as const) {
+    for (const tenant of TENANTS) {
       await dial.registerGraph(tenantScope(tenant));
     }
     const facet: ContainerFacet = { blobs: new BlobStore(pool), dial };

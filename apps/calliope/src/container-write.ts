@@ -21,6 +21,12 @@ import {
   tenantScope,
 } from "./chaos-client.js";
 import {
+  type SlotFact,
+  retractContentHashOps,
+  slotFactOps,
+  validateSlotFacts,
+} from "./slot-facts.js";
+import {
   TREE_CONTENT,
   repointOps,
   repositionOps,
@@ -30,8 +36,14 @@ import {
 
 /** One container-save op — aglaia's tree diff maps onto these directly. */
 export type ContainerOp =
-  | { op: "add"; text: string; position: string }
-  | { op: "update"; slot: string; oldBlobId: string; text: string }
+  | { op: "add"; text: string; position: string; facts?: SlotFact[] }
+  | {
+      op: "update";
+      slot: string;
+      oldBlobId: string;
+      text: string;
+      facts?: SlotFact[];
+    }
   | { op: "reorder"; slot: string; oldPosition: string; position: string }
   | { op: "remove"; slot: string; position: string; blobId: string };
 
@@ -83,7 +95,24 @@ export async function writeContainer(
 ): Promise<ContainerWriteResult> {
   const scope = (facet.scope ?? tenantScope)(tenant);
   const blobIds: Record<number, string> = {};
-  const surviving: { index: number; op: ContainerOp; blobId?: string }[] = [];
+  const surviving: {
+    index: number;
+    op: ContainerOp;
+    blobId?: string;
+    /** An update whose text is unchanged but which carries facts: only the
+     *  facts ride the batch. */
+    factsOnly?: boolean;
+    facts?: SlotFact[];
+  }[] = [];
+
+  // Phase 0 — validate every op's facts before anything is minted: a
+  // disallowed predicate or a contentHash mismatch refuses the whole save.
+  const checked = new Map<number, SlotFact[]>();
+  for (const [index, op] of ops.entries()) {
+    if ((op.op === "add" || op.op === "update") && op.facts !== undefined) {
+      checked.set(index, validateSlotFacts(op.facts, op.text, op.op));
+    }
+  }
 
   // Phase 1 — blob-first. Every needed blob is durable before any tree
   // fact references it; identical content nets out here.
@@ -91,12 +120,18 @@ export async function writeContainer(
     if (op.op === "add") {
       const blobId = await facet.blobs.mint(op.text);
       blobIds[index] = blobId;
-      surviving.push({ index, op, blobId });
+      surviving.push({ index, op, blobId, facts: checked.get(index) ?? [] });
     } else if (op.op === "update") {
       const blobId = await facet.blobs.mint(op.text);
       blobIds[index] = blobId;
-      if (blobId === op.oldBlobId) continue; // byte-identical — nets out
-      surviving.push({ index, op, blobId });
+      const facts = checked.get(index) ?? [];
+      if (blobId === op.oldBlobId) {
+        // byte-identical — the text nets out; carried facts still land
+        if (facts.length === 0) continue;
+        surviving.push({ index, op, blobId, factsOnly: true, facts });
+        continue;
+      }
+      surviving.push({ index, op, blobId, facts });
     } else {
       surviving.push({ index, op });
     }
@@ -110,7 +145,7 @@ export async function writeContainer(
   const expects: ChaosExpect[] = [];
   const addSlots: { index: number; mintOrdinal: number }[] = [];
   let mintOrdinal = 0;
-  for (const { index, op, blobId } of surviving) {
+  for (const { index, op, blobId, factsOnly, facts } of surviving) {
     switch (op.op) {
       case "add": {
         if (blobId === undefined) throw new Error("add without a blob id");
@@ -120,6 +155,7 @@ export async function writeContainer(
             `b:${op.position}`,
             op.position,
             blobId,
+            slotFactOps(`b:${op.position}`, facts ?? []),
           ),
         );
         addSlots.push({ index, mintOrdinal });
@@ -128,8 +164,23 @@ export async function writeContainer(
       }
       case "update": {
         if (blobId === undefined) throw new Error("update without a blob id");
-        expects.push(expectHeldBlob(op.slot, TREE_CONTENT, op.oldBlobId));
-        batch.push(...repointOps(op.slot, op.oldBlobId, blobId));
+        if (factsOnly !== true) {
+          expects.push(expectHeldBlob(op.slot, TREE_CONTENT, op.oldBlobId));
+          batch.push(...repointOps(op.slot, op.oldBlobId, blobId));
+        }
+        if (facts !== undefined && facts.length > 0) {
+          // A rewrite replaces the slot's contentHash; the repeatable edges
+          // are added to.
+          if (facts.some((f) => f.predicate === "contentHash")) {
+            batch.push(
+              ...retractContentHashOps(
+                op.slot,
+                await facet.dial.edges(op.slot),
+              ),
+            );
+          }
+          batch.push(...slotFactOps(op.slot, facts));
+        }
         break;
       }
       case "reorder":

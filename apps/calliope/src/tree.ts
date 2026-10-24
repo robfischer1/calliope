@@ -27,6 +27,7 @@ import {
   opCreate,
   opRemove,
 } from "./chaos-client.js";
+import { type BlockFact, factsFromEdges } from "./slot-facts.js";
 
 // ── the vocabulary (the fan-out contract — five tenants read these) ──────────
 
@@ -43,7 +44,8 @@ export const BLOCK_KIND = "Block";
 
 /**
  * Birth one slot: mint the Block node and attach all three facts, in one
- * batch. `slotLabel` is the batch-local mint reference (themis resolves a
+ * batch, plus any `factOps` (the slot's metadata, built by slot-facts.ts
+ * against the same `slotLabel`). `slotLabel` is the batch-local mint reference (themis resolves a
  * non-empty createNode label for later ops in the same batch) — the caller
  * keeps labels unique within a batch, e.g. `b:<position>`.
  */
@@ -52,12 +54,14 @@ export function slotBirthOps(
   slotLabel: string,
   position: string,
   blobId: string,
+  factOps: ChaosOp[] = [],
 ): ChaosOp[] {
   return [
     opCreate(BLOCK_KIND, slotLabel),
     opAdd(containerToken, TREE_MEMBER, { toNode: slotLabel }),
     opAdd(slotLabel, TREE_POSITION, { toLiteral: position }),
     opAdd(slotLabel, TREE_CONTENT, { toBlob: blobId }),
+    ...factOps,
   ];
 }
 
@@ -121,6 +125,8 @@ export interface TreeSlot {
   /** The blob id (decimal), or null when the slot has no content fact —
    *  a DANGLING slot, surfaced and never skipped. */
   blobId: string | null;
+  /** The slot's metadata facts — present only when the read asked. */
+  facts?: BlockFact[];
 }
 
 function firstOf(
@@ -143,6 +149,7 @@ function firstOf(
 export async function readTree(
   dial: ChaosDial,
   containerToken: string,
+  opts?: { facts?: boolean },
 ): Promise<TreeSlot[]> {
   const memberEdges = await dial.edges(containerToken);
   const slots = memberEdges
@@ -155,6 +162,7 @@ export async function readTree(
       slot,
       position: firstOf(edges, TREE_POSITION, "scalar") ?? "￿" + slot,
       blobId: firstOf(edges, TREE_CONTENT, "blob"),
+      ...(opts?.facts === true ? { facts: factsFromEdges(edges) } : {}),
     });
   }
   out.sort((a, b) =>
