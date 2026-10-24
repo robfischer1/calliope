@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_move_blocks/v1",
+  "title": "calliope_move_blocks \u2014 the answer",
+  "description": "The slots moved, in their new order with the fractional keys they now hold, and the graph transaction. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml.",
+  "type": "object",
+  "properties": {
+    "tx": {
+      "type": "integer"
+    },
+    "moved": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "slot": {
+            "type": "string"
+          },
+          "position": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slot",
+          "position"
+        ]
+      }
+    }
+  },
+  "required": [
+    "moved"
+  ]
+}

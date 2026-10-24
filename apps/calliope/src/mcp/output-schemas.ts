@@ -22,6 +22,7 @@ import list_by_tag from "./output-schema/list_by_tag.schema.json" with { type: "
 import list_tags from "./output-schema/list_tags.schema.json" with { type: "json" };
 import look from "./output-schema/look.schema.json" with { type: "json" };
 import materialize_note from "./output-schema/materialize_note.schema.json" with { type: "json" };
+import move_blocks from "./output-schema/move_blocks.schema.json" with { type: "json" };
 import read_container from "./output-schema/read_container.schema.json" with { type: "json" };
 import read_containers from "./output-schema/read_containers.schema.json" with { type: "json" };
 import restore_note from "./output-schema/restore_note.schema.json" with { type: "json" };
@@ -44,6 +45,7 @@ const DOCUMENTS = {
   list_tags,
   look,
   materialize_note,
+  move_blocks,
   read_container,
   read_containers,
   restore_note,

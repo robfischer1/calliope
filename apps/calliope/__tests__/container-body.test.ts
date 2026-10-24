@@ -255,7 +255,14 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
 
   it("write_container scopes the admit to each tenant, issues included", async () => {
     const { mcp, dial } = await rig();
-    const tenants = ["notes", "documents", "comments", "governance", "issues"];
+    const tenants = [
+      "notes",
+      "documents",
+      "comments",
+      "governance",
+      "issues",
+      "threads",
+    ];
     for (const tenant of tenants) {
       const minted = await dial.admit(
         [{ op: "createNode", kind: "Note", label: `c-${tenant}` }],

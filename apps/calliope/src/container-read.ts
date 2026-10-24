@@ -18,6 +18,12 @@ import {
 } from "./chaos-client.js";
 import type { ContainerFacet } from "./container-write.js";
 import { FRONTMATTER } from "./properties.js";
+import {
+  type BlockFact,
+  SLOT_FACT_PREDICATES,
+  factScalarHashes,
+  factsFromQuads,
+} from "./slot-facts.js";
 import { TREE_CONTENT, TREE_MEMBER, TREE_POSITION, readTree } from "./tree.js";
 
 /** One assembled block. */
@@ -28,6 +34,8 @@ export interface ContainerBlock {
   /** The prose, or null when dangling (blob absent or content fact missing). */
   text: string | null;
   dangling: boolean;
+  /** The slot's metadata facts — present only on a `facts` read. */
+  facts?: BlockFact[];
 }
 
 export interface ContainerReadResult {
@@ -39,7 +47,12 @@ export interface ContainerReadResult {
 /** Assemble slots+blobs into ordered blocks with dangling surfaced. */
 async function assemble(
   blobs: ProseStore,
-  slots: { slot: string; position: string; blobId: string | null }[],
+  slots: {
+    slot: string;
+    position: string;
+    blobId: string | null;
+    facts?: BlockFact[];
+  }[],
 ): Promise<ContainerBlock[]> {
   const ids = slots
     .map((s) => s.blobId)
@@ -53,6 +66,7 @@ async function assemble(
       blobId: s.blobId,
       text,
       dangling: text === null,
+      ...(s.facts !== undefined ? { facts: s.facts } : {}),
     };
   });
 }
@@ -64,7 +78,15 @@ async function treeAt(
   dial: ChaosDial,
   containerToken: string,
   asOfTx: number,
-): Promise<{ slot: string; position: string; blobId: string | null }[]> {
+  withFacts = false,
+): Promise<
+  {
+    slot: string;
+    position: string;
+    blobId: string | null;
+    facts?: BlockFact[];
+  }[]
+> {
   const memberRows = await dial.quadsFrom([containerToken], asOfTx, [
     TREE_MEMBER,
   ]);
@@ -75,6 +97,7 @@ async function treeAt(
   const slotRows = await dial.quadsFrom(slots, asOfTx, [
     TREE_POSITION,
     TREE_CONTENT,
+    ...(withFacts ? SLOT_FACT_PREDICATES : []),
   ]);
   const positionHash = scopeHash(TREE_POSITION);
   const contentHash = scopeHash(TREE_CONTENT);
@@ -90,14 +113,23 @@ async function treeAt(
     }
     perSlot.set(row.s, cell);
   }
-  const values = await dial.resolveScalars(posHashes);
+  const values = await dial.resolveScalars([
+    ...posHashes,
+    ...(withFacts ? factScalarHashes(slotRows) : []),
+  ]);
+  const factsOf = withFacts ? factsFromQuads(slotRows, values) : null;
   const out = slots.map((slot) => {
     const cell = perSlot.get(slot) ?? {};
     const position =
       cell.positionHash !== undefined
         ? (values[cell.positionHash] ?? "￿" + slot)
         : "￿" + slot;
-    return { slot, position, blobId: cell.blobId ?? null };
+    return {
+      slot,
+      position,
+      blobId: cell.blobId ?? null,
+      ...(factsOf !== null ? { facts: factsOf.get(slot) ?? [] } : {}),
+    };
   });
   out.sort((a, b) =>
     a.position < b.position ? -1 : a.position > b.position ? 1 : 0,
@@ -113,12 +145,17 @@ async function treeAt(
 export async function readContainer(
   facet: ContainerFacet,
   containerToken: string,
-  opts?: { asOfTx?: number },
+  opts?: { asOfTx?: number; facts?: boolean },
 ): Promise<ContainerReadResult> {
   const slots =
     opts?.asOfTx === undefined
-      ? await readTree(facet.dial, containerToken)
-      : await treeAt(facet.dial, containerToken, opts.asOfTx);
+      ? await readTree(facet.dial, containerToken, { facts: opts?.facts })
+      : await treeAt(
+          facet.dial,
+          containerToken,
+          opts.asOfTx,
+          opts.facts === true,
+        );
   const blocks = await assemble(facet.blobs, slots);
   return opts?.asOfTx === undefined
     ? { blocks }
@@ -181,7 +218,7 @@ export function containerRevision(
 export async function readContainers(
   facet: ContainerFacet,
   containerTokens: string[],
-  opts: { texts: boolean },
+  opts: { texts: boolean; facts?: boolean },
 ): Promise<ReadContainersResult> {
   const { dial, blobs } = facet;
   const memberRows = await dial.quadsFrom(containerTokens, null, [
@@ -206,7 +243,11 @@ export async function readContainers(
   const slotRows =
     allSlots.length === 0
       ? []
-      : await dial.quadsFrom(allSlots, null, [TREE_POSITION, TREE_CONTENT]);
+      : await dial.quadsFrom(allSlots, null, [
+          TREE_POSITION,
+          TREE_CONTENT,
+          ...(opts.facts === true ? SLOT_FACT_PREDICATES : []),
+        ]);
   const positionHash = scopeHash(TREE_POSITION);
   const contentHash = scopeHash(TREE_CONTENT);
   const perSlot = new Map<string, { positionHash?: string; blobId?: string }>();
@@ -221,13 +262,22 @@ export async function readContainers(
     }
     perSlot.set(row.s, cell);
   }
+  if (opts.facts === true) {
+    for (const h of factScalarHashes(slotRows)) scalars.add(h);
+  }
   const values = await dial.resolveScalars([...scalars]);
+  const factsOf = opts.facts === true ? factsFromQuads(slotRows, values) : null;
 
   const missing: string[] = [];
   const shaped: {
     container: string;
     frontmatter: string | null;
-    slots: { slot: string; position: string; blobId: string | null }[];
+    slots: {
+      slot: string;
+      position: string;
+      blobId: string | null;
+      facts?: BlockFact[];
+    }[];
   }[] = [];
   for (const container of containerTokens) {
     const members = slotsOf.get(container);
@@ -242,7 +292,12 @@ export async function readContainers(
         cell.positionHash !== undefined
           ? (values[cell.positionHash] ?? "￿" + slot)
           : "￿" + slot;
-      return { slot, position, blobId: cell.blobId ?? null };
+      return {
+        slot,
+        position,
+        blobId: cell.blobId ?? null,
+        ...(factsOf !== null ? { facts: factsOf.get(slot) ?? [] } : {}),
+      };
     });
     slots.sort((a, b) =>
       a.position < b.position ? -1 : a.position > b.position ? 1 : 0,
@@ -276,6 +331,7 @@ export async function readContainers(
         text,
         // Dangling is a fact of the graph, not of whether text was asked for.
         dangling: s.blobId === null || (opts.texts && text === null),
+        ...(s.facts !== undefined ? { facts: s.facts } : {}),
       };
     }),
   }));

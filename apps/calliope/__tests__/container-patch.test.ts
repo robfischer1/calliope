@@ -661,6 +661,7 @@ describe("write_container with replacements", () => {
       "comments",
       "governance",
       "issues",
+      "threads",
     ]);
   });
 });

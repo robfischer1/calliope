@@ -17,7 +17,10 @@
             "type": "string"
           },
           "frontmatter": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "blocks": {
             "type": "array",
@@ -31,20 +34,64 @@
                   "type": "string"
                 },
                 "blobId": {
-                  "type": ["string", "null"]
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "text": {
-                  "type": ["string", "null"]
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "dangling": {
                   "type": "boolean"
+                },
+                "facts": {
+                  "type": "array",
+                  "description": "The slot's facts (only on a facts read); form says whether each is a node token or a literal placeholder.",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "predicate": {
+                        "type": "string"
+                      },
+                      "form": {
+                        "type": "string",
+                        "enum": [
+                          "node",
+                          "literal"
+                        ]
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "predicate",
+                      "form",
+                      "value"
+                    ]
+                  }
                 }
               },
-              "required": ["slot", "position", "blobId", "text", "dangling"]
+              "required": [
+                "slot",
+                "position",
+                "blobId",
+                "text",
+                "dangling"
+              ]
             }
           }
         },
-        "required": ["container", "revision", "frontmatter", "blocks"]
+        "required": [
+          "container",
+          "revision",
+          "frontmatter",
+          "blocks"
+        ]
       }
     },
     "missing": {
@@ -54,5 +101,8 @@
       }
     }
   },
-  "required": ["containers", "missing"]
+  "required": [
+    "containers",
+    "missing"
+  ]
 }
