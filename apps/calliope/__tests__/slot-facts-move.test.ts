@@ -23,6 +23,12 @@ import { createServer } from "../src/mcp/server.js";
 import { SlotFactError } from "../src/slot-facts.js";
 import { readTree } from "../src/tree.js";
 
+const QUOTE = JSON.stringify({
+  session_uuid: "u-1",
+  seq: 3,
+  ts: "2026-10-24T01:02:03-04:00",
+  sha: "abc",
+});
 const sha = (t: string): string =>
   createHash("sha256").update(t, "utf8").digest("hex");
 
@@ -95,6 +101,12 @@ describe("slot facts", () => {
             { predicate: "writtenAt", literal: "2026-10-24T01:02:03Z" },
             { predicate: "authorKind", literal: "ai" },
             { predicate: "contentHash", literal: sha("narrative") },
+            { predicate: "signedAs", literal: "Scotty36" },
+            { predicate: "inSeat", literal: "calliope" },
+            { predicate: "legacyId", literal: "1316" },
+            { predicate: "authored", literal: "b/two.md" },
+            { predicate: "authored", literal: "b/one.md" },
+            { predicate: "quotes", literal: QUOTE },
           ],
         },
       ],
@@ -121,9 +133,23 @@ describe("slot facts", () => {
     expect(by("quotes").map((f) => f.value)).toEqual([
       "sess-uuid#7",
       "sess-uuid#9",
+      QUOTE,
     ]);
     expect(by("contentHash")[0]?.value).toBe(sha("narrative"));
     expect(by("writtenAt")).toHaveLength(1);
+    expect(by("signedAs")[0]?.value).toBe("Scotty36");
+    expect(by("inSeat")[0]?.value).toBe("calliope");
+    expect(by("legacyId")[0]?.value).toBe("1316");
+    // Repeatables read back sorted by value (deterministic), not write order.
+    expect(by("authored").map((f) => f.value)).toEqual([
+      "b/one.md",
+      "b/two.md",
+    ]);
+    expect(by("quotes").map((f) => f.value)).toContain(QUOTE);
+    expect(JSON.parse(by("quotes").at(-1)?.value ?? "{}")).toMatchObject({
+      session_uuid: "u-1",
+      seq: 3,
+    });
 
     // Off by default; as-of and batch reads agree.
     const plain = await call(mcp, "read_container", { container: c });
@@ -241,6 +267,12 @@ describe("slot facts", () => {
         { predicate: "authoredBy", literal: "a" },
         { predicate: "authoredBy", literal: "b" },
       ]),
+    ).rejects.toBeInstanceOf(SlotFactError);
+    await expect(
+      w([{ predicate: "legacyId", literal: "12x" }]),
+    ).rejects.toBeInstanceOf(SlotFactError);
+    await expect(
+      w([{ predicate: "quotes", literal: '{"seq":1}' }]),
     ).rejects.toBeInstanceOf(SlotFactError);
   });
 

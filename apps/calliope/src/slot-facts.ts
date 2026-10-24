@@ -31,6 +31,10 @@ export const SLOT_FACT_PREDICATES = [
   "writtenAt",
   "authorKind",
   "contentHash",
+  "signedAs",
+  "inSeat",
+  "authored",
+  "legacyId",
 ] as const;
 export type SlotFactPredicate = (typeof SLOT_FACT_PREDICATES)[number];
 
@@ -41,9 +45,14 @@ const NODE_VALUED: ReadonlySet<string> = new Set([
   "fromCheckpoint",
   "quotes",
   "links",
+  "authored",
 ]);
 /** May appear more than once on a slot. */
-const REPEATABLE: ReadonlySet<string> = new Set(["quotes", "links"]);
+const REPEATABLE: ReadonlySet<string> = new Set([
+  "quotes",
+  "links",
+  "authored",
+]);
 /** What an `update` may carry: a rewrite replaces the hash and may add to
  *  the repeatable edges; birth-only identity (who/where/when) is never
  *  rewritten by an edit. */
@@ -51,6 +60,7 @@ const UPDATABLE: ReadonlySet<string> = new Set([
   "contentHash",
   "quotes",
   "links",
+  "authored",
 ]);
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -148,6 +158,12 @@ export function validateSlotFacts(
       }
       seen.add(p);
     }
+    if (p === "legacyId" && !/^\d+$/.test(f.literal ?? "")) {
+      throw new SlotFactError("facts: legacyId must be a non-negative integer");
+    }
+    if (p === "quotes" && f.literal?.startsWith("{") === true) {
+      checkQuote(f.literal);
+    }
     if (p === "contentHash") {
       const want = textHash(text);
       if (f.literal !== undefined && f.literal.toLowerCase() !== want) {
@@ -166,6 +182,29 @@ export function validateSlotFacts(
     out.push({ ...f });
   }
   return out;
+}
+
+/** A JSON-object quote must carry the four members that identify a Moment. */
+function checkQuote(literal: string): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(literal);
+  } catch {
+    throw new SlotFactError(
+      "facts: quotes literal starts with { but is not JSON",
+    );
+  }
+  const o = (typeof parsed === "object" ? parsed : null) as Record<
+    string,
+    unknown
+  > | null;
+  for (const k of ["session_uuid", "seq", "ts", "sha"]) {
+    if (o === null || !(k in o)) {
+      throw new SlotFactError(
+        `facts: a JSON quote needs session_uuid, seq, ts and sha (missing ${k})`,
+      );
+    }
+  }
 }
 
 /** The addEdge ops for validated facts on `subject` (a token or a
@@ -200,7 +239,9 @@ export function retractContentHashOps(
 
 const ALLOWED: ReadonlySet<string> = new Set(SLOT_FACT_PREDICATES);
 
-/** Facts off a slot's HEAD edges. */
+/** Facts off a slot's HEAD edges. Read-back order is deterministic, not the
+ *  write order: predicate (allow-list order), then value bytewise. A caller
+ *  that needs a list kept in order puts the ordinal in the literal. */
 export function factsFromEdges(edges: readonly NodeEdge[]): BlockFact[] {
   const out: BlockFact[] = [];
   for (const e of edges) {
