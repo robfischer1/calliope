@@ -24,6 +24,7 @@ import {
   type SlotFact,
   retractContentHashOps,
   slotFactOps,
+  textHash,
   validateSlotFacts,
 } from "./slot-facts.js";
 import {
@@ -168,18 +169,29 @@ export async function writeContainer(
           expects.push(expectHeldBlob(op.slot, TREE_CONTENT, op.oldBlobId));
           batch.push(...repointOps(op.slot, op.oldBlobId, blobId));
         }
-        if (facts !== undefined && facts.length > 0) {
-          // A rewrite replaces the slot's contentHash; the repeatable edges
-          // are added to.
-          if (facts.some((f) => f.predicate === "contentHash")) {
-            batch.push(
-              ...retractContentHashOps(
-                op.slot,
-                await facet.dial.edges(op.slot),
-              ),
-            );
-          }
-          batch.push(...slotFactOps(op.slot, facts));
+        // A rewrite replaces the slot's contentHash; the repeatable edges
+        // are added to. A caller that sent no contentHash (Aglaia's client
+        // sends none) still must not leave the old one standing: a slot that
+        // carries a hash gets the new text's hash, server-side, same batch.
+        const sent = (facts ?? []).some((f) => f.predicate === "contentHash");
+        let carried: SlotFact[] = facts ?? [];
+        let heldHash = false;
+        if (sent || factsOnly !== true) {
+          const old = retractContentHashOps(
+            op.slot,
+            await facet.dial.edges(op.slot),
+          );
+          heldHash = old.length > 0;
+          if (sent || heldHash) batch.push(...old);
+        }
+        if (!sent && heldHash) {
+          carried = [
+            ...carried,
+            { predicate: "contentHash", literal: textHash(op.text) },
+          ];
+        }
+        if (carried.length > 0) {
+          batch.push(...slotFactOps(op.slot, carried));
         }
         break;
       }

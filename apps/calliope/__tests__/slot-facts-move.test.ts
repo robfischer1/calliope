@@ -321,6 +321,108 @@ describe("slot facts", () => {
   });
 });
 
+describe("an update that sends no contentHash", () => {
+  async function seeded(withHash: boolean) {
+    const r = await rig();
+    const c = await r.mint("t");
+    await writeContainer(r.facet, c, [
+      {
+        op: "add",
+        text: "v1",
+        position: "a0",
+        facts: withHash
+          ? [
+              { predicate: "contentHash" },
+              { predicate: "authorKind", literal: "ai" },
+            ]
+          : [{ predicate: "authorKind", literal: "ai" }],
+      },
+    ]);
+    const [slot] = await readTree(r.facet.dial, c);
+    if (slot?.blobId == null) throw new Error("no slot");
+    return { ...r, c, slot: slot.slot, blobId: slot.blobId };
+  }
+
+  it("replaces the stale hash of a slot that carries one", async () => {
+    const { facet, c, slot, blobId } = await seeded(true);
+    await writeContainer(facet, c, [
+      { op: "update", slot, oldBlobId: blobId, text: "v2" },
+    ]);
+    const r = await readContainer(facet, c, { facts: true });
+    expect(r.blocks[0]?.text).toBe("v2");
+    const hashes = r.blocks[0]?.facts?.filter(
+      (f) => f.predicate === "contentHash",
+    );
+    expect(hashes).toEqual([
+      { predicate: "contentHash", form: "literal", value: sha("v2") },
+    ]);
+    expect(r.blocks[0]?.facts).toContainEqual({
+      predicate: "authorKind",
+      form: "literal",
+      value: "ai",
+    });
+  });
+
+  it("also replaces it when the update carries other facts", async () => {
+    const { facet, c, slot, blobId } = await seeded(true);
+    await writeContainer(facet, c, [
+      {
+        op: "update",
+        slot,
+        oldBlobId: blobId,
+        text: "v2",
+        facts: [{ predicate: "quotes", literal: "s#1" }],
+      },
+    ]);
+    const r = await readContainer(facet, c, { facts: true });
+    expect(
+      r.blocks[0]?.facts?.filter((f) => f.predicate === "contentHash"),
+    ).toEqual([
+      { predicate: "contentHash", form: "literal", value: sha("v2") },
+    ]);
+  });
+
+  it("does not invent a hash on a slot that never had one", async () => {
+    const { facet, c, slot, blobId } = await seeded(false);
+    await writeContainer(facet, c, [
+      { op: "update", slot, oldBlobId: blobId, text: "v2" },
+    ]);
+    const r = await readContainer(facet, c, { facts: true });
+    expect(r.blocks[0]?.facts?.some((f) => f.predicate === "contentHash")).toBe(
+      false,
+    );
+  });
+
+  it("leaves the hash alone when the text is unchanged", async () => {
+    const { facet, c, slot, blobId } = await seeded(true);
+    const res = await writeContainer(facet, c, [
+      { op: "update", slot, oldBlobId: blobId, text: "v1" },
+    ]);
+    expect(res.noop).toBe(true);
+    const r = await readContainer(facet, c, { facts: true });
+    expect(
+      r.blocks[0]?.facts?.filter((f) => f.predicate === "contentHash"),
+    ).toEqual([
+      { predicate: "contentHash", form: "literal", value: sha("v1") },
+    ]);
+  });
+
+  it("keeps a caller-sent hash authoritative (mismatch still refuses)", async () => {
+    const { facet, c, slot, blobId } = await seeded(true);
+    await expect(
+      writeContainer(facet, c, [
+        {
+          op: "update",
+          slot,
+          oldBlobId: blobId,
+          text: "v2",
+          facts: [{ predicate: "contentHash", literal: "0".repeat(64) }],
+        },
+      ]),
+    ).rejects.toBeInstanceOf(SlotFactError);
+  });
+});
+
 describe("move_blocks", () => {
   async function two() {
     const r = await rig();
