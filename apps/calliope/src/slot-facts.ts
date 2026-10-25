@@ -256,6 +256,70 @@ export function retractContentHashOps(
     .map((e) => opRemove(slot, "contentHash", { toLiteral: e.value }));
 }
 
+/** A segment's turn window: one value each, replaced as a whole. */
+const SPAN_PREDICATES: readonly string[] = [
+  "spanFrom",
+  "spanTo",
+  "turnsDigest",
+];
+
+/**
+ * Retract a slot's held turn window when an update carries a new one
+ * (spanFrom or spanTo). The window is single-valued: without this a second
+ * write would leave two spanFrom literals standing and a reader would pick
+ * one by byte order. A held value of each span predicate the update carries
+ * is removed unless it is the value carried again (left in place rather than
+ * removed and re-added in one batch); a held digest goes with any new window,
+ * since a window's digest is over its old bounds (an empty one carries none).
+ */
+export function retractSpanOps(
+  slot: string,
+  edges: readonly NodeEdge[],
+  facts: readonly SlotFact[],
+): ChaosOp[] {
+  if (
+    !facts.some((f) => f.predicate === "spanFrom" || f.predicate === "spanTo")
+  ) {
+    return [];
+  }
+  const replaced = new Set(["turnsDigest"]);
+  for (const f of facts) {
+    if (SPAN_PREDICATES.includes(f.predicate)) replaced.add(f.predicate);
+  }
+  const carried = new Set(
+    facts
+      .filter((f) => SPAN_PREDICATES.includes(f.predicate))
+      .map((f) => `${f.predicate}\u0000${f.literal ?? ""}`),
+  );
+  return edges
+    .filter(
+      (e) =>
+        replaced.has(e.predicate) &&
+        e.domain === "scalar" &&
+        !carried.has(`${e.predicate}\u0000${e.value}`),
+    )
+    .map((e) => opRemove(slot, e.predicate, { toLiteral: e.value }));
+}
+
+/** The carried span facts an update need not add: already held as sent. */
+export function heldSpanFacts(
+  edges: readonly NodeEdge[],
+  facts: readonly SlotFact[],
+): SlotFact[] {
+  const held = new Set(
+    edges
+      .filter(
+        (e) => SPAN_PREDICATES.includes(e.predicate) && e.domain === "scalar",
+      )
+      .map((e) => `${e.predicate}\u0000${e.value}`),
+  );
+  return facts.filter(
+    (f) =>
+      SPAN_PREDICATES.includes(f.predicate) &&
+      held.has(`${f.predicate}\u0000${f.literal ?? ""}`),
+  );
+}
+
 const ALLOWED: ReadonlySet<string> = new Set(SLOT_FACT_PREDICATES);
 
 /** Facts off a slot's HEAD edges. Read-back order is deterministic, not the
