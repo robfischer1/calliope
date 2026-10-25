@@ -119,7 +119,9 @@ The container surface (the ONE write path):
   JSON object string carrying `session_uuid`, `seq`, `ts`, `sha`), `writtenAt`
   (instant literal), `authorKind`, `signedAs`, `inSeat`, `legacyId` (digits),
   `contentHash` (sha256 of the text; computed server-side, a mismatching
-  caller value refuses `bad_args`). On an `update` only `contentHash`
+  caller value refuses `bad_args`; an `update` that changes the text of a
+  slot already carrying a `contentHash` replaces it server-side even when
+  the caller sent none). On an `update` only `contentHash`
   (replaced), `quotes`, `links`, `authored` (added). Repeatable facts read
   back sorted by value, not write order: put an ordinal in the literal to keep
   one. `tenant` is any of notes, documents,
