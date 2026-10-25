@@ -35,6 +35,9 @@ export const SLOT_FACT_PREDICATES = [
   "inSeat",
   "authored",
   "legacyId",
+  "spanFrom",
+  "spanTo",
+  "turnsDigest",
 ] as const;
 export type SlotFactPredicate = (typeof SLOT_FACT_PREDICATES)[number];
 
@@ -55,12 +58,17 @@ const REPEATABLE: ReadonlySet<string> = new Set([
 ]);
 /** What an `update` may carry: a rewrite replaces the hash and may add to
  *  the repeatable edges; birth-only identity (who/where/when) is never
- *  rewritten by an edit. */
+ *  rewritten by an edit. A segment's turn window (spanFrom, spanTo,
+ *  turnsDigest) may be added by an update: glaucus backfills it onto blocks
+ *  written before it stored one (scotty43-001). */
 const UPDATABLE: ReadonlySet<string> = new Set([
   "contentHash",
   "quotes",
   "links",
   "authored",
+  "spanFrom",
+  "spanTo",
+  "turnsDigest",
 ]);
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -160,6 +168,17 @@ export function validateSlotFacts(
     }
     if (p === "legacyId" && !/^\d+$/.test(f.literal ?? "")) {
       throw new SlotFactError("facts: legacyId must be a non-negative integer");
+    }
+    // A turn window's ends are seqs; an empty window ends one before it
+    // starts, so the first one can end at -1.
+    if (
+      (p === "spanFrom" || p === "spanTo") &&
+      !/^-?\d+$/.test(f.literal ?? "")
+    ) {
+      throw new SlotFactError(`facts: ${p} must be an integer seq`);
+    }
+    if (p === "turnsDigest" && !/^[0-9a-f]{16}$/.test(f.literal ?? "")) {
+      throw new SlotFactError("facts: turnsDigest must be 16 lower-case hex");
     }
     if (p === "quotes" && f.literal?.startsWith("{") === true) {
       checkQuote(f.literal);

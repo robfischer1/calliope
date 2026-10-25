@@ -321,6 +321,52 @@ describe("slot facts", () => {
   });
 });
 
+describe("a segment's turn window", () => {
+  it("rides an add or a facts-only update, and refuses a malformed value", async () => {
+    const { facet, mint } = await rig();
+    const c = await mint("t");
+    await writeContainer(facet, c, [
+      {
+        op: "add",
+        text: "v1",
+        position: "a0",
+        facts: [{ predicate: "spanFrom", literal: "0" }],
+      },
+    ]);
+    const [slot] = await readTree(facet.dial, c);
+    if (slot?.blobId == null) throw new Error("no slot");
+    await writeContainer(facet, c, [
+      {
+        op: "update",
+        slot: slot.slot,
+        oldBlobId: slot.blobId,
+        text: "v1",
+        facts: [
+          { predicate: "spanTo", literal: "-1" },
+          { predicate: "turnsDigest", literal: "380770db97224cbd" },
+        ],
+      },
+    ]);
+    const r = await readContainer(facet, c, { facts: true });
+    expect(r.blocks[0]?.text).toBe("v1");
+    expect(r.blocks[0]?.facts).toEqual([
+      { predicate: "spanFrom", form: "literal", value: "0" },
+      { predicate: "spanTo", form: "literal", value: "-1" },
+      { predicate: "turnsDigest", form: "literal", value: "380770db97224cbd" },
+    ]);
+    const bad = (facts: { predicate: string; literal: string }[]) =>
+      writeContainer(facet, c, [
+        { op: "add", text: "x", position: "a1", facts },
+      ]);
+    await expect(
+      bad([{ predicate: "spanFrom", literal: "1.5" }]),
+    ).rejects.toBeInstanceOf(SlotFactError);
+    await expect(
+      bad([{ predicate: "turnsDigest", literal: "XYZ" }]),
+    ).rejects.toBeInstanceOf(SlotFactError);
+  });
+});
+
 describe("an update that sends no contentHash", () => {
   async function seeded(withHash: boolean) {
     const r = await rig();

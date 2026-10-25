@@ -117,7 +117,7 @@ The container surface (the ONE write path):
   `quotes`, `links`, `authored` (node OR literal placeholder —
   Persona/Session/Moment nodes do not exist yet; a `quotes` literal may be a
   JSON object string carrying `session_uuid`, `seq`, `ts`, `sha`), `writtenAt`
-  (instant literal), `authorKind`, `signedAs`, `inSeat`, `legacyId` (digits),
+  (instant literal), `authorKind`, `signedAs`, `inSeat`, `legacyId` (digits), `spanFrom` / `spanTo` (a segment's turn window, integer seqs) and `turnsDigest` (16 hex; the three may also ride an update),
   `contentHash` (sha256 of the text; computed server-side, a mismatching
   caller value refuses `bad_args`; an `update` that changes the text of a
   slot already carrying a `contentHash` replaces it server-side even when
