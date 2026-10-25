@@ -23,6 +23,8 @@ import {
 import {
   type SlotFact,
   retractContentHashOps,
+  retractSpanOps,
+  heldSpanFacts,
   slotFactOps,
   textHash,
   validateSlotFacts,
@@ -190,6 +192,18 @@ export async function writeContainer(
             { predicate: "contentHash", literal: textHash(op.text) },
           ];
         }
+        if (
+          carried.some(
+            (f) => f.predicate === "spanFrom" || f.predicate === "spanTo",
+          )
+        ) {
+          // A new turn window replaces the held one (glaucus backfill-spans
+          // rewrites a wrong window; scotty43-003).
+          const edges = await facet.dial.edges(op.slot);
+          batch.push(...retractSpanOps(op.slot, edges, carried));
+          const same = new Set(heldSpanFacts(edges, carried));
+          carried = carried.filter((f) => !same.has(f));
+        }
         if (carried.length > 0) {
           batch.push(...slotFactOps(op.slot, carried));
         }
@@ -209,6 +223,10 @@ export async function writeContainer(
     }
   }
 
+  if (batch.length === 0) {
+    // Every op netted out (a window written again as it stands).
+    return { noop: true, applied: [], minted: {}, blobIds };
+  }
   let res;
   try {
     res = await facet.dial.admit(batch, scope, expects);
