@@ -72,6 +72,9 @@ export const DELETABLE_OWNERS: ReadonlySet<string> = new Set([
 ]);
 
 const NOTE_TYPE = "Note";
+
+/** The types every caller may delete: a Note, and nothing else. */
+export const NOTE_TYPES: ReadonlySet<string> = new Set([NOTE_TYPE]);
 const TOKEN_RE = NODE_TOKEN_RE;
 
 export interface DeleteNotesInput {
@@ -167,16 +170,17 @@ export async function guard(
   id: string,
   out: PlacedEdge[],
   all: PlacedEdge[],
+  types: ReadonlySet<string> = NOTE_TYPES,
 ): Promise<DeleteRefusal | null> {
   if (
     !out.some(
-      (e) => e.predicate === "hasType" && !e.isNode && e.value === NOTE_TYPE,
+      (e) => e.predicate === "hasType" && !e.isNode && types.has(e.value),
     )
   ) {
     return {
       node_id: id,
       code: "not_a_note",
-      detail: `${id} carries no hasType=${NOTE_TYPE} edge`,
+      detail: `${id} carries no hasType=${[...types].join("|")} edge`,
     };
   }
   if (
@@ -223,18 +227,20 @@ export interface Checked {
  * The protection rule, shared by every mode of delete_note (purge and
  * suppress): read one id and decide, before anything is written, whether
  * this call may touch it. `null` is not_found (no current semantic fact).
- * A refusal is a non-Note, a protected note (archived, or claimed by
+ * `types` widens what counts as a note (suppress, for nomos: Governance);
+ * purge never passes it. A refusal is a non-Note, a protected note (archived, or claimed by
  * another star), or the parent of a note outside `batch`.
  */
 export async function checkNote(
   dial: Dial,
   id: string,
   batch: ReadonlySet<string>,
+  types: ReadonlySet<string> = NOTE_TYPES,
 ): Promise<Checked | DeleteRefusal | null> {
   const all = await dial.placedEdges(id);
   const out = semantic(all);
   if (out.length === 0) return null;
-  const refusal = await guard(dial, id, out, all);
+  const refusal = await guard(dial, id, out, all, types);
   if (refusal !== null) return refusal;
 
   const inbound = semantic(await dial.referrers(id));

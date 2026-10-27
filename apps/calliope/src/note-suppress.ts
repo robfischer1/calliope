@@ -47,6 +47,7 @@ import {
   type DeleteRefusal,
   type Dial,
   guard,
+  NOTE_TYPES,
   SYSTEM_PREDICATES,
   validate,
 } from "./note-delete.js";
@@ -95,12 +96,15 @@ const UNSUPPORTED: DeleteNotesError = {
  * Suppress up to DELETE_NOTE_MAX notes. The protection rule is purge's,
  * decided for the whole call before anything is written. Every new marker
  * lands in ONE admit, so a call hides all its notes or none. A note that
- * already carries the marker is a no-op (`already_suppressed`).
+ * already carries the marker is a no-op (`already_suppressed`). `types`
+ * is what counts as a note: a Note, unless the verb widened it for its
+ * caller (nomos may hide a Governance note; see `delete-verbs.ts`).
  */
 export async function suppressNotes(
   dial: ChaosDial,
   scope: string,
   input: { ids: string[]; dry_run?: boolean | undefined },
+  types: ReadonlySet<string> = NOTE_TYPES,
 ): Promise<SuppressNotesResult | DeleteNotesError> {
   const invalid = validate(input.ids);
   if (invalid !== null) return invalid;
@@ -112,7 +116,7 @@ export async function suppressNotes(
   const notes: NoteSuppression[] = [];
   const refused: DeleteRefusal[] = [];
   for (const id of input.ids) {
-    const checked = await checkNote(dial, id, batch);
+    const checked = await checkNote(dial, id, batch, types);
     if (checked === null) {
       notes.push({ node_id: id, status: "not_found" });
     } else if ("code" in checked) {
@@ -189,6 +193,7 @@ export async function restoreNotes(
   dial: ChaosDial,
   scope: string,
   input: { ids: string[] },
+  types: ReadonlySet<string> = NOTE_TYPES,
 ): Promise<RestoreNotesResult | DeleteNotesError> {
   const invalid = validate(input.ids);
   if (invalid !== null) return invalid;
@@ -206,7 +211,7 @@ export async function restoreNotes(
       notes.push({ node_id: id, status: "not_found" });
       continue;
     }
-    const refusal = await guard(dial, id, out, all);
+    const refusal = await guard(dial, id, out, all, types);
     if (refusal !== null) {
       refused.push(refusal);
       continue;
