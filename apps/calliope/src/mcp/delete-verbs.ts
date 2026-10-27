@@ -6,15 +6,25 @@
  * Rob's ruling (2026-10-06): a delete from the UI hides; nothing purges
  * unless asked, and nothing ever erases the log. So `purge` defaults to
  * false here and no caller sets it for him.
+ *
+ * GOVERNANCE NOTES. nomos keeps each prose law file as a `Governance` note,
+ * and retires one when a deletion of that file lands. So the suppress mode,
+ * and restore, also take a Governance note when, and only when, the caller
+ * is nomos: the verified peer (or the gateway's stamp), read by
+ * `callerPrincipal`, never an argument. Every other caller is refused
+ * `not_a_note` for it exactly as before, and purge never takes one: a
+ * Governance note is hidden, never erased.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { callerPrincipal, NOMOS_PRINCIPAL } from "../caller.js";
 import type { ChaosDial } from "../chaos-client.js";
 import {
   DELETE_NOTE_MAX,
   deleteNotes,
   isDeleteNotesError,
+  NOTE_TYPES,
 } from "../note-delete.js";
 import { restoreNotes, suppressNotes } from "../note-suppress.js";
 import type { TagStore } from "../tag-store.js";
@@ -35,6 +45,28 @@ interface Answer {
   content: { type: "text"; text: string }[];
   structuredContent: Record<string, unknown>;
   isError?: boolean;
+}
+
+/** The type nomos's prose law notes carry (nomos `ProseNoteType`). */
+export const GOVERNANCE_TYPE = "Governance";
+
+const NOMOS_TYPES: ReadonlySet<string> = new Set([
+  ...NOTE_TYPES,
+  GOVERNANCE_TYPE,
+]);
+
+/** What counts as a note for a hide or restore by `caller`. */
+export function hideableTypes(caller: string | undefined): ReadonlySet<string> {
+  return caller === NOMOS_PRINCIPAL ? NOMOS_TYPES : NOTE_TYPES;
+}
+
+/** The request `_meta` a tool callback's `extra` carries, if any. */
+function metaOf(extra: unknown): Record<string, unknown> | undefined {
+  if (typeof extra !== "object" || extra === null) return undefined;
+  const meta = (extra as { _meta?: unknown })._meta;
+  return typeof meta === "object" && meta !== null
+    ? (meta as Record<string, unknown>)
+    : undefined;
 }
 
 function answer(text: string, result: object, isError = false): Answer {
@@ -114,9 +146,15 @@ export function registerDeleteVerbs(
           ),
       }),
     },
-    async ({ ids, dry_run, purge }) => {
+    async ({ ids, dry_run, purge }, extra) => {
       if (purge !== true) {
-        const result = await suppressNotes(dial, scope, { ids, dry_run });
+        const types = hideableTypes(callerPrincipal(metaOf(extra)));
+        const result = await suppressNotes(
+          dial,
+          scope,
+          { ids, dry_run },
+          types,
+        );
         if (isDeleteNotesError(result)) {
           return refusalResult(result);
         }
@@ -177,8 +215,9 @@ export function registerDeleteVerbs(
         "protected note refuses the call, writing nothing.",
       inputSchema: z.strictObject({ ids }),
     },
-    async ({ ids }) => {
-      const result = await restoreNotes(dial, scope, { ids });
+    async ({ ids }, extra) => {
+      const types = hideableTypes(callerPrincipal(metaOf(extra)));
+      const result = await restoreNotes(dial, scope, { ids }, types);
       if (isDeleteNotesError(result)) {
         return refusalResult(result);
       }
