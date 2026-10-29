@@ -1,0 +1,259 @@
+{
+  "info": {
+    "title": "chaos",
+    "version": "v1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/find_by_name": {
+      "get": {
+        "operationId": "find_by_name",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "graph",
+            "schema": {
+              "type": "string",
+              "description": "Bound the lookup to this scope; omitted, every scope."
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "schema": {
+              "type": "string",
+              "description": "The node's kind."
+            }
+          },
+          {
+            "in": "query",
+            "name": "label",
+            "schema": {
+              "type": "string",
+              "description": "The node's label."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "find_by_name"
+      }
+    },
+    "/v1/quads_from": {
+      "post": {
+        "operationId": "quads_from",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/quads_from/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-safe": true,
+        "x-mcp-tool": "quads_from"
+      }
+    }
+  },
+  "x-mcp-tools": {
+    "find_by_name": {
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Look up an existing node's token by (kind, label) — check here before minting, or you create a duplicate. Optional `graph` bounds the lookup to one scope, which is what a reuse-or-mint decision needs: unscoped, a node of the same name in another scope reuses across the two. In-scope means the node is the SUBJECT of a current fact in that graph — the same definition the `nodes` verb enumerates.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "graph": {
+            "type": "string",
+            "description": "Bound the lookup to this scope; omitted, every scope."
+          },
+          "kind": {
+            "type": "string",
+            "description": "The node's kind."
+          },
+          "label": {
+            "type": "string",
+            "description": "The node's label."
+          }
+        },
+        "required": ["label", "kind"],
+        "type": "object"
+      },
+      "name": "find_by_name",
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://foundry.notusmi.com/schema/tool-output/graph_find_by_name/v1",
+        "title": "graph_find_by_name — the answer",
+        "description": "The live node tokens carrying a label (and kind, optionally within one graph), as {items} of hex tokens; a miss is an empty list, never null. chaos answers the list wrapped as {items} (an output schema's root must be an object), the shape this schema holds it to (stellar-core F17 346). A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml.",
+        "x-list": "items",
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["items"]
+      }
+    },
+    "quads_from": {
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Read the outgoing quads of given subjects, either current or as-of a past transaction. Pass depth (1-5, default 2) to choose how much comes back: 1 the count alone, 2 the [s,p,o,g] hex arrays, 3 objects with the predicate and scope named, 4 adds both nodes' readable styx addresses, 5 adds the object's domain. DEPRECATED, accepted for one minor: full:true is depth 5. A default call answers depth 2: the array shape is positional and somebody parses it.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of_tx": {
+            "type": ["integer", "null"],
+            "description": "Read as of this transaction; omitted, current."
+          },
+          "depth": {
+            "type": "integer",
+            "description": "how far down to answer, 1..5 over quad → quad → quad → address → domain. 1 {count}: how many quads, none listed [reads the quad index; grows with nothing: one integer] · 2 (default) + items as positional [s,p,o,g] hex arrays: today's answer [reads the chaos store (current facts); grows with the quads matched] · 3 + items as objects: s, p, o, g with the predicate and scope named (`predicate`, `graph`) [reads the chaos store (current facts), predicate and scope names; grows with one name pair per quad] · 4 + `s_styx` and `o_styx`: the readable address of both nodes [reads the chaos store (current facts), styx addresses; grows with two addresses per quad] · 5 + `o_domain`: the object's domain (what `full` asked, whole) [reads the chaos store (current facts), object domains; grows with one domain per quad]. Cumulative and nested."
+          },
+          "full": {
+            "type": "boolean",
+            "description": "DEPRECATED, accepted for one minor: full:true is depth 5. Use `depth`; an explicit depth wins over this flag.",
+            "default": false
+          },
+          "graph": {
+            "type": ["string", "null"],
+            "description": "Only quads in this scope; omitted, every scope."
+          },
+          "predicates": {
+            "type": ["array", "null"],
+            "description": "Predicate names or name-hashes to keep; empty items are refused.",
+            "items": {
+              "type": "string",
+              "description": "One predicate name or name-hash.",
+              "minLength": 1
+            }
+          },
+          "subjects": {
+            "type": "array",
+            "description": "The subjects whose outgoing quads to read.",
+            "items": {
+              "type": "string",
+              "description": "A node token.",
+              "pattern": "^([0-9a-fA-F]{2})*$",
+              "x-counterexample": "zz"
+            }
+          }
+        },
+        "required": ["subjects"],
+        "type": "object"
+      },
+      "name": "quads_from",
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://foundry.notusmi.com/schema/tool-output/graph_quads_from/v1",
+        "title": "graph_quads_from — the answer",
+        "description": "The current quads whose subject is one of the asked subjects (or as of a past transaction), as {items}: each a [s, p, o, g] list of four hex tokens, or, when full is asked for, an object with s, p, predicate, o, o_domain, g, graph and the optional s_styx and o_styx. chaos answers the list wrapped as {items} (an output schema's root must be an object), the shape this schema holds it to (stellar-core F17 346). The answer states a depth when the call names one, and only then (the depth Adverb, stellar-core F17; schema/adverb's ladder: quad, quad, quad, address, domain; default 2, the answer graph_quads_from gave before the dial). 1 keeps the count; 2 gives the positional [s,p,o,g] arrays; 3 gives objects with the predicate and scope named; 4 adds s_styx and o_styx; 5 adds o_domain. The old `full` argument is deprecated and resolves to 5 (accepted for one minor). An out-of-range depth refuses depth_out_of_range. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml.",
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 4,
+                  "maxItems": 4
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "s": {
+                      "type": "string"
+                    },
+                    "s_styx": {
+                      "type": "string"
+                    },
+                    "p": {
+                      "type": "string"
+                    },
+                    "predicate": {
+                      "type": "string"
+                    },
+                    "o": {
+                      "type": "string"
+                    },
+                    "o_styx": {
+                      "type": "string"
+                    },
+                    "o_domain": {
+                      "type": "string"
+                    },
+                    "g": {
+                      "type": "string"
+                    },
+                    "graph": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["s", "p", "predicate", "o", "g", "graph"]
+                }
+              ]
+            }
+          },
+          "depth": {
+            "type": "integer",
+            "description": "The depth this answer was given at; present exactly when the call named a depth (the depth Adverb, stellar-core F17; schema/adverb's ladder for this verb)."
+          },
+          "count": {
+            "type": "integer",
+            "description": "How many items the full answer lists; the whole answer at depth 1."
+          }
+        },
+        "if": {
+          "not": {
+            "required": ["depth"],
+            "properties": {
+              "depth": {
+                "const": 1
+              }
+            }
+          }
+        },
+        "then": {
+          "required": ["items"]
+        },
+        "else": {
+          "required": ["count"]
+        }
+      }
+    }
+  }
+}

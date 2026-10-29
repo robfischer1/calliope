@@ -38,6 +38,7 @@ import {
   type TlsFetchOptions,
 } from "@forge/stellar-core-ts";
 import { asDateTime } from "./instant.js";
+import { type ChaosRest, chaosRestFromEnv } from "./chaos-rest.js";
 
 // ⚑ https AND 8201, for the same reason as chaos below: over plaintext 8200
 // themis typed every calliope admit `unidentified` (30 of 30 in the
@@ -607,6 +608,13 @@ export function meshPeer(endpoint: string, star: string): string | undefined {
 export class LiveChaosDial implements ChaosDial {
   private readonly themis: string;
   private readonly chaos: string;
+  /**
+   * chaos's openapi-http dial (chaos-rest.ts), or undefined: every chaos call
+   * rides /mcp. Read from CALLIOPE_CHAOS_REST_URL only when no chaosUrl was
+   * passed, so a dial built for another chaos (the sidecar's local engine)
+   * never inherits the cluster's flip.
+   */
+  private readonly chaosRest: ChaosRest | undefined;
   private id = 0;
   /**
    * The workload identity, held for the process's whole life.
@@ -624,7 +632,11 @@ export class LiveChaosDial implements ChaosDial {
    */
   private identity?: Promise<X509Source>;
 
-  constructor(opts?: { themisUrl?: string; chaosUrl?: string }) {
+  constructor(opts?: {
+    themisUrl?: string;
+    chaosUrl?: string;
+    chaosRest?: ChaosRest;
+  }) {
     const themisBase = (
       opts?.themisUrl ??
       process.env.CALLIOPE_THEMIS_URL ??
@@ -640,6 +652,9 @@ export class LiveChaosDial implements ChaosDial {
       ? themisBase
       : `${themisBase}/mcp`;
     this.chaos = chaosBase.endsWith("/mcp") ? chaosBase : `${chaosBase}/mcp`;
+    this.chaosRest =
+      opts?.chaosRest ??
+      (opts?.chaosUrl === undefined ? chaosRestFromEnv(TIMEOUT_MS) : undefined);
   }
 
   /**
@@ -654,6 +669,9 @@ export class LiveChaosDial implements ChaosDial {
     verb: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
+    if (this.chaosRest?.serves(verb) === true) {
+      return this.chaosRestCall(this.chaosRest, verb, args);
+    }
     return rpc(
       this.chaos,
       this.id,
@@ -661,6 +679,39 @@ export class LiveChaosDial implements ChaosDial {
       args,
       await this.tls(this.chaos, "chaos"),
     );
+  }
+
+  /**
+   * One chaos call on its openapi-http face, shaped exactly as {@link rpc}
+   * shapes a `tools/call` result: a `{result}` envelope unwrapped, text blocks
+   * parsed when no structuredContent rode, a `conflict` refusal typed.
+   */
+  private async chaosRestCall(
+    rest: ChaosRest,
+    verb: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    const answer = await rest.call(verb, args);
+    if (!answer.ok) {
+      const { code, detail, text } = answer.refusal;
+      if (code === "conflict") {
+        throw new ChaosClientError(`${verb}: conflict: ${detail}`, "conflict");
+      }
+      throw new ChaosClientError(`${verb}: ${text}`);
+    }
+    const { structured, texts } = answer.reply;
+    if (structured === undefined) {
+      return shapeFromTextBlocks(texts.map((text) => ({ type: "text", text })));
+    }
+    if (
+      structured !== null &&
+      typeof structured === "object" &&
+      Object.keys(structured).length === 1 &&
+      "result" in structured
+    ) {
+      return structured.result;
+    }
+    return structured;
   }
 
   /**
