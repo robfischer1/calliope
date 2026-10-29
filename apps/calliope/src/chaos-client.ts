@@ -37,6 +37,7 @@ import {
   tlsFetchOptions,
   type TlsFetchOptions,
 } from "@forge/stellar-core-ts";
+import { RestClient, RouteError, ToolError } from "@forge/stellar-core-ts/rest";
 import { asDateTime } from "./instant.js";
 import { type ChaosRest, chaosRestFromEnv } from "./chaos-rest.js";
 
@@ -607,6 +608,16 @@ export function meshPeer(endpoint: string, star: string): string | undefined {
 /** The live dials — themis for writes, chaos for identity reads. */
 export class LiveChaosDial implements ChaosDial {
   private readonly themis: string;
+  /**
+   * themis's plaintext openapi-http door (rest-mesh P4), when
+   * CALLIOPE_THEMIS_REST_URL names it: `admit` goes there as REST, where
+   * Cilium admits calliope-sa on POST /v1/admit stamped "calliope" (flux
+   * grants-themis). Unset, admit stays MCP on `themis`, so unsetting it is the
+   * rollback. A call restwire cannot carry (RouteError: nothing was sent)
+   * still goes over MCP. Read from the env only when no themisUrl was passed,
+   * as chaosRest is, so a dial built for another themis never inherits it.
+   */
+  private readonly themisRest?: RestClient;
   private readonly chaos: string;
   /**
    * chaos's openapi-http dial (chaos-rest.ts), or undefined: every chaos call
@@ -636,6 +647,7 @@ export class LiveChaosDial implements ChaosDial {
     themisUrl?: string;
     chaosUrl?: string;
     chaosRest?: ChaosRest;
+    themisRestUrl?: string;
   }) {
     const themisBase = (
       opts?.themisUrl ??
@@ -655,6 +667,61 @@ export class LiveChaosDial implements ChaosDial {
     this.chaosRest =
       opts?.chaosRest ??
       (opts?.chaosUrl === undefined ? chaosRestFromEnv(TIMEOUT_MS) : undefined);
+    const restBase = (
+      opts?.themisRestUrl ??
+      (opts?.themisUrl === undefined
+        ? process.env.CALLIOPE_THEMIS_REST_URL
+        : undefined) ??
+      ""
+    )
+      .trim()
+      .replace(/\/+$/, "");
+    if (restBase !== "") this.themisRest = new RestClient({ base: restBase });
+  }
+
+  /**
+   * One themis `admit` over its REST door, boxed so a null answer is still an
+   * answer; undefined when the dial has none or restwire could not carry the
+   * call (nothing was sent, so MCP may: never after a send). The
+   * star's refusal keeps the MCP path's error shape: a `conflict` is the
+   * registered conflict, anything else a wire error.
+   */
+  private async admitRest(
+    args: Record<string, unknown>,
+  ): Promise<{ raw: unknown } | undefined> {
+    if (this.themisRest === undefined) return undefined;
+    try {
+      const reply = await this.themisRest.call("admit", args, {
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      const s = reply.structured;
+      if (s === undefined || s === null) {
+        const [first] = reply.texts;
+        return {
+          raw: first === undefined ? null : (JSON.parse(first) as unknown),
+        };
+      }
+      if (
+        typeof s === "object" &&
+        Object.keys(s).length === 1 &&
+        "result" in s
+      ) {
+        return { raw: s.result };
+      }
+      return { raw: s };
+    } catch (e) {
+      if (e instanceof RouteError) return undefined;
+      if (e instanceof ToolError) {
+        if (e.code === "conflict") {
+          throw new ChaosClientError(
+            `admit: conflict: ${e.detail}`,
+            "conflict",
+          );
+        }
+        throw new ChaosClientError(`admit: ${e.text}`);
+      }
+      throw e;
+    }
   }
 
   /**
@@ -736,16 +803,23 @@ export class LiveChaosDial implements ChaosDial {
     expect?: ChaosExpect[],
   ): Promise<AdmitResult> {
     this.id += 1;
-    const raw = (await rpc(
-      this.themis,
-      this.id,
-      "admit",
-      // `expect` rides only when stated: an empty list is a plain admit.
+    // `expect` rides only when stated: an empty list is a plain admit.
+    const args: Record<string, unknown> =
       expect !== undefined && expect.length > 0
         ? { ops, scope, expect }
-        : { ops, scope },
-      await this.tls(this.themis, "themis"),
-    )) as {
+        : { ops, scope };
+    const viaRest = await this.admitRest(args);
+    const raw = (
+      viaRest !== undefined
+        ? viaRest.raw
+        : await rpc(
+            this.themis,
+            this.id,
+            "admit",
+            args,
+            await this.tls(this.themis, "themis"),
+          )
+    ) as {
       admitted?: boolean;
       ok?: boolean;
       minted?: unknown[];
