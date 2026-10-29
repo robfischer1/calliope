@@ -1,0 +1,262 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "themis",
+    "version": "v1"
+  },
+  "paths": {
+    "/v1/admit": {
+      "post": {
+        "operationId": "admit",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/admit/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "admit"
+      }
+    }
+  },
+  "x-mcp-tools": {
+    "admit": {
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Run the gated write: permit first, then capture only if permitted. Name decision_id to hold the write to that decision's standing autonomy grant. An assertIfAbsent op asserts a literal only if the subject holds none under the predicate, answering asserted and the standing value; the rest of its batch rides with it or not at all. expect states preconditions on slots (absent, held or rev): the batch commits only if every one holds, else it is refused conflict and nothing is written.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "description": "Holds the write to this decision's standing autonomy grant."
+          },
+          "expect": {
+            "type": "array",
+            "description": "Slot preconditions: the batch commits only if every one holds.",
+            "items": {
+              "type": "object",
+              "description": "One precondition: a slot and exactly one of absent, held or rev.",
+              "properties": {
+                "absent": {
+                  "type": "boolean",
+                  "description": "true: the slot holds no current fact."
+                },
+                "g": {
+                  "type": "string",
+                  "description": "The graph; empty means every graph."
+                },
+                "held": {
+                  "type": "array",
+                  "description": "The slot's current object set, exactly.",
+                  "items": {
+                    "type": "object",
+                    "description": "One held object: a literal (with dtype, lang), a node, or a blob.",
+                    "properties": {
+                      "$blob": {
+                        "type": "string",
+                        "description": "A blob object, by id."
+                      },
+                      "dtype": {
+                        "type": "string",
+                        "description": "The literal's datatype."
+                      },
+                      "lang": {
+                        "type": "string",
+                        "description": "The literal's language tag."
+                      },
+                      "literal": {
+                        "type": "string",
+                        "description": "A literal object."
+                      },
+                      "node": {
+                        "type": "string",
+                        "description": "A node object, by id."
+                      }
+                    }
+                  }
+                },
+                "predicate": {
+                  "type": "string",
+                  "description": "The slot's predicate.",
+                  "minLength": 1
+                },
+                "rev": {
+                  "type": "integer",
+                  "description": "The slot's revision; 0 means never written."
+                },
+                "s": {
+                  "type": "string",
+                  "description": "The slot's subject.",
+                  "minLength": 1
+                }
+              },
+              "required": ["s", "predicate"],
+              "x-requiredOneOfKeys": [["absent"], ["held"], ["rev"]]
+            }
+          },
+          "now": {
+            "type": "integer",
+            "description": "The logical clock the grant is read at; 0 reads no votes."
+          },
+          "ops": {
+            "type": "array",
+            "description": "The batch, applied atomically.",
+            "items": {
+              "type": "object",
+              "description": "One op of the batch.",
+              "additionalProperties": false,
+              "properties": {
+                "dtype": {
+                  "type": "string",
+                  "description": "Edge ops: types the to_literal; instant stores decimal epoch-microseconds, wallclock a naive date-time, any other word rides verbatim. Legal only beside a to_literal."
+                },
+                "from_id": {
+                  "type": ["string", "object"],
+                  "description": "Edge ops: the subject, a node id or {\"$mint\": i} for the i-th createNode."
+                },
+                "graph": {
+                  "type": "string",
+                  "description": "removeEdge: pins the retraction to this graph's hex; other ops ignore it."
+                },
+                "id": {
+                  "type": "string",
+                  "description": "relabel, close: the node's id; a close needs a live 64-hex one."
+                },
+                "kind": {
+                  "type": "string",
+                  "description": "createNode: the kind to mint, when node_type is absent."
+                },
+                "label": {
+                  "type": "string",
+                  "description": "createNode, relabel: the label."
+                },
+                "mode": {
+                  "type": "string",
+                  "description": "close: the finality mode, empty is done; refused on any op when not one of these.",
+                  "enum": ["cut", "done", "killed", "mistrial", "recurred"]
+                },
+                "naive": {
+                  "type": "string",
+                  "description": "Edge ops: what an instant with no offset means, one of refuse, utc, eastern; legal only with dtype instant, default refuse."
+                },
+                "node_type": {
+                  "type": "string",
+                  "description": "createNode: the kind to mint; falls back to kind."
+                },
+                "op": {
+                  "type": "string",
+                  "description": "The op kind; assertIfAbsent is admit's alone, at most one per batch.",
+                  "enum": [
+                    "addEdge",
+                    "assertIfAbsent",
+                    "close",
+                    "createNode",
+                    "relabel",
+                    "removeEdge"
+                  ]
+                },
+                "predicate": {
+                  "type": "string",
+                  "description": "Edge ops: the predicate name."
+                },
+                "to_blob": {
+                  "type": ["string", "integer"],
+                  "description": "Edge ops: a blob id, a decimal string or a positive integer."
+                },
+                "to_literal": {
+                  "type": ["string", "null"],
+                  "description": "Edge ops: a literal object; null when the object is a node."
+                },
+                "to_node": {
+                  "type": ["string", "object", "null"],
+                  "description": "Edge ops: a node id or {\"$mint\": i}; null when the object is a literal."
+                }
+              },
+              "required": ["op"]
+            }
+          },
+          "scope": {
+            "type": "string",
+            "description": "The graph the facts live in.",
+            "default": "moirae"
+          }
+        },
+        "required": ["ops"],
+        "type": "object"
+      },
+      "name": "admit",
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://foundry.notusmi.com/schema/tool-output/themis_admit/v1",
+        "title": "themis_admit \u2014 the answer",
+        "description": "A write batch put through the gate. admitted=false with tx null when the gate refused it; minted lists the hex ids the batch created. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml. An assertIfAbsent batch (one op, alone) also answers asserted and standing.",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "admitted": {
+            "type": "boolean"
+          },
+          "tx": {
+            "type": ["integer", "null"]
+          },
+          "minted": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "violations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "subject": {
+                  "type": "string"
+                },
+                "check": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                },
+                "predicate": {
+                  "type": ["string", "null"]
+                }
+              },
+              "required": ["subject", "check", "detail", "predicate"],
+              "description": "One write-gate violation; predicate is null when none applies."
+            }
+          },
+          "asserted": {
+            "type": "boolean",
+            "description": "assertIfAbsent only: true when this call asserted the literal, false when the slot already held one (or the gate refused)."
+          },
+          "standing": {
+            "type": "string",
+            "description": "assertIfAbsent only: the value the slot holds after the call: the one just asserted, or the one already held. Absent when the gate refused."
+          }
+        },
+        "required": ["ok", "admitted", "tx", "minted", "violations"]
+      }
+    }
+  }
+}
