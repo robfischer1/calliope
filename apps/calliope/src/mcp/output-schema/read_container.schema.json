@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_read_container/v1",
   "title": "calliope_read_container \u2014 the answer",
-  "description": "A container's blocks in position order; a block whose prose is absent is dangling with null text. asOfTx echoes an as-of read. An unknown container answers an empty block list. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml.",
+  "description": "A container's blocks in position order; a block whose prose is absent is dangling with null text. asOfTx echoes an as-of read. A placement block also carries ref {slot, container}; a placements read adds placements to each block; an orphaned placement reads dangling with ref kept. An unknown container answers an empty block list. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml.",
   "type": "object",
   "properties": {
     "blocks": {
@@ -55,6 +55,40 @@
                 "predicate",
                 "form",
                 "value"
+              ]
+            }
+          },
+          "ref": {
+            "type": "object",
+            "description": "Present only on a placement (a slot that places another slot): the origin slot it resolves through, and the container holding that origin. container is present on current reads only, never on an as_of_tx read. blobId and text are the origin's; an orphaned placement keeps its ref and reads dangling. Absent on every blob slot.",
+            "properties": {
+              "slot": {
+                "type": "string"
+              },
+              "container": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "slot"
+            ]
+          },
+          "placements": {
+            "type": "array",
+            "description": "Present only on a placements read: the slots placing this one (empty on an ordinary block).",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slot": {
+                  "type": "string"
+                },
+                "container": {
+                  "type": "string",
+                  "description": "Absent when no container holds the placement."
+                }
+              },
+              "required": [
+                "slot"
               ]
             }
           }

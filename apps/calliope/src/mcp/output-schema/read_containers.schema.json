@@ -74,6 +74,21 @@
                       "value"
                     ]
                   }
+                },
+                "ref": {
+                  "type": "object",
+                  "description": "Present only on a placement (a slot that places another slot): the origin slot it resolves through and the container holding that origin. blobId is the origin's; an orphaned placement keeps its ref and reads dangling. Absent on every blob slot.",
+                  "properties": {
+                    "slot": {
+                      "type": "string"
+                    },
+                    "container": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "slot"
+                  ]
                 }
               },
               "required": [
