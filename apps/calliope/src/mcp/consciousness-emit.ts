@@ -4,13 +4,13 @@
  *
  * THE FOLD (F2). Calliope used to emit `(node_id, body_text, ts)` on a private
  * `calliope-notes` topic that eros translated with its own extractor. Measured
- * 2026-09-05 on the live broker: the topic did not exist (thalassa's
- * `topics-apply` never declared it, auto-creation is off), no consumer group
+ * 2026-09-05 on the live broker: the topic did not exist (no topic
+ * provisioning ever declared it, auto-creation is off), no consumer group
  * held it, and the emit was gated behind `CALLIOPE_NOTES_EMIT=1`, which no
  * deployment set. A producer with no topic and a subscriber with nothing to
  * read — a second stream carrying the same shape as the bus, and carrying it
  * nowhere. So the private contract is retired and Calliope publishes on
- * `consciousness`, the ONE consumer-owned index bus (thalassa pass 1), in
+ * `consciousness`, the ONE consumer-owned index bus, in
  * `ConsciousnessEvent` shape: eros's ingest kwargs, verbatim, so a note
  * arrives as any other indexable thing and eros keeps one fewer dialect.
  *
@@ -340,9 +340,9 @@ export function consciousnessEmitEnabled(
  *  internals. */
 export const CONSCIOUSNESS_CLIENT_ID = "calliope-consciousness";
 
-/** Build the kafkatopics transport. Topic creation is thalassa's
- *  (`topics-apply`), never a producer side effect — a compacted topic
- *  auto-created with the broker's defaults would not compact. */
+/** Build the kafkatopics transport. Topic creation belongs to the
+ *  telemetry bus's provisioning, never a producer side effect — a compacted
+ *  topic auto-created with the broker's defaults would not compact. */
 export function makeConsciousnessTransport(bootstrap: string): Transport {
   return createKafkaTransport(bootstrap, CONSCIOUSNESS_CLIENT_ID);
 }

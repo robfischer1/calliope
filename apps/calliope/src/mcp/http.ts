@@ -24,7 +24,8 @@
  * substrate over `CHAOS_URL` (internal-net `http://chaos:8206/mcp`; legacy
  * `URANIA_URL` honored), or the in-memory fixture via
  * `CALLIOPE_MCP_BACKEND=fixture`. On boot, also starts the op-contract
- * heartbeat publisher ({@link startHeartbeat}) to Pontus.
+ * heartbeat publisher ({@link startHeartbeat}, from stellar-core-ts) to the
+ * telemetry bus.
  */
 
 import { createServer as createHttpServer } from "node:http";
@@ -389,7 +390,8 @@ async function main(): Promise<void> {
   // servers are per-request; the broker connection is not).
   const consciousness = makeConsciousnessPublisher(process.env);
   // 028 ("Look At This" F5): one register for the process, written by the
-  // Pontus telemetry consumer, read by every stateless request's `look`.
+  // focus consumer (`startFocusConsumer`, kafkatopics), read by every
+  // stateless request's `look`.
   const focusRegister = new FocusRegister();
   const focusConsumer = startFocusConsumer(focusRegister);
   // The witness: one record per inbound tools/call, to the log stream and to
@@ -443,7 +445,8 @@ async function main(): Promise<void> {
     mux: restMux,
   });
 
-  // Publish liveness to Pontus (the op-contract heartbeat) now that we serve.
+  // Publish liveness to the telemetry bus (stellar-core-ts `startHeartbeat`,
+  // the op-contract heartbeat) now that we serve.
   const heartbeat = startHeartbeat(heartbeatOptions());
 
   const shutdown = (): void => {
