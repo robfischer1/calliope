@@ -47,7 +47,16 @@ export type ContainerOp =
       text: string;
       facts?: SlotFact[];
     }
-  | { op: "reorder"; slot: string; oldPosition: string; position: string }
+  | {
+      op: "reorder";
+      slot: string;
+      oldPosition: string;
+      position: string;
+      /** Internal (not on the wire schema): hold the slot's position as
+       *  read, so a rebalance re-laid from one read conflicts with a
+       *  concurrent move instead of overwriting it. */
+      guard?: true;
+    }
   | { op: "remove"; slot: string; position: string; blobId: string };
 
 /** The write path's backend facet: the prose store + the graph dial. */
@@ -210,6 +219,13 @@ export async function writeContainer(
         break;
       }
       case "reorder":
+        if (op.guard === true) {
+          expects.push({
+            s: op.slot,
+            predicate: "tree_position",
+            held: [{ literal: op.oldPosition }],
+          });
+        }
         batch.push(...repositionOps(op.slot, op.oldPosition, op.position));
         break;
       case "remove":

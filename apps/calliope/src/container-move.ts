@@ -21,7 +21,7 @@ import {
   tenantScope,
 } from "./chaos-client.js";
 import type { ContainerFacet } from "./container-write.js";
-import { between } from "./order-key.js";
+import { mintRun, sequence } from "./order-key.js";
 import { TREE_MEMBER, moveOps, readTree, repositionOps } from "./tree.js";
 
 /** Where the moved slots land in the destination. */
@@ -162,12 +162,37 @@ export async function moveBlocks(
   }
 
   // n ascending keys inside the gap: each between the previous and hi.
-  const moved: { slot: string; position: string }[] = [];
-  let prev = lo;
-  for (const s of picked) {
-    const key = between(prev, hi);
-    moved.push({ slot: s.slot, position: key });
-    prev = key;
+  // When they would outgrow the key cap (or no key fits), re-lay the whole
+  // destination with sequence() instead: the same batch repositions the
+  // destination's blocks and places the moved ones, so one admit is the
+  // whole rebalance.
+  let moved: { slot: string; position: string }[] = [];
+  const rebalanced: { slot: string; from: string; to: string }[] = [];
+  const run = mintRun(lo, hi, picked.length);
+  if (run !== null) {
+    moved = picked.map((s, i) => ({ slot: s.slot, position: run[i] ?? "" }));
+  } else {
+    const at =
+      where === "end"
+        ? dest.length
+        : where === "start"
+          ? 0
+          : dest.findIndex((d) => d.slot === where) + 1;
+    const keys = sequence(dest.length + picked.length);
+    const order: { slot: string; moving: boolean }[] = [
+      ...dest.slice(0, at).map((d) => ({ slot: d.slot, moving: false })),
+      ...picked.map((s) => ({ slot: s.slot, moving: true })),
+      ...dest.slice(at).map((d) => ({ slot: d.slot, moving: false })),
+    ];
+    for (const [i, o] of order.entries()) {
+      const key = keys[i] ?? "";
+      if (o.moving) {
+        moved.push({ slot: o.slot, position: key });
+        continue;
+      }
+      const held = dest.find((d) => d.slot === o.slot)?.position ?? "";
+      if (held !== key) rebalanced.push({ slot: o.slot, from: held, to: key });
+    }
   }
 
   const batch: ChaosOp[] = [];
@@ -177,7 +202,15 @@ export async function moveBlocks(
       ...repositionOps(s.slot, s.position, moved[i]?.position ?? ""),
     );
   }
+  for (const r of rebalanced) {
+    batch.push(...repositionOps(r.slot, r.from, r.to));
+  }
   const expects: ChaosExpect[] = [
+    ...rebalanced.map((r): ChaosExpect => ({
+      s: r.slot,
+      predicate: "tree_position",
+      held: [{ literal: r.from }],
+    })),
     {
       s: from,
       predicate: TREE_MEMBER,
