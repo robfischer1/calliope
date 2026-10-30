@@ -37,6 +37,11 @@ export const TREE_MEMBER = "tree_member";
 export const TREE_POSITION = "tree_position";
 /** slot → blob reference (the F2 blob domain — never a literal). */
 export const TREE_CONTENT = "tree_content";
+/** placement slot → origin slot (node domain): transclusion. A slot holds
+ *  EXACTLY ONE of `tree_content` or `tree_ref`. Reads resolve a placement
+ *  through its origin's current blob (one hop, never a chain); an edit
+ *  through a placement rewrites the origin. See transclusion.ts. */
+export const TREE_REF = "tree_ref";
 /** The slot node's kind — declared in chaos's closed kind set (F3). */
 export const BLOCK_KIND = "Block";
 
@@ -62,6 +67,39 @@ export function slotBirthOps(
     opAdd(slotLabel, TREE_POSITION, { toLiteral: position }),
     opAdd(slotLabel, TREE_CONTENT, { toBlob: blobId }),
     ...factOps,
+  ];
+}
+
+/**
+ * Birth one PLACEMENT slot: like {@link slotBirthOps}, but the slot holds a
+ * reference to `originSlot` instead of a blob. One batch, one transaction.
+ */
+export function placementBirthOps(
+  containerToken: string,
+  slotLabel: string,
+  position: string,
+  originSlot: string,
+): ChaosOp[] {
+  return [
+    opCreate(BLOCK_KIND, slotLabel),
+    opAdd(containerToken, TREE_MEMBER, { toNode: slotLabel }),
+    opAdd(slotLabel, TREE_POSITION, { toLiteral: position }),
+    opAdd(slotLabel, TREE_REF, { toNode: originSlot }),
+  ];
+}
+
+/** Retract a placement's three facts (membership, position, reference).
+ *  The origin is untouched. */
+export function placementRemoveOps(
+  slotToken: string,
+  containerToken: string,
+  position: string,
+  originSlot: string,
+): ChaosOp[] {
+  return [
+    opRemove(containerToken, TREE_MEMBER, { toNode: slotToken }),
+    opRemove(slotToken, TREE_POSITION, { toLiteral: position }),
+    opRemove(slotToken, TREE_REF, { toNode: originSlot }),
   ];
 }
 
@@ -123,8 +161,11 @@ export interface TreeSlot {
   slot: string;
   position: string;
   /** The blob id (decimal), or null when the slot has no content fact —
-   *  a DANGLING slot, surfaced and never skipped. */
+   *  a DANGLING slot, surfaced and never skipped. Raw: a placement's own
+   *  blobId is null until {@link resolvePlacements} fills it. */
   blobId: string | null;
+  /** The origin slot, when this slot is a placement (`tree_ref`). */
+  ref?: string;
   /** The slot's metadata facts — present only when the read asked. */
   facts?: BlockFact[];
 }
@@ -138,6 +179,12 @@ function firstOf(
     if (e.predicate === predicate && e.domain === domain) return e.value;
   }
   return null;
+}
+
+/** The optional `ref` member, spread only when the slot is a placement so a
+ *  blob slot's shape is byte-identical to before transclusion. */
+export function refOf(origin: string | null | undefined): { ref?: string } {
+  return origin === null || origin === undefined ? {} : { ref: origin };
 }
 
 /**
@@ -162,6 +209,7 @@ export async function readTree(
       slot,
       position: firstOf(edges, TREE_POSITION, "scalar") ?? "￿" + slot,
       blobId: firstOf(edges, TREE_CONTENT, "blob"),
+      ...refOf(firstOf(edges, TREE_REF, "node")),
       ...(opts?.facts === true ? { facts: factsFromEdges(edges) } : {}),
     });
   }

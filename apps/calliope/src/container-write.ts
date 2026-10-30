@@ -29,8 +29,14 @@ import {
   textHash,
   validateSlotFacts,
 } from "./slot-facts.js";
+import type { PlacementPolicy } from "./placement-policy.js";
+import { orphanedPlacements, type Placement } from "./transclusion.js";
+import { planRouting } from "./transclusion-write.js";
 import {
   TREE_CONTENT,
+  TREE_REF,
+  placementBirthOps,
+  placementRemoveOps,
   repointOps,
   repositionOps,
   slotBirthOps,
@@ -39,7 +45,23 @@ import {
 
 /** One container-save op — aglaia's tree diff maps onto these directly. */
 export type ContainerOp =
-  | { op: "add"; text: string; position: string; facts?: SlotFact[] }
+  | {
+      op: "add";
+      text: string;
+      position: string;
+      facts?: SlotFact[];
+      ref?: undefined;
+    }
+  /** A PLACEMENT: the new slot references `ref` (an existing slot holding
+   *  content) instead of holding a blob. */
+  | {
+      op: "add";
+      ref: string;
+      position: string;
+      text?: undefined;
+      /** Refused at plan time: a placement's facts live on its origin. */
+      facts?: SlotFact[];
+    }
   | {
       op: "update";
       slot: string;
@@ -57,7 +79,18 @@ export type ContainerOp =
        *  concurrent move instead of overwriting it. */
       guard?: true;
     }
-  | { op: "remove"; slot: string; position: string; blobId: string };
+  | {
+      op: "remove";
+      slot: string;
+      position: string;
+      /** The blob the slot reads now (a placement: its origin's; "" for a
+       *  dangling placement). */
+      blobId: string;
+      /** Removing an ORIGIN that still has placements: "orphan" leaves them
+       *  dangling (their `ref` kept); absent, the save is refused
+       *  `has_placements`. */
+      placements?: "orphan";
+    };
 
 /** The write path's backend facet: the prose store + the graph dial. */
 export interface ContainerFacet {
@@ -67,6 +100,9 @@ export interface ContainerFacet {
   scope?: (tenant: Tenant) => string;
   /** The census's store surface (F7) — present on backends that can reap. */
   gc?: GcStore;
+  /** The cross-tenant placement policy (placement-policy.ts); absent, the
+   *  default, which refuses a placement across tenants. */
+  placementPolicy?: PlacementPolicy;
 }
 
 /** Per-save outcome. Indexes key into the ORIGINAL ops array. */
@@ -82,6 +118,14 @@ export interface ContainerWriteResult {
   /** The graph transaction the batch landed as — absent on a noop, or
    *  when the gate answered none. */
   tx?: number;
+  /** op index → the origin slot an edit through a placement rewrote.
+   *  Present only when a save routed one. */
+  routed?: Record<number, string>;
+  /** Placements left dangling by this save: the ones a `placements:
+   *  "orphan"` remove meant to orphan, plus any placed concurrently (the
+   *  post-commit detector). Present only when the save removed an origin
+   *  that had placements. */
+  orphaned?: (Placement & { origin: string })[];
 }
 
 /**
@@ -105,7 +149,9 @@ export async function writeContainer(
   ops: ContainerOp[],
   tenant: Tenant = "notes",
 ): Promise<ContainerWriteResult> {
-  const scope = (facet.scope ?? tenantScope)(tenant);
+  // Transclusion first: refuses (nothing minted) or says where each op lands.
+  const routing = await planRouting(facet, containerToken, ops, tenant);
+  const scope = (facet.scope ?? tenantScope)(routing.tenant);
   const blobIds: Record<number, string> = {};
   const surviving: {
     index: number;
@@ -121,6 +167,7 @@ export async function writeContainer(
   // disallowed predicate or a contentHash mismatch refuses the whole save.
   const checked = new Map<number, SlotFact[]>();
   for (const [index, op] of ops.entries()) {
+    if (op.op === "add" && op.ref !== undefined) continue;
     if ((op.op === "add" || op.op === "update") && op.facts !== undefined) {
       checked.set(index, validateSlotFacts(op.facts, op.text, op.op));
     }
@@ -129,8 +176,14 @@ export async function writeContainer(
   // Phase 1 — blob-first. Every needed blob is durable before any tree
   // fact references it; identical content nets out here.
   for (const [index, op] of ops.entries()) {
-    if (op.op === "add") {
-      const blobId = await facet.blobs.mint(op.text);
+    const place = routing.places.get(index);
+    if (place !== undefined) {
+      // A placement mints nothing: it reads the origin's blob.
+      blobIds[index] = place.blobId;
+      surviving.push({ index, op, blobId: place.blobId });
+    } else if (op.op === "add") {
+      // planRouting placed every ref add, so a text add is all that is left.
+      const blobId = await facet.blobs.mint(op.text ?? "");
       blobIds[index] = blobId;
       surviving.push({ index, op, blobId, facts: checked.get(index) ?? [] });
     } else if (op.op === "update") {
@@ -158,6 +211,23 @@ export async function writeContainer(
   const addSlots: { index: number; mintOrdinal: number }[] = [];
   let mintOrdinal = 0;
   for (const { index, op, blobId, factsOnly, facts } of surviving) {
+    const place = routing.places.get(index);
+    if (place !== undefined) {
+      // The origin must still hold the blob it was read at: it cannot be
+      // removed (or turned into a placement) between the check and here.
+      expects.push(expectHeldBlob(place.origin, TREE_CONTENT, place.blobId));
+      batch.push(
+        ...placementBirthOps(
+          containerToken,
+          `b:${op.op === "add" ? op.position : String(index)}`,
+          op.op === "add" ? op.position : "",
+          place.origin,
+        ),
+      );
+      addSlots.push({ index, mintOrdinal });
+      mintOrdinal += 1;
+      continue;
+    }
     switch (op.op) {
       case "add": {
         if (blobId === undefined) throw new Error("add without a blob id");
@@ -176,9 +246,20 @@ export async function writeContainer(
       }
       case "update": {
         if (blobId === undefined) throw new Error("update without a blob id");
+        // An edit through a placement lands on its origin: the CAS is the
+        // ORIGIN's blob, and the placement must still name that origin.
+        const origin = routing.routed.get(index);
+        const target = origin ?? op.slot;
+        if (origin !== undefined) {
+          expects.push({
+            s: op.slot,
+            predicate: TREE_REF,
+            held: [{ node: origin }],
+          });
+        }
         if (factsOnly !== true) {
-          expects.push(expectHeldBlob(op.slot, TREE_CONTENT, op.oldBlobId));
-          batch.push(...repointOps(op.slot, op.oldBlobId, blobId));
+          expects.push(expectHeldBlob(target, TREE_CONTENT, op.oldBlobId));
+          batch.push(...repointOps(target, op.oldBlobId, blobId));
         }
         // A rewrite replaces the slot's contentHash; the repeatable edges
         // are added to. A caller that sent no contentHash (Aglaia's client
@@ -189,8 +270,8 @@ export async function writeContainer(
         let heldHash = false;
         if (sent || factsOnly !== true) {
           const old = retractContentHashOps(
-            op.slot,
-            await facet.dial.edges(op.slot),
+            target,
+            await facet.dial.edges(target),
           );
           heldHash = old.length > 0;
           if (sent || heldHash) batch.push(...old);
@@ -208,13 +289,13 @@ export async function writeContainer(
         ) {
           // A new turn window replaces the held one (glaucus backfill-spans
           // rewrites a wrong window; scotty43-003).
-          const edges = await facet.dial.edges(op.slot);
-          batch.push(...retractSpanOps(op.slot, edges, carried));
+          const edges = await facet.dial.edges(target);
+          batch.push(...retractSpanOps(target, edges, carried));
           const same = new Set(heldSpanFacts(edges, carried));
           carried = carried.filter((f) => !same.has(f));
         }
         if (carried.length > 0) {
-          batch.push(...slotFactOps(op.slot, carried));
+          batch.push(...slotFactOps(target, carried));
         }
         break;
       }
@@ -228,7 +309,24 @@ export async function writeContainer(
         }
         batch.push(...repositionOps(op.slot, op.oldPosition, op.position));
         break;
-      case "remove":
+      case "remove": {
+        const origin = routing.unplaces.get(index);
+        if (origin !== undefined) {
+          // A placement goes alone; its origin is untouched. The CAS holds
+          // the reference, and (unless dangling) the content it read.
+          expects.push({
+            s: op.slot,
+            predicate: TREE_REF,
+            held: [{ node: origin }],
+          });
+          if (op.blobId !== "") {
+            expects.push(expectHeldBlob(origin, TREE_CONTENT, op.blobId));
+          }
+          batch.push(
+            ...placementRemoveOps(op.slot, containerToken, op.position, origin),
+          );
+          break;
+        }
         // Same hole as an update: removeEdge is ensure-absent, so a stale
         // blobId would remove nothing and report success.
         expects.push(expectHeldBlob(op.slot, TREE_CONTENT, op.blobId));
@@ -236,6 +334,7 @@ export async function writeContainer(
           ...slotRemoveOps(op.slot, containerToken, op.position, op.blobId),
         );
         break;
+      }
     }
   }
 
@@ -265,12 +364,24 @@ export async function writeContainer(
     const token = res.minted[ord];
     if (token !== undefined) minted[index] = token;
   }
+  const routed = Object.fromEntries(routing.routed);
+  // Post-commit: an origin removed with placements leaves them dangling; the
+  // detector also finds any placed between the plan's read and the commit.
+  const removedOrigins = ops.flatMap((op, i) =>
+    op.op === "remove" && !routing.unplaces.has(i) ? [op.slot] : [],
+  );
+  const orphaned =
+    removedOrigins.length > 0
+      ? await orphanedPlacements(facet.dial, removedOrigins)
+      : [];
   return {
     noop: false,
     applied: surviving.map((s) => s.index),
     minted,
     blobIds,
     ...(res.tx !== undefined ? { tx: res.tx } : {}),
+    ...(routing.routed.size > 0 ? { routed } : {}),
+    ...(orphaned.length > 0 ? { orphaned } : {}),
   };
 }
 
