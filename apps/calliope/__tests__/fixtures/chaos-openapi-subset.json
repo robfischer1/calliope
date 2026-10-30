@@ -76,6 +76,34 @@
         "x-mcp-safe": true,
         "x-mcp-tool": "quads_from"
       }
+    },
+    "/v1/register_graph": {
+      "post": {
+        "operationId": "register_graph",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/register_graph/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-safe": false,
+        "x-mcp-tool": "register_graph"
+      }
     }
   },
   "x-mcp-tools": {
@@ -254,6 +282,27 @@
           "required": ["count"]
         }
       }
+    },
+    "register_graph": {
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Register a provenance graph before anything may write to it; writes to an unregistered scope are refused.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "graph": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": ["graph"],
+        "type": "object"
+      },
+      "name": "register_graph"
     }
   }
 }

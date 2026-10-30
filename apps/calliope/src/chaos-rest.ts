@@ -21,10 +21,11 @@ import {
 
 /**
  * Verbs calliope sends chaos that grants-chaos does not admit calliope-sa
- * to: register_graph is a write, called once per tenant by the migration
- * tools, and no compiled grant gives calliope it.
+ * to. Empty: register_graph (the migration tools' per-tenant graph ensure)
+ * rides POST /v1/register_graph since REST mesh P7 (wonka68-rm15), when
+ * grants-chaos admitted calliope-sa on it and chaos's mTLS /mcp closed.
  */
-export const CHAOS_MCP_ONLY: ReadonlySet<string> = new Set(["register_graph"]);
+export const CHAOS_MCP_ONLY: ReadonlySet<string> = new Set<string>();
 
 /** A refusal chaos wrote (X-Star set): its `{code, detail}` and text. */
 export interface ChaosRefusal {
