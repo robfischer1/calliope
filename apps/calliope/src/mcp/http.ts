@@ -71,11 +71,6 @@ import { reservedHeaders } from "@forge/stellar-core-ts/identitycore";
 import { makeWitness } from "./witness.js";
 import type { Witness } from "./witness.js";
 import {
-  LoopbackPeers,
-  serveMtlsDoor,
-  withDoorPeers,
-} from "@forge/stellar-core-ts/mtlsdoor";
-import {
   loadPep,
   pepConfigFromEnv,
   startPepMetrics,
@@ -254,9 +249,6 @@ export function createCalliopeHttpServer(
   containers?: ContainerFacet,
   consciousness?: NotePublisher,
   witness?: Witness,
-  // The mTLS door's table of verified peers riding its loopback connections;
-  // absent, the peer is read from the socket's own TLS state (none, plaintext).
-  peers?: LoopbackPeers,
   // The endpoint PEP, armed once at boot (the servers are per-request, the
   // ACL is not). Absent = no PEP; `main()` always passes one.
   pep?: Pep,
@@ -357,12 +349,10 @@ export function createCalliopeHttpServer(
       }
     });
   };
-  // The peer stamp wraps the whole listener, so the verified mTLS peer (the
-  // door's, on port + 1; none on this plaintext port) is on the async context
-  // before any handler runs; the witness reads it where the verb is dispatched.
-  const httpServer = createHttpServer(
-    peers === undefined ? withPeerContext(serve) : withDoorPeers(serve, peers),
-  );
+  // The peer stamp wraps the whole listener, so the peer is on the async
+  // context before any handler runs; the witness reads it where the verb is
+  // dispatched. There is no mTLS door any more (REST mesh P7, wonka68-rm30).
+  const httpServer = createHttpServer(withPeerContext(serve));
   // The sink's producer lives and dies with the door that feeds it.
   httpServer.once("close", () => {
     void witness?.close();
@@ -405,7 +395,6 @@ async function main(): Promise<void> {
   // The witness: one record per inbound tools/call, to the log stream and to
   // calliope._ops.calls when KAFKA_BOOTSTRAP names a broker.
   const witness = makeWitness();
-  const peers = new LoopbackPeers();
   const restMux = new RouteMux();
 
   const httpServer = createCalliopeHttpServer(
@@ -419,7 +408,6 @@ async function main(): Promise<void> {
     backend.containers,
     consciousness,
     witness,
-    peers,
     pep,
     restMux,
   );
@@ -431,13 +419,6 @@ async function main(): Promise<void> {
   process.stderr.write(
     `calliope-mcp-http: serving (backend=${kind}) on http://${host}:${String(port)}${MCP_PATH}\n`,
   );
-
-  // The mTLS door on port + 1, presenting this star's SVID. Fail-soft: with no
-  // SPIRE socket it warns once and the star serves plaintext only.
-  await serveMtlsDoor(httpServer, peers, host, {
-    logPrefix: "calliope-mcp-http",
-    path: MCP_PATH,
-  });
 
   // REST goes up AFTER the MCP door is armed (the witness and the PEP are
   // wired into every server built above), behind STELLAR_REST=1. A refused
@@ -459,7 +440,6 @@ async function main(): Promise<void> {
         }),
       ),
     witness,
-    peers,
     mux: restMux,
   });
 

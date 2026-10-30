@@ -1,12 +1,11 @@
 /**
  * Who is calling, as a verb handler may read it: the VERIFIED peer the door
- * stamped on the request's async context (`withDoorPeers` / `withPeerContext`
- * in http.ts), never an argument.
+ * stamped on the request's async context (`withPeerContext` in http.ts, or the
+ * REST face's Cilium X-Forge-Peer stamp), never an argument.
  *
  * Two shapes name a caller:
- *  - a direct dial on the mTLS door: the client certificate's SPIFFE id. This
- *    is how nomos reaches calliope today (request_log: `path=direct`,
- *    `caller_identity=spiffe://notusmi.com/star/nomos`, 2026-10-27).
+ *  - a direct call: the caller's SPIFFE id, from the REST door's Cilium stamp
+ *    (the mTLS door is gone, REST mesh P7).
  *  - a call through the gateway: the verified peer is hades, and the session
  *    or star behind it is the gateway's `hades/principal` `_meta` stamp. Only
  *    a hades peer in this trust domain, named by its certificate or by the
