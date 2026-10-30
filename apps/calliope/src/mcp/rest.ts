@@ -10,7 +10,6 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { LoopbackPeers } from "@forge/stellar-core-ts/mtlsdoor";
 import { mountWitnessed, restEnabled } from "@forge/stellar-core-ts/rest";
 import type { Mux, RestMount } from "@forge/stellar-core-ts/rest";
 import { SOURCE_STAR } from "./consciousness-emit.js";
@@ -21,7 +20,6 @@ export interface RestFaceOptions {
   /** Builds a server for REST alone: a server serves one transport at a time. */
   readonly build: () => McpServer;
   readonly witness: Witness;
-  readonly peers: LoopbackPeers;
   readonly mux: Mux;
   /** Reads the environment. Default: `process.env`. */
   readonly getenv?: (name: string) => string | undefined;
@@ -40,7 +38,6 @@ export async function mountRestFace(
   return mountWitnessed(o.build, {
     star: SOURCE_STAR,
     log: o.witness.log,
-    peers: o.peers,
     mux: o.mux,
     getenv,
   });

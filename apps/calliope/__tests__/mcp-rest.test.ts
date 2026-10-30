@@ -4,7 +4,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { RequestLog } from "@forge/stellar-core-ts";
 import type { RequestRecord } from "@forge/stellar-core-ts";
-import { LoopbackPeers } from "@forge/stellar-core-ts/mtlsdoor";
 import { RouteMux } from "@forge/stellar-core-ts/rest";
 import type { RestMount } from "@forge/stellar-core-ts/rest";
 import { makeBackend } from "../src/mcp/backend.js";
@@ -82,7 +81,6 @@ describe("mountRestFace refusal paths", () => {
           return new McpServer({ name: "x", version: "0" });
         },
         witness,
-        peers: new LoopbackPeers(),
         mux,
         getenv: (k) => (k === "STELLAR_REST" ? value : undefined),
       });
@@ -92,7 +90,6 @@ describe("mountRestFace refusal paths", () => {
     const base = await listen(
       createCalliopeHttpServer(
         "fixture",
-        undefined,
         undefined,
         undefined,
         undefined,
@@ -121,7 +118,6 @@ describe("mountRestFace refusal paths", () => {
           return bare;
         },
         witness,
-        peers: new LoopbackPeers(),
         mux: new RouteMux(),
         getenv: on,
       }),
@@ -140,7 +136,6 @@ describe("mountRestFace refusal paths", () => {
     const first = await mountRestFace({
       build,
       witness,
-      peers: new LoopbackPeers(),
       mux,
       getenv: on,
     });
@@ -149,7 +144,6 @@ describe("mountRestFace refusal paths", () => {
       mountRestFace({
         build,
         witness,
-        peers: new LoopbackPeers(),
         mux,
         getenv: on,
       }),
@@ -167,7 +161,6 @@ describe("REST on (STELLAR_REST=1)", () => {
     const { witness } = recording();
     const backend = makeBackend("fixture");
     const mux = new RouteMux();
-    const peers = new LoopbackPeers();
     const rest = await mountRestFace({
       build: () =>
         createServer(
@@ -178,7 +171,6 @@ describe("REST on (STELLAR_REST=1)", () => {
           }),
         ),
       witness,
-      peers,
       mux,
       getenv: on,
     });
@@ -195,7 +187,6 @@ describe("REST on (STELLAR_REST=1)", () => {
         backend.containers,
         undefined,
         witness,
-        peers,
         undefined,
         mux,
       ),
@@ -211,7 +202,6 @@ describe("REST on (STELLAR_REST=1)", () => {
     const { witness, got } = recording();
     const backend = makeBackend("fixture");
     const mux = new RouteMux();
-    const peers = new LoopbackPeers();
     const rest: RestMount | undefined = await mountRestFace({
       build: () =>
         createServer(
@@ -224,7 +214,6 @@ describe("REST on (STELLAR_REST=1)", () => {
           }),
         ),
       witness,
-      peers,
       mux,
       getenv: onMux,
     });
@@ -242,7 +231,6 @@ describe("REST on (STELLAR_REST=1)", () => {
         backend.containers,
         undefined,
         witness,
-        peers,
         undefined,
         mux,
       ),

@@ -488,7 +488,6 @@ describe("the served route, through a real TLS handshake and the real transport"
       undefined,
       undefined,
       witness,
-      undefined,
       pep,
     );
     return { server, witness, got };

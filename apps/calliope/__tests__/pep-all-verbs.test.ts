@@ -58,7 +58,6 @@ describe("witness-mode PEP decides every verb on the served route", () => {
         undefined,
         undefined,
         { log, close: () => Promise.resolve() },
-        undefined,
         pep,
       );
       open = server;

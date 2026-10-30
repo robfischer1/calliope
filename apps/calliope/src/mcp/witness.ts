@@ -9,11 +9,9 @@
  * (server.ts installs it) and the sink (built here from `KAFKA_BOOTSTRAP`).
  *
  * It records and refuses nothing (the PEP, `@forge/stellar-core-ts/pep`, decides on the same record).
- * Calliope's mTLS door (port + 1, `@forge/stellar-core-ts/mtlsdoor`)
- * verifies a presented client certificate against the SPIFFE bundle, so a call
- * on it names its caller (`caller_identity`, `path` gateway or direct); a call
- * on the plaintext port, or on the door with no certificate, reads
- * `unidentified` with path `unknown` — the Go doors' "verify if given".
+ * Callers reach calliope on its REST door (openapi-http), where the Cilium
+ * X-Forge-Peer stamp names them; the mTLS door is gone (REST mesh P7). A call
+ * on the loopback MCP port reads `unidentified` with path `unknown`.
  */
 
 import { RequestLog, witnessSink } from "@forge/stellar-core-ts";
