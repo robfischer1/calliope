@@ -133,7 +133,10 @@ export function registerDeleteVerbs(
         `${String(DELETE_NOTE_MAX)} ids. In both modes the whole call ` +
         "refuses, writing nothing, on a non-Note, a protected note " +
         "(archived, or claimed by another star) or a parent of a note " +
-        "outside the call. A note with no current facts answers not_found.",
+        "outside the call. A purge also refuses (has_placements) a note " +
+        "holding a block that slots outside the call place, unless " +
+        'placements is "orphan". A note with no current facts answers ' +
+        "not_found.",
       inputSchema: z.strictObject({
         ids,
         dry_run: z.boolean().optional().describe("Default true. false writes."),
@@ -144,9 +147,18 @@ export function registerDeleteVerbs(
             "Default false (suppress). true retracts every fact; restore " +
               "cannot undo it.",
           ),
+        placements: z
+          .literal("orphan")
+          .optional()
+          .describe(
+            "Purge only: a note whose blocks are placed by slots outside " +
+              "the call is purged anyway, those placements left dangling " +
+              "(each keeps its ref). Absent, such a note refuses " +
+              "has_placements.",
+          ),
       }),
     },
-    async ({ ids, dry_run, purge }, extra) => {
+    async ({ ids, dry_run, purge, placements }, extra) => {
       if (purge !== true) {
         const types = hideableTypes(callerPrincipal(metaOf(extra)));
         const result = await suppressNotes(
@@ -174,7 +186,11 @@ export function registerDeleteVerbs(
           result,
         );
       }
-      const result = await deleteNotes(dial, scope, tags, { ids, dry_run });
+      const result = await deleteNotes(dial, scope, tags, {
+        ids,
+        dry_run,
+        placements,
+      });
       if (isDeleteNotesError(result)) {
         return refusalResult(result);
       }

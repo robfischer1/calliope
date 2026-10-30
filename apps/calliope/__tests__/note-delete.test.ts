@@ -750,7 +750,10 @@ describe("delete_note's published surface", () => {
         "would change. Takes up to 100 ids. In both modes the whole call " +
         "refuses, writing nothing, on a non-Note, a protected note " +
         "(archived, or claimed by another star) or a parent of a note " +
-        "outside the call. A note with no current facts answers not_found.",
+        "outside the call. A purge also refuses (has_placements) a note " +
+        "holding a block that slots outside the call place, unless " +
+        'placements is "orphan". A note with no current facts answers ' +
+        "not_found.",
     );
     expect(tool?.annotations).toEqual({
       readOnlyHint: false,

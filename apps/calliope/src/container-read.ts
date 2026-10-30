@@ -24,7 +24,20 @@ import {
   factScalarHashes,
   factsFromQuads,
 } from "./slot-facts.js";
-import { TREE_CONTENT, TREE_MEMBER, TREE_POSITION, readTree } from "./tree.js";
+import {
+  type Placement,
+  containersOf,
+  placementsOf,
+  resolvePlacements,
+} from "./transclusion.js";
+import {
+  TREE_CONTENT,
+  TREE_MEMBER,
+  TREE_POSITION,
+  TREE_REF,
+  readTree,
+  refOf,
+} from "./tree.js";
 
 /** One assembled block. */
 export interface ContainerBlock {
@@ -36,6 +49,34 @@ export interface ContainerBlock {
   dangling: boolean;
   /** The slot's metadata facts — present only on a `facts` read. */
   facts?: BlockFact[];
+  /** Present only on a PLACEMENT: the origin slot it resolves through, and
+   *  (HEAD reads) the container holding that origin. `blobId` and `text`
+   *  are then the origin's; an orphaned placement is dangling with `ref`
+   *  kept. Absent on every blob slot, so their shape is unchanged. */
+  ref?: { slot: string; container?: string };
+  /** Present only on a `placements` read: the slots placing this one. */
+  placements?: Placement[];
+}
+
+/** A slot as the primitives read it, before the blob fetch. */
+interface ReadSlot {
+  slot: string;
+  position: string;
+  blobId: string | null;
+  ref?: string;
+  facts?: BlockFact[];
+}
+
+/** The `ref` member of a placement's block (absent on a blob slot). */
+function refBlock(
+  s: { ref?: string },
+  homes: ReadonlyMap<string, string>,
+): { ref?: { slot: string; container?: string } } {
+  if (s.ref === undefined) return {};
+  const container = homes.get(s.ref);
+  return {
+    ref: container === undefined ? { slot: s.ref } : { slot: s.ref, container },
+  };
 }
 
 export interface ContainerReadResult {
@@ -47,12 +88,8 @@ export interface ContainerReadResult {
 /** Assemble slots+blobs into ordered blocks with dangling surfaced. */
 async function assemble(
   blobs: ProseStore,
-  slots: {
-    slot: string;
-    position: string;
-    blobId: string | null;
-    facts?: BlockFact[];
-  }[],
+  slots: ReadSlot[],
+  homes: ReadonlyMap<string, string> = new Map(),
 ): Promise<ContainerBlock[]> {
   const ids = slots
     .map((s) => s.blobId)
@@ -67,6 +104,7 @@ async function assemble(
       text,
       dangling: text === null,
       ...(s.facts !== undefined ? { facts: s.facts } : {}),
+      ...refBlock(s, homes),
     };
   });
 }
@@ -79,14 +117,7 @@ async function treeAt(
   containerToken: string,
   asOfTx: number,
   withFacts = false,
-): Promise<
-  {
-    slot: string;
-    position: string;
-    blobId: string | null;
-    facts?: BlockFact[];
-  }[]
-> {
+): Promise<ReadSlot[]> {
   const memberRows = await dial.quadsFrom([containerToken], asOfTx, [
     TREE_MEMBER,
   ]);
@@ -97,22 +128,11 @@ async function treeAt(
   const slotRows = await dial.quadsFrom(slots, asOfTx, [
     TREE_POSITION,
     TREE_CONTENT,
+    TREE_REF,
     ...(withFacts ? SLOT_FACT_PREDICATES : []),
   ]);
-  const positionHash = scopeHash(TREE_POSITION);
-  const contentHash = scopeHash(TREE_CONTENT);
   const posHashes: string[] = [];
-  const perSlot = new Map<string, { positionHash?: string; blobId?: string }>();
-  for (const row of slotRows) {
-    const cell = perSlot.get(row.s) ?? {};
-    if (row.p === positionHash && !row.o.startsWith("blob:")) {
-      cell.positionHash = row.o;
-      posHashes.push(row.o);
-    } else if (row.p === contentHash && row.o.startsWith("blob:")) {
-      cell.blobId = row.o.slice("blob:".length);
-    }
-    perSlot.set(row.s, cell);
-  }
+  const perSlot = cellsOf(slotRows, (h) => posHashes.push(h));
   const values = await dial.resolveScalars([
     ...posHashes,
     ...(withFacts ? factScalarHashes(slotRows) : []),
@@ -128,6 +148,7 @@ async function treeAt(
       slot,
       position,
       blobId: cell.blobId ?? null,
+      ...refOf(cell.ref),
       ...(factsOf !== null ? { facts: factsOf.get(slot) ?? [] } : {}),
     };
   });
@@ -135,6 +156,37 @@ async function treeAt(
     a.position < b.position ? -1 : a.position > b.position ? 1 : 0,
   );
   return out;
+}
+
+/** One slot's tree cells off its quads: position hash, own blob, origin. */
+interface Cell {
+  positionHash?: string;
+  blobId?: string;
+  ref?: string;
+}
+
+/** Fold slot quads into cells; `onPosition` sees every position hash. */
+function cellsOf(
+  rows: readonly { s: string; p: string; o: string }[],
+  onPosition: (hash: string) => void,
+): Map<string, Cell> {
+  const positionHash = scopeHash(TREE_POSITION);
+  const contentHash = scopeHash(TREE_CONTENT);
+  const refHash = scopeHash(TREE_REF);
+  const perSlot = new Map<string, Cell>();
+  for (const row of rows) {
+    const cell = perSlot.get(row.s) ?? {};
+    if (row.p === positionHash && !row.o.startsWith("blob:")) {
+      cell.positionHash = row.o;
+      onPosition(row.o);
+    } else if (row.p === contentHash && row.o.startsWith("blob:")) {
+      cell.blobId = row.o.slice("blob:".length);
+    } else if (row.p === refHash && !row.o.startsWith("blob:")) {
+      cell.ref = row.o;
+    }
+    perSlot.set(row.s, cell);
+  }
+  return perSlot;
 }
 
 /**
@@ -145,9 +197,9 @@ async function treeAt(
 export async function readContainer(
   facet: ContainerFacet,
   containerToken: string,
-  opts?: { asOfTx?: number; facts?: boolean },
+  opts?: { asOfTx?: number; facts?: boolean; placements?: boolean },
 ): Promise<ContainerReadResult> {
-  const slots =
+  const raw =
     opts?.asOfTx === undefined
       ? await readTree(facet.dial, containerToken, { facts: opts?.facts })
       : await treeAt(
@@ -156,22 +208,68 @@ export async function readContainer(
           opts.asOfTx,
           opts.facts === true,
         );
-  const blocks = await assemble(facet.blobs, slots);
+  // A placement reads its origin's blob as of the same transaction.
+  const slots = await resolvePlacements(facet.dial, raw, opts?.asOfTx ?? null);
+  const blocks = await assemble(
+    facet.blobs,
+    slots,
+    opts?.asOfTx === undefined ? await originHomes(facet, slots) : new Map(),
+  );
+  if (opts?.placements === true) {
+    for (const b of blocks) {
+      b.placements = await placementsOf(facet.dial, b.slot);
+    }
+  }
   return opts?.asOfTx === undefined
     ? { blocks }
     : { blocks, asOfTx: opts.asOfTx };
+}
+
+/** The container of each placement's origin at HEAD (none when the
+ *  container holds no placement: zero extra calls). */
+function originHomes(
+  facet: ContainerFacet,
+  slots: readonly { ref?: string }[],
+): Promise<Map<string, string>> {
+  const origins = slots.flatMap((s) => (s.ref === undefined ? [] : [s.ref]));
+  return origins.length === 0
+    ? Promise.resolve(new Map<string, string>())
+    : containersOf(facet.dial, origins);
 }
 
 /**
  * The container's history: every transaction that touched it or any slot
  * it EVER held (the door's log-closure over tree_member), ascending, with
  * authors. No revision table is consulted — the graph is the only source.
+ * A container holding placements also lists the transactions that touched
+ * their origins NOW placed (an edit through any placement, or at the
+ * origin, changed what this container reads).
  */
-export function containerHistory(
+export async function containerHistory(
   facet: ContainerFacet,
   containerToken: string,
 ): Promise<HistoryEntry[]> {
-  return facet.dial.history([containerToken], [TREE_MEMBER]);
+  const own = await facet.dial.history([containerToken], [TREE_MEMBER]);
+  const members = (
+    await facet.dial.quadsFrom([containerToken], null, [TREE_MEMBER])
+  )
+    .map((r) => r.o)
+    .filter((o) => !o.startsWith("blob:"));
+  if (members.length === 0) return own;
+  const refHash = scopeHash(TREE_REF);
+  const origins = [
+    ...new Set(
+      (await facet.dial.quadsFrom(members, null, [TREE_REF]))
+        .filter((r) => r.p === refHash && !r.o.startsWith("blob:"))
+        .map((r) => r.o),
+    ),
+  ];
+  if (origins.length === 0) return own;
+  const byTx = new Map(own.map((h) => [h.tx, h]));
+  for (const h of await facet.dial.history(origins, [])) {
+    if (!byTx.has(h.tx)) byTx.set(h.tx, h);
+  }
+  return [...byTx.values()].sort((a, b) => a.tx - b.tx);
 }
 
 // ── the batch read (calliope_read_containers) ────────────────────────────────
@@ -246,22 +344,11 @@ export async function readContainers(
       : await dial.quadsFrom(allSlots, null, [
           TREE_POSITION,
           TREE_CONTENT,
+          TREE_REF,
           ...(opts.facts === true ? SLOT_FACT_PREDICATES : []),
         ]);
-  const positionHash = scopeHash(TREE_POSITION);
-  const contentHash = scopeHash(TREE_CONTENT);
-  const perSlot = new Map<string, { positionHash?: string; blobId?: string }>();
   const scalars = new Set<string>(fmHashOf.values());
-  for (const row of slotRows) {
-    const cell = perSlot.get(row.s) ?? {};
-    if (row.p === positionHash && !row.o.startsWith("blob:")) {
-      cell.positionHash = row.o;
-      scalars.add(row.o);
-    } else if (row.p === contentHash && row.o.startsWith("blob:")) {
-      cell.blobId = row.o.slice("blob:".length);
-    }
-    perSlot.set(row.s, cell);
-  }
+  const perSlot = cellsOf(slotRows, (h) => scalars.add(h));
   if (opts.facts === true) {
     for (const h of factScalarHashes(slotRows)) scalars.add(h);
   }
@@ -272,12 +359,7 @@ export async function readContainers(
   const shaped: {
     container: string;
     frontmatter: string | null;
-    slots: {
-      slot: string;
-      position: string;
-      blobId: string | null;
-      facts?: BlockFact[];
-    }[];
+    slots: ReadSlot[];
   }[] = [];
   for (const container of containerTokens) {
     const members = slotsOf.get(container);
@@ -296,6 +378,7 @@ export async function readContainers(
         slot,
         position,
         blobId: cell.blobId ?? null,
+        ...refOf(cell.ref),
         ...(factsOf !== null ? { facts: factsOf.get(slot) ?? [] } : {}),
       };
     });
@@ -308,6 +391,18 @@ export async function readContainers(
       slots,
     });
   }
+  // Placements resolve through their origins in ONE more quads read for the
+  // whole batch; the revision then moves when an origin is edited.
+  const resolved = await resolvePlacements(
+    dial,
+    shaped.flatMap((c) => c.slots),
+    null,
+  );
+  const bySlot = new Map(resolved.map((s) => [s.slot, s]));
+  for (const c of shaped) {
+    c.slots = c.slots.map((s) => bySlot.get(s.slot) ?? s);
+  }
+  const homes = await originHomes(facet, resolved);
 
   const ids = opts.texts
     ? shaped.flatMap((c) =>
@@ -332,6 +427,7 @@ export async function readContainers(
         // Dangling is a fact of the graph, not of whether text was asked for.
         dangling: s.blobId === null || (opts.texts && text === null),
         ...(s.facts !== undefined ? { facts: s.facts } : {}),
+        ...refBlock(s, homes),
       };
     }),
   }));

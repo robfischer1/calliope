@@ -52,7 +52,12 @@ import {
 } from "./chaos-client.js";
 import { retractTargets } from "./instant.js";
 import type { TagStore } from "./tag-store.js";
-import { TREE_CONTENT, TREE_MEMBER } from "./tree.js";
+import {
+  type Placement,
+  orphanedPlacements,
+  placementsOf,
+} from "./transclusion.js";
+import { TREE_CONTENT, TREE_MEMBER, TREE_REF } from "./tree.js";
 
 /** The largest batch one call takes. */
 export const DELETE_NOTE_MAX = 100;
@@ -81,6 +86,10 @@ export interface DeleteNotesInput {
   ids: string[];
   /** Default true: report what would go and write nothing. */
   dry_run?: boolean | undefined;
+  /** A note holding an ORIGIN that slots outside this call still place:
+   *  "orphan" purges it and leaves those placements dangling (ref kept);
+   *  absent, the note is refused has_placements. */
+  placements?: "orphan" | undefined;
 }
 
 /** One note's plan, and after a real run its outcome. */
@@ -99,13 +108,17 @@ export interface NoteDeletion {
   blobs: string[];
   /** Tag-mirror rows removed. */
   tags: string[];
+  /** Placements outside the call left dangling (`placements: "orphan"`):
+   *  planned on a dry run; on a real run, what the post-commit detector
+   *  found, which also catches a placement made concurrently. */
+  orphaned?: (Placement & { origin: string })[];
   /** The graph transaction the retraction landed as (real runs). */
   tx?: number;
 }
 
 export interface DeleteRefusal {
   node_id: string;
-  code: "not_a_note" | "protected" | "has_children";
+  code: "not_a_note" | "protected" | "has_children" | "has_placements";
   detail: string;
 }
 
@@ -141,6 +154,8 @@ export function isDeleteNotesError(r: object): r is DeleteNotesError {
 interface Plan {
   deletion: NoteDeletion;
   ops: ChaosOp[];
+  /** The note's own block slots (origins the detector re-reads). */
+  origins: string[];
   /** Removes the note's tag-mirror rows; absent without a tag store. */
   untag?: () => Promise<unknown>;
 }
@@ -265,6 +280,7 @@ async function plan(
   dial: Dial,
   id: string,
   batch: ReadonlySet<string>,
+  orphan = false,
 ): Promise<Plan | DeleteRefusal> {
   const deletion: NoteDeletion = {
     node_id: id,
@@ -279,7 +295,7 @@ async function plan(
   const checked = await checkNote(dial, id, batch);
   if (checked === null) {
     deletion.status = "not_found";
-    return { deletion, ops: [] };
+    return { deletion, ops: [], origins: [] };
   }
   if ("code" in checked) return checked;
   const { out, inbound } = checked;
@@ -308,13 +324,39 @@ async function plan(
       continue;
     }
     deletion.blocks += 1;
+    // An ORIGIN placed from outside this call: refused unless the caller
+    // orphans the placements, whose reference is then kept so each reads
+    // dangling and still names what it placed.
+    const outside = (await placementsOf(dial, slot)).filter(
+      (p) => p.container === undefined || !batch.has(p.container),
+    );
+    if (outside.length > 0 && !orphan) {
+      return {
+        node_id: id,
+        code: "has_placements",
+        detail:
+          `${id} holds block ${slot}, placed by ` +
+          `${outside.map((p) => p.slot).join(", ")}; delete or remove those ` +
+          'first, or send placements: "orphan"',
+      };
+    }
+    const kept = new Set(outside.map((p) => p.slot));
+    if (outside.length > 0) {
+      deletion.orphaned = [
+        ...(deletion.orphaned ?? []),
+        ...outside.map((p) => ({ ...p, origin: slot })),
+      ];
+    }
     for (const e of semantic(await dial.placedEdges(slot))) {
       retract.push(e);
       if (e.predicate === TREE_CONTENT && e.domain === "blob") {
         blobs.add(e.value);
       }
     }
-    for (const e of holders) retract.push(e);
+    for (const e of holders) {
+      if (e.predicate === TREE_REF && kept.has(e.subject)) continue;
+      retract.push(e);
+    }
   }
   deletion.blobs = [...blobs].sort((a, b) => Number(a) - Number(b));
 
@@ -327,7 +369,7 @@ async function plan(
       ops.set(JSON.stringify(op), op);
     }
   }
-  return { deletion, ops: [...ops.values()] };
+  return { deletion, ops: [...ops.values()], origins: slots };
 }
 
 export function validate(ids: string[]): DeleteNotesError | null {
@@ -409,7 +451,7 @@ export async function deleteNotes(
   const plans: Plan[] = [];
   const refused: DeleteRefusal[] = [];
   for (const id of input.ids) {
-    const p = await plan(placed, id, batch);
+    const p = await plan(placed, id, batch, input.placements === "orphan");
     if ("code" in p) refused.push(p);
     else plans.push(p);
   }
@@ -455,6 +497,14 @@ export async function deleteNotes(
       if (res.tx !== undefined) deletion.tx = res.tx;
     }
     for (const op of p.ops) done.add(JSON.stringify(op));
+    if (p.origins.length > 0) {
+      // Post-commit: what actually dangles now, concurrent placements too.
+      const found = (await orphanedPlacements(dial, p.origins)).filter(
+        (o) => o.container === undefined || !batch.has(o.container),
+      );
+      if (found.length > 0) deletion.orphaned = found;
+      else delete deletion.orphaned;
+    }
     await p.untag?.();
     if (deletion.status !== "not_found") deletion.status = "deleted";
     landed.push(deletion);

@@ -66,6 +66,8 @@ import { NODE_TOKEN_RE, containerRef, nodeToken } from "./inputs.js";
 import { isStyx, resolveStyx } from "../styx.js";
 import { type ContainerFacet, writeContainer } from "../container-write.js";
 import { isPatchError, patchContainer } from "../container-patch.js";
+import { PlacementError, fanOutContainers } from "../transclusion.js";
+import { containerOps } from "../transclusion-write.js";
 import { MoveBlocksError, moveBlocks } from "../container-move.js";
 import { SLOT_FACT_PREDICATES, SlotFactError } from "../slot-facts.js";
 import type { AuthorKind, NotePublisher } from "./consciousness-emit.js";
@@ -91,6 +93,21 @@ import type { SearchProvider, SearchResponse } from "../search-types.js";
  * structurally a `Record<string, unknown>` (no implicit index signature), so
  * copy it into a fresh record at the boundary.
  */
+/** A transclusion refusal on the wire. Each code is spelled here, literally,
+ *  so the fleet registry (foundry-dies refusal-codes.toml) reads it. */
+function placementRefusal(err: PlacementError): RefusalResult {
+  switch (err.code) {
+    case "has_placements":
+      return refuse("has_placements", err.message);
+    case "cross_tenant_placement":
+      return refuse("cross_tenant_placement", err.message);
+    case "not_found":
+      return refuse("not_found", err.message);
+    case "bad_args":
+      return refuse("bad_args", err.message);
+  }
+}
+
 function structured(result: object): Record<string, unknown> {
   return { ...result };
 }
@@ -1499,17 +1516,44 @@ export function createServer(
       );
     const containerOpField = z
       .discriminatedUnion("op", [
+        z
+          .strictObject({
+            op: z
+              .literal("add")
+              .describe(
+                "Add a block: send text (a new blob) OR ref (a placement of " +
+                  "an existing block), exactly one.",
+              ),
+            text: z.string().optional().describe("The new block's prose."),
+            ref: z
+              .string()
+              .regex(NODE_TOKEN_RE)
+              .optional()
+              .describe(
+                "Place an existing block instead of new text: the origin " +
+                  "slot's 64-hex token. Reads resolve through it; an edit " +
+                  "through the placement rewrites the origin, so every " +
+                  "placement changes. The origin must hold content (not_found " +
+                  "otherwise; a placement is refused bad_args: no chains). " +
+                  "Cross-tenant refuses cross_tenant_placement " +
+                  "(placement-policy.ts). No facts.",
+              ),
+            position: z
+              .string()
+              .min(1)
+              .describe(
+                "Fractional order key (bytewise order; client-minted).",
+              ),
+            facts: factsField,
+          })
+          .meta({ "x-requiredOneOf": [["text"], ["ref"]] }),
         z.strictObject({
-          op: z.literal("add").describe("Add a block."),
-          text: z.string().describe("The new block's prose."),
-          position: z
-            .string()
-            .min(1)
-            .describe("Fractional order key (bytewise order; client-minted)."),
-          facts: factsField,
-        }),
-        z.strictObject({
-          op: z.literal("update").describe("Rewrite a block's prose."),
+          op: z
+            .literal("update")
+            .describe(
+              "Rewrite a block's prose. On a placement it rewrites the " +
+                "origin (oldBlobId is the origin's, as read).",
+            ),
           slot: slotField,
           oldBlobId: z
             .string()
@@ -1528,10 +1572,28 @@ export function createServer(
           position: z.string().min(1).describe("The new fractional order key."),
         }),
         z.strictObject({
-          op: z.literal("remove").describe("Remove a block."),
+          op: z
+            .literal("remove")
+            .describe(
+              "Remove a block. On a placement only the placement goes; an " +
+                "origin that still has placements refuses has_placements " +
+                'unless placements is "orphan".',
+            ),
           slot: slotField,
           position: z.string().min(1).describe("The slot's position now."),
-          blobId: z.string().min(1).describe("The blob the slot holds now."),
+          blobId: z
+            .string()
+            .describe(
+              "The blob the slot holds now (a placement: its origin's, as " +
+                'read; "" for a dangling placement).',
+            ),
+          placements: z
+            .literal("orphan")
+            .optional()
+            .describe(
+              "Removing an origin with placements: leave them dangling " +
+                "(each keeps its ref and reads dangling).",
+            ),
         }),
       ])
       .meta({ type: "object" })
@@ -1601,6 +1663,9 @@ export function createServer(
       async ({ container, ops, slot, replacements, tenant }) => {
         const graph = tenant ?? "notes";
         const exactlyOne = "send exactly one of ops or replacements";
+        // Slots this save rewrote: an origin's edit reaches every container
+        // placing it, and those are republished too.
+        let edited: string[];
         try {
           let result: Record<string, unknown> & { noop: boolean };
           let text: string;
@@ -1612,6 +1677,7 @@ export function createServer(
               graph,
             );
             if (isPatchError(patched)) return refusalResult(patched);
+            edited = patched.slots_changed;
             result = { ...patched };
             text = patched.noop
               ? "noop: the replacements changed nothing"
@@ -1620,7 +1686,12 @@ export function createServer(
             if (slot !== undefined) {
               return refuse("bad_args", "slot applies only to replacements");
             }
-            const saved = await writeContainer(facet, container, ops, graph);
+            const typed = containerOps(ops);
+            if (typeof typed === "string") return refuse("bad_args", typed);
+            const saved = await writeContainer(facet, container, typed, graph);
+            edited = typed.flatMap((op) =>
+              op.op === "update" ? [op.slot] : [],
+            );
             result = { ...saved };
             text = saved.noop
               ? "noop: every op netted out"
@@ -1633,6 +1704,19 @@ export function createServer(
             // Tags before the publish, so the projection carries them.
             tagOutcome = await afterContainerWrite(facet, container);
             await publishNote(facet, container);
+            // Transclusion fan-out: every other container reading an edited
+            // block (its origin's, its placements') is reconciled and
+            // republished, best-effort like the publish itself.
+            if (edited.length > 0) {
+              for (const other of await fanOutContainers(
+                facet.dial,
+                edited,
+                container,
+              )) {
+                await afterContainerWrite(facet, other);
+                await publishNote(facet, other);
+              }
+            }
           }
           return {
             content: [{ type: "text", text }],
@@ -1641,6 +1725,9 @@ export function createServer(
         } catch (err) {
           if (err instanceof SlotFactError) {
             return refuse("bad_args", err.message);
+          }
+          if (err instanceof PlacementError) {
+            return placementRefusal(err);
           }
           if (err instanceof ChaosClientError) {
             return refusalResult({
@@ -1758,7 +1845,10 @@ export function createServer(
           "as_of_tx reads the container as it stood at that transaction " +
           "(members since removed included). A tree fact naming an absent " +
           "blob surfaces as dangling (text null) — reported, never " +
-          "fabricated.",
+          "fabricated. A placement block (one that references another " +
+          "slot) carries ref {slot, container} and reads its origin's blobId " +
+          "and text, as of the same transaction; an orphaned placement is " +
+          "dangling with ref kept.",
         inputSchema: z.strictObject({
           container: containerRef(
             "The container node's 64-hex token, or its styx address " +
@@ -1778,9 +1868,16 @@ export function createServer(
               "Also answer each block's slot facts, each with its form " +
                 "(node or literal).",
             ),
+          placements: z
+            .boolean()
+            .default(false)
+            .describe(
+              "Also answer each block's placements: the slots (and their " +
+                "containers) that reference it — the reverse index of ref.",
+            ),
         }),
       },
-      async ({ container, as_of_tx, facts }) => {
+      async ({ container, as_of_tx, facts, placements }) => {
         let token = container;
         if (isStyx(container)) {
           // A hex token never reaches the dictionary: only an address does.
@@ -1793,6 +1890,7 @@ export function createServer(
         const result = await readContainer(facet, token, {
           ...(as_of_tx !== undefined ? { asOfTx: as_of_tx } : {}),
           facts,
+          placements,
         });
         return {
           content: [
