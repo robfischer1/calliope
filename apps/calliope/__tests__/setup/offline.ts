@@ -42,7 +42,7 @@
  * `src/mcp/*.ts` is in this package's Stryker `mutate` glob, so that mutant is
  * generated on every pull that touches the file. `LiveChaosDial`'s constructor
  * reads `process.env` — NOT the `env` object `main()` was handed — and falls
- * back to `https://chaos:8207` and `https://themis:8201`, which resolve in the
+ * back to `http://chaos:8209` and `https://themis:8201`, which resolve in the
  * gate and mutation lanes because those run IN the cluster. The sweep's first
  * act is `find_by_value("notes", "isArchived", "true")`, enumerating the real
  * archived corpus off the live graph.
