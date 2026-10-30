@@ -11,7 +11,7 @@
  *    intra-batch refs exist on the wire** — a mint-then-link is two `admit`
  *    calls; the minted tokens cross back in `minted[]`.
  *
- *  - **chaos** (`CALLIOPE_CHAOS_URL`, default `http://chaos:8206/mcp`) — the
+ *  - **chaos** (`CALLIOPE_CHAOS_URL`, default `http://chaos:8209/mcp`) — the
  *    identity reads. `findByName(kind, label)` is the documented F2 reuse
  *    lookup (`createNode` never dedups; a caller wanting reuse-not-create
  *    looks the name up first); `resolveNodes(tokens)` is the existence oracle
@@ -47,12 +47,11 @@ import { type ChaosRest, chaosRestFromEnv } from "./chaos-rest.js";
 // an enforcing themis refuses an unidentified caller. 8200 stays a live
 // plaintext door, so an `http://` CALLIOPE_THEMIS_URL is the rollback.
 export const DEFAULT_THEMIS_URL = "https://themis:8201";
-// ⚑ https AND 8207, both load-bearing. The SCHEME is not cosmetic: it is what
-// makes this client present calliope's SVID, and chaos types an unauthenticated
-// caller `unidentified` no matter how correct the rest of the call is. chaos
-// serves mTLS on plaintext+1 via a DualListener, so 8206 stays a live plaintext
-// door and reverting is a one-value CHAOS_URL override — no redeploy of chaos.
-const DEFAULT_CHAOS_URL = "https://chaos:8207";
+// chaos's REST door (openapi-http :8209). Its mTLS door :8207 is closed
+// (rest-mesh P7), so the old https://chaos:8207 default could only fail. Prod
+// sets CALLIOPE_CHAOS_REST_URL and every chaos verb rides REST
+// (CHAOS_MCP_ONLY is empty); this default is what a build without it names.
+const DEFAULT_CHAOS_URL = "http://chaos:8209";
 const TIMEOUT_MS = 30_000;
 
 const HEX64 = /^[0-9a-f]{64}$/;
