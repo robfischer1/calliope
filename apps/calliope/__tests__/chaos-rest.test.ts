@@ -119,25 +119,25 @@ describe("LiveChaosDial with the chaos REST flip", () => {
     });
   });
 
-  it("keeps register_graph, which calliope-sa is not granted, on /mcp", async () => {
+  it("sends register_graph as POST /v1/register_graph, never /mcp", async () => {
     const rest = door(() => structured({}));
     const mcp: string[] = [];
     globalThis.fetch = ((input: string) => {
       mcp.push(input);
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [] } }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-      );
+      return Promise.reject(new Error("no /mcp dial expected"));
     }) as unknown as typeof fetch;
     const dial = new LiveChaosDial({
-      chaosUrl: "http://chaos:8206",
       chaosRest: new ChaosRest("http://chaos:8209", 5_000, rest.fetch),
     });
     await dial.registerGraph("notes");
-    expect(rest.seen).toEqual([]);
-    expect(mcp).toEqual(["http://chaos:8206/mcp"]);
+    expect(mcp).toEqual([]);
+    expect(rest.seen).toHaveLength(1);
+    expect(rest.seen[0]?.method).toBe("POST");
+    expect(rest.seen[0]?.url).toBe("http://chaos:8209/v1/register_graph");
+    expect(JSON.parse(rest.seen[0]?.body ?? "{}")).toEqual({
+      graph: "notes",
+      name: "notes",
+    });
   });
 });
 
