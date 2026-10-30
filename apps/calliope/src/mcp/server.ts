@@ -153,7 +153,7 @@ export interface ServerOptions {
   /**
    * The focus register (028 — "Look At This" F5). When present, the server
    * additionally registers `look` — the attention-pointer read verb. The
-   * register itself is written by the Pontus telemetry consumer the boot
+   * register itself is written by the focus consumer the boot
    * wires (`focus-register.ts`); the verb only ever reads.
    */
   focus?: FocusRegister;

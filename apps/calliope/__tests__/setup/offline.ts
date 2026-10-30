@@ -4,8 +4,8 @@
  * # Why this is a one-line import and not `setupFiles`
  *
  * It was `setupFiles` for one revision, which is what this guard WANTS to be:
- * the lesson of infra#9758's audit is that eight Python stars (terpsichore,
- * narcissus, themis, urania, chaos, iris, mnemosyne, thalassa) are immune to
+ * the lesson of infra#9758's audit is that seven Python stars (terpsichore,
+ * narcissus, themis, urania, chaos, iris, mnemosyne) are immune to
  * the whole bug class because each carries an autouse `no_network` fixture in
  * `tests/conftest.py`, while stellar-core was exposed because it had no
  * conftest at all. A guard a future test inherits beats a guard a future test
