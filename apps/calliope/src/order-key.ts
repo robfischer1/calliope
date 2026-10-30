@@ -70,12 +70,15 @@ function keyBelow(b: string): string {
 
 /** A key strictly above `a`. */
 function keyAbove(a: string): string {
+  if (a === "") return MID;
   const head = a[0] ?? FIRST;
   if (head < LAST) {
     return String.fromCharCode(head.charCodeAt(0) + 1);
   }
-  // a starts at the ceiling; extend it so the result sorts after a.
-  return a + MID;
+  // a starts at the ceiling: keep the 9 and step the remainder, so a run of
+  // appends counts up ("9", "95", "96" … "99", "995") instead of growing one
+  // digit per append ("9", "95", "955", "9555" …).
+  return LAST + keyAbove(a.slice(1));
 }
 
 /** A key strictly between two ordered keys, by digit-wise descent. */
@@ -108,6 +111,44 @@ export function sequence(n: number): string[] {
   const keys: string[] = [];
   for (let i = 1; i <= n; i++) {
     keys.push(String(i).padStart(width, "0"));
+  }
+  return keys;
+}
+
+/**
+ * The longest key a write may mint before the container is re-laid.
+ *
+ * {@link sequence} keys are 2 characters up to 98 blocks and 3 up to 998, so a
+ * 4-character cap leaves one to two characters of insert headroom over a fresh
+ * layout and trips after roughly 15 consecutive appends (or a handful of
+ * bisections of one gap) — late enough that a rebalance is rare, early enough
+ * that keys never grow without bound.
+ */
+export const MAX_KEY_LEN = 4;
+
+/**
+ * `n` ascending keys strictly inside `(lo, hi)`, or `null` when they do not
+ * fit under {@link MAX_KEY_LEN} (or no key exists at all, e.g. below the floor
+ * key). `null` is the caller's cue to re-lay the whole container with
+ * {@link sequence} in the same write.
+ */
+export function mintRun(
+  lo: string | null,
+  hi: string | null,
+  n: number,
+): string[] | null {
+  const keys: string[] = [];
+  let prev = lo;
+  for (let i = 0; i < n; i++) {
+    let key: string;
+    try {
+      key = between(prev, hi);
+    } catch {
+      return null;
+    }
+    if (key.length > MAX_KEY_LEN) return null;
+    keys.push(key);
+    prev = key;
   }
   return keys;
 }

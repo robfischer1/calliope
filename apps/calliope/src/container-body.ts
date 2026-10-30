@@ -18,7 +18,7 @@ import type { ContainerBlock } from "./container-read.js";
 import { readContainer } from "./container-read.js";
 import type { ContainerFacet, ContainerOp } from "./container-write.js";
 import { writeContainer } from "./container-write.js";
-import { between } from "./order-key.js";
+import { mintRun, sequence } from "./order-key.js";
 import type { NoteBodies, Section, SectionInput } from "./types.js";
 
 /**
@@ -62,10 +62,35 @@ export function bodyDiffOps(
       });
     }
   }
-  let tail = blocks[blocks.length - 1]?.position ?? null;
-  for (const extra of sections.slice(shared)) {
-    tail = between(tail, null);
-    ops.push({ op: "add", text: extra.text, position: tail });
+  const extras = sections.slice(shared);
+  const tail = blocks[shared - 1]?.position ?? null;
+  const minted = mintRun(tail, null, extras.length);
+  let addKeys: string[];
+  if (minted !== null) {
+    addKeys = minted;
+  } else {
+    // The appended keys would outgrow the cap (or no key fits): re-lay the
+    // kept blocks and the new ones with sequence(), in this same write — one
+    // batch, so no reader sees a half-rebalanced container.
+    const keys = sequence(shared + extras.length);
+    for (let i = 0; i < shared; i++) {
+      const cur = blocks[i];
+      const key = keys[i];
+      if (cur === undefined || key === undefined || cur.position === key) {
+        continue;
+      }
+      ops.push({
+        op: "reorder",
+        slot: cur.slot,
+        oldPosition: cur.position,
+        position: key,
+        guard: true,
+      });
+    }
+    addKeys = keys.slice(shared);
+  }
+  for (const [i, extra] of extras.entries()) {
+    ops.push({ op: "add", text: extra.text, position: addKeys[i] ?? "" });
   }
   for (const gone of blocks.slice(shared)) {
     if (gone.blobId === null) continue;
