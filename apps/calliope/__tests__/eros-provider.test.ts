@@ -89,6 +89,15 @@ function structured(results: Record<string, unknown>[]): Response {
   );
 }
 
+/** What eros's door really serves: `search` text IS the JSON of its
+ *  structured content, so the door answers a plain application/json body. */
+function plain(body: string): Response {
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "application/json", "X-Star": "eros" },
+  });
+}
+
 describe("ErosSearchProvider", () => {
   it("maps eros hits to the ruled envelope with the source filter on the wire", async () => {
     const d = door(() =>
@@ -126,6 +135,44 @@ describe("ErosSearchProvider", () => {
       source: "calliope_documents",
       since: "1900",
     });
+  });
+
+  it("reads hits from a plain application/json body (text IS the structured form)", async () => {
+    const d = door(() =>
+      plain(
+        JSON.stringify({
+          results: [{ source_id: 9, title: "T", snippet: "s", score: 0.5 }],
+        }),
+      ),
+    );
+    const res = await new ErosSearchProvider(
+      "http://eros:8203",
+      d.fetch,
+    ).search("x");
+    expect(res.armsDark).toEqual([]);
+    expect(res.armsQueried).toEqual(["eros"]);
+    expect(res.hits).toEqual([
+      { id: "9", snippet: "T — s", score: 0.5, arms: ["eros"] },
+    ]);
+  });
+
+  it("reports a dark arm, not zero hits, when the body is not JSON", async () => {
+    const d = door(() => plain("<html>not json</html>"));
+    const res = await new ErosSearchProvider(
+      "http://eros:8203",
+      d.fetch,
+    ).search("x");
+    expect(res.armsDark).toEqual(["eros"]);
+    expect(res.armsQueried).toEqual([]);
+  });
+
+  it("reports a dark arm when the answer carries neither structure nor text", async () => {
+    const d = door(() => plain(""));
+    const res = await new ErosSearchProvider(
+      "http://eros:8203",
+      d.fetch,
+    ).search("x");
+    expect(res.armsDark).toEqual(["eros"]);
   });
 
   it("degrades to a named dark arm when eros is unreachable", async () => {
