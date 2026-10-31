@@ -168,6 +168,13 @@ apps/calliope/
                           the gap for bodies written before the push shipped.
                           `--probe` counts only. Needs DATABASE_URL +
                           CALLIOPE_INDEX_URL (or URANIA_URL/CHAOS_URL).
+      backfill-notes.ts   Operator-run CLI: publishes every existing note container
+                          to the consciousness bus (eros source_table
+                          calliope_notes) through the live publisher. Never on
+                          boot/deploy. `--dry-run` counts only; `--batch-size N`
+                          (100) + `--pause-ms N` (1000) page it; idempotent (the
+                          row key is a function of the node). Needs DATABASE_URL,
+                          CHAOS_URL, KAFKA_BOOTSTRAP (not for --dry-run).
       (heartbeat.ts is gone — deleted; the beat is `startHeartbeat` from
                           @forge/stellar-core-ts, called from mcp/http.ts: it
                           publishes to calliope._ops.heartbeat on Redpanda,
@@ -250,7 +257,7 @@ Dockerfile             multi-stage bun build on stellar_core:bun-mcp (digest-pin
   (PgBodyClient is NOT re-exported — mcp-internal only, reached via
   `mcp/backend.ts`), `order-key` helpers, and the C3/C4 store classes.
 - **Migration + ops CLIs** — the four `mcp/migrate*.ts` scripts plus
-  `mcp/backfill-index.ts`, each a standalone `bun run src/mcp/<name>.ts
+  `mcp/backfill-index.ts` and `mcp/backfill-notes.ts`, each a standalone `bun run src/mcp/<name>.ts
   [--probe|--retract]` invocation. Run from a checkout with network
   reachability to the needed stores (`DATABASE_URL` always; `PHDB_DATABASE_URL`
   for C3/C4/C5; `CALLIOPE_INDEX_URL`/`URANIA_URL`/`CHAOS_URL` for the

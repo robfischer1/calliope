@@ -278,6 +278,7 @@ apps/calliope/
       consciousness-emit.ts the consciousness producer: ConsciousnessEvent per note write, eros's row id (pass 4)
       note-projection.ts   the note as the index sees it — blocks + tags + provenance, assembled at publish
       backfill-index.ts    one-off index backfill CLI
+      backfill-notes.ts    operator-run consciousness-bus backfill CLI (--dry-run, --batch-size, --pause-ms)
       hades-capture.ts / live-capture.ts   legacy substrate transports
       migrate.ts / migrate-documents.ts / migrate-revisions.ts /
       migrate-dissolution-archive.ts       the C2-C5 era migrations (historical)
