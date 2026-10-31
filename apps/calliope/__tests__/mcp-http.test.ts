@@ -23,12 +23,18 @@ interface ListedTool {
   };
 }
 
-/** The server's tools as the served spec carries them. */
-async function listTools(at = base): Promise<ListedTool[]> {
-  const doc = (await (await fetch(`${at}/openapi.json`)).json()) as {
-    "x-mcp-tools"?: Record<string, ListedTool>;
-  };
-  return Object.values(doc["x-mcp-tools"] ?? {});
+interface Spec {
+  "x-mcp-tools"?: Record<string, ListedTool>;
+}
+
+/** The server's tools as a served spec carries them. */
+const toolsOf = (doc: Spec): ListedTool[] =>
+  Object.values(doc["x-mcp-tools"] ?? {});
+
+/** The tools of the door this suite serves. */
+async function listTools(): Promise<ListedTool[]> {
+  const res = await fetch(`${base}/openapi.json`);
+  return toolsOf((await res.json()) as Spec);
 }
 
 beforeEach(async () => {
@@ -207,7 +213,8 @@ describe("the PRODUCTION boot shape (prebuilt client, F12 regression pin)", () =
       containers: backend.containers,
     });
     try {
-      const names = (await listTools(served.base)).map((t) => t.name);
+      const spec = await fetch(`${served.base}/openapi.json`);
+      const names = toolsOf((await spec.json()) as Spec).map((t) => t.name);
       expect(names).toContain("write_container");
       expect(names).toContain("read_container");
       expect(names).toContain("container_history");

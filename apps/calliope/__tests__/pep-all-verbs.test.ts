@@ -11,11 +11,12 @@ import { serveDoor, toolRecords } from "./rest-door.js";
  * one tool record carrying a decision, and witness must never refuse.
  */
 
+// Each verb and the method its REST route takes (the served spec's).
 const VERBS = [
-  "dissolve_note",
-  "materialize_note",
-  "read_container",
-  "write_container",
+  ["dissolve_note", "POST"],
+  ["materialize_note", "GET"],
+  ["read_container", "GET"],
+  ["write_container", "DELETE"],
 ] as const;
 
 const closers: (() => Promise<void>)[] = [];
@@ -24,7 +25,7 @@ afterEach(async () => {
 });
 
 describe("witness-mode PEP decides every verb on the served door", () => {
-  for (const verb of VERBS) {
+  for (const [verb, method] of VERBS) {
     it(`${verb}: one record, a decision recorded, nothing refused`, async () => {
       const got: RequestRecord[] = [];
       const log = new RequestLog("calliope", {
@@ -42,13 +43,9 @@ describe("witness-mode PEP decides every verb on the served door", () => {
         pep,
       });
       closers.push(() => rest.close());
-      const doc = (await (await fetch(`${base}/openapi.json`)).json()) as {
-        paths: Record<string, Record<string, unknown>>;
-      };
-      const method = Object.keys(doc.paths[`/v1/${verb}`] ?? {})[0] ?? "post";
       const resp = await fetch(`${base}/v1/${verb}`, {
-        method: method.toUpperCase(),
-        ...(method === "get"
+        method,
+        ...(method === "GET"
           ? {}
           : { headers: { "Content-Type": "application/json" }, body: "{}" }),
       });
