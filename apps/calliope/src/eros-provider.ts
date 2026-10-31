@@ -1,8 +1,13 @@
 /**
  * The pg backend's search arm (Findability F4) — Eros as a shape, routed,
  * never rebuilt: `search(query, scope)` on a store-backed server calls
- * eros's `search` tool (MCP streamable-HTTP) with a source filter pinning
- * the dissolved-notes source, and maps the answer into the ruled envelope.
+ * eros's `search` verb over its openapi-http face (POST /v1/search on the
+ * plaintext REST door, `CALLIOPE_EROS_URL` e.g. `http://eros:8203`; the mesh
+ * proxy stamps `X-Forge-Peer: calliope` and grants-eros admits /v1/<verb>
+ * only — eros's /mcp is not reachable in the mesh) with a source filter
+ * pinning the dissolved-notes source, and maps the answer into the ruled
+ * envelope. The envelope names the arm that was dialled — `eros` — not the
+ * fts/semantic arms eros fuses inside itself.
  * The pg backend's architecture has ONE arm; unreachable degrades to
  * `armsDark: ["eros"]` — named, never thrown (docs/search-architecture.md).
  *
@@ -10,8 +15,7 @@
  * only. Eros's decay + engagement ranking rides through untouched.
  */
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { RestClient } from "@forge/stellar-core-ts/rest";
 import type { SearchProvider, SearchResponse } from "./search-types.js";
 
 /** The dissolved-notes source eros reports (verified live: 36,432 chunks). */
@@ -50,10 +54,12 @@ export function erosUrl(env: NodeJS.ProcessEnv = process.env): string | null {
 }
 
 export class ErosSearchProvider implements SearchProvider {
-  readonly #endpoint: string;
+  readonly #client: RestClient;
 
-  constructor(url: string) {
-    this.#endpoint = `${url}/mcp`;
+  constructor(url: string, fetchFn?: typeof fetch) {
+    this.#client = new RestClient(
+      fetchFn === undefined ? { base: url } : { base: url, fetch: fetchFn },
+    );
   }
 
   async search(
@@ -83,31 +89,14 @@ export class ErosSearchProvider implements SearchProvider {
     }
   }
 
-  /** One stateless MCP round-trip per query, bounded by TIMEOUT_MS. */
+  /** One REST round-trip per query, bounded by TIMEOUT_MS. */
   async #call(query: string, k: number): Promise<ErosSearchResult> {
-    const client = new Client({ name: "calliope-eros-arm", version: "0.1.0" });
-    const transport = new StreamableHTTPClientTransport(
-      new URL(this.#endpoint),
+    const reply = await this.#client.call(
+      "search",
+      { query, k, source: EROS_NOTES_SOURCE, since: SINCE_ALL },
+      { signal: AbortSignal.timeout(TIMEOUT_MS) },
     );
-    try {
-      await client.connect(transport);
-      const result = await client.callTool(
-        {
-          name: "search",
-          arguments: {
-            query,
-            k,
-            source: EROS_NOTES_SOURCE,
-            since: SINCE_ALL,
-          },
-        },
-        undefined,
-        { timeout: TIMEOUT_MS },
-      );
-      return result.structuredContent ?? {};
-    } finally {
-      await client.close().catch(() => undefined);
-    }
+    return reply.structured ?? {};
   }
 }
 
