@@ -1,13 +1,6 @@
-import {
-  createServer as createHttpsServer,
-  request as httpsRequest,
-} from "node:https";
-import type { Server } from "node:http";
-import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { RequestLog, runWithPeer } from "@forge/stellar-core-ts";
 import type { RequestRecord, ToolCallHandler } from "@forge/stellar-core-ts";
-import { createCalliopeHttpServer } from "../src/mcp/http.js";
 import { pepHandler } from "@forge/stellar-core-ts/pep";
 import {
   enforcePreconditions,
@@ -17,10 +10,8 @@ import {
 } from "@forge/stellar-core-ts/pep";
 import type { Pep } from "@forge/stellar-core-ts/pep";
 import { makeWitness } from "../src/mcp/witness.js";
-import type { Witness } from "../src/mcp/witness.js";
 import { SESSION, peerFor, recordingLog } from "./helpers/pep.js";
-import { makeIdentity } from "./helpers/tls-identity.js";
-import type { TlsIdentity } from "./helpers/tls-identity.js";
+import { serveDoor, toolRecords } from "./rest-door.js";
 
 /**
  * The PEP on the dispatcher, mirroring stellar-core-go `policy/middleware_test.go`
@@ -443,31 +434,15 @@ describe("BOOT reads nothing from disk", () => {
   });
 });
 
-describe("the served route, through a real TLS handshake and the real transport", () => {
-  const MCP_HEADERS = {
-    "Content-Type": "application/json",
-    Accept: "application/json, text/event-stream",
-  };
-  const envelope = (method: string, params: Record<string, unknown>) =>
-    JSON.stringify({ jsonrpc: "2.0", id: 1, method, params });
-
-  let open: Server | undefined;
+describe("the served door (REST, the only listener), with the PEP armed", () => {
+  const closers: (() => Promise<void>)[] = [];
   afterEach(async () => {
-    const s = open;
-    open = undefined;
-    if (s?.listening)
-      await new Promise<void>((r) =>
-        s.close(() => {
-          r();
-        }),
-      );
+    for (const c of closers.splice(0)) await c();
   });
 
-  function served(pep: Pep): {
-    server: Server;
-    witness: Witness;
-    got: RequestRecord[];
-  } {
+  async function served(
+    pep: Pep,
+  ): Promise<{ base: string; got: RequestRecord[] }> {
     const got: RequestRecord[] = [];
     // Through makeWitness's own sink wrapper, as production builds it.
     const witness = makeWitness({}, () => ({
@@ -477,152 +452,38 @@ describe("the served route, through a real TLS handshake and the real transport"
       reach: "stdout",
       close: () => Promise.resolve(),
     }));
-    const server = createCalliopeHttpServer(
-      "fixture",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      witness,
-      pep,
-    );
-    return { server, witness, got };
+    const { rest, base } = await serveDoor({ witness, pep });
+    closers.push(() => rest.close());
+    return { base, got };
   }
 
-  async function dial(
-    inner: Server,
-    client: TlsIdentity | undefined,
-    trust: string,
-    body: string,
-  ): Promise<string> {
-    const door = makeIdentity("DNS:localhost");
-    const tls = createHttpsServer(
-      {
-        cert: door.cert,
-        key: door.key,
-        ca: [trust],
-        requestCert: true,
-        rejectUnauthorized: false,
-      },
-      (req, res) => {
-        for (const listener of inner.listeners("request")) listener(req, res);
-      },
-    );
-    await new Promise<void>((resolve) => tls.listen(0, "127.0.0.1", resolve));
-    try {
-      const port = (tls.address() as AddressInfo).port;
-      return await new Promise<string>((resolve, reject) => {
-        const req = httpsRequest(
-          {
-            port,
-            host: "127.0.0.1",
-            method: "POST",
-            path: "/mcp",
-            headers: MCP_HEADERS,
-            ca: [door.cert],
-            servername: "localhost",
-            agent: false,
-            ...client,
-          },
-          (res) => {
-            let text = "";
-            res.on("data", (c: Buffer) => (text += c.toString()));
-            res.on("end", () => {
-              resolve(text);
-            });
-          },
-        );
-        req.on("error", reject);
-        req.end(body);
-      });
-    } finally {
-      await new Promise<void>((r) =>
-        tls.close(() => {
-          r();
-        }),
-      );
-    }
-  }
-
-  const call = (verb: string, meta?: Record<string, unknown>): string =>
-    envelope("tools/call", {
-      name: verb,
-      arguments: {},
-      ...(meta ? { _meta: meta } : {}),
-    });
-
-  it("enforce: a star is served on its network identity; an unidentified caller is refused on the wire; tools/list is not decided", async () => {
-    const { server, got } = served(arm("enforce"));
-    open = server;
-    const athena = makeIdentity(
-      "URI:spiffe://notusmi.com/star/athena",
-      "athena",
-    );
-    const themis = makeIdentity(
-      "URI:spiffe://notusmi.com/star/themis",
-      "themis",
-    );
-    const bundle = athena.cert + themis.cert;
-
-    const served1 = await dial(server, themis, bundle, call("list_tags"));
-    expect(served1).not.toContain("refused");
-
-    const anon = await dial(server, undefined, bundle, call("list_tags"));
-    expect(anon).toContain('\\"refused\\":\\"pep\\"');
-    expect(anon).toContain("unidentified");
-
-    const allowed = await dial(server, athena, bundle, call("list_tags"));
-    expect(allowed).not.toContain("refused");
-
-    const listed = await dial(
-      server,
-      undefined,
-      bundle,
-      envelope("tools/list", {}),
-    );
-    expect(listed).toContain("list_tags");
-
-    expect(got.map((r) => [r.outcome, r.reason, r.decision])).toEqual([
-      ["ok", "network_enforced", "allow"],
-      ["denied", "unidentified", "deny"],
-      ["ok", "network_enforced", "allow"],
-    ]);
-    expect(got[0]).toMatchObject({
-      caller_class: "star",
-      caller_identity: "spiffe://notusmi.com/star/themis",
-      path: "direct",
-    });
+  it("enforce: an unidentified caller is refused on the wire; the spec is not decided", async () => {
+    const { base, got } = await served(arm("enforce"));
+    const anon = await fetch(`${base}/v1/list_tags`);
+    expect(anon.status).toBeGreaterThanOrEqual(400);
+    expect(await anon.text()).toContain("unidentified");
+    const spec = await fetch(`${base}/openapi.json`);
+    expect(await spec.text()).toContain("list_tags");
+    expect(
+      toolRecords(got).map((r) => [r.outcome, r.reason, r.decision]),
+    ).toEqual([["denied", "unidentified", "deny"]]);
   });
 
   it("witness: an unidentified caller is answered and recorded would_deny", async () => {
-    const { server, got } = served(arm("witness"));
-    open = server;
-    const themis = makeIdentity(
-      "URI:spiffe://notusmi.com/star/themis",
-      "themis",
-    );
-    const text = await dial(server, undefined, themis.cert, call("list_tags"));
-    expect(text).not.toContain("refused");
-    expect(got).toMatchObject([
+    const { base, got } = await served(arm("witness"));
+    const res = await fetch(`${base}/v1/list_tags`);
+    expect(res.status).toBe(200);
+    expect(toolRecords(got)).toMatchObject([
       { outcome: "ok", decision: "would_deny", reason: "unidentified" },
     ]);
   });
 
-  it("probes are never gated: /healthz and /ready on an enforcing star are not the PEP's to answer", async () => {
+  it("probes are never gated: /live and /ready on an enforcing star are not the PEP's to answer", async () => {
     const pep = arm("enforce");
-    const { server } = served(pep);
-    open = server;
-    await new Promise<void>((resolve) =>
-      server.listen(0, "127.0.0.1", resolve),
-    );
-    const base = `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`;
-    for (const path of ["/healthz", "/ready"]) {
+    const { base } = await served(pep);
+    for (const path of ["/live", "/ready"]) {
       const res = await fetch(base + path);
-      expect(res.status).toBe(404); // no such route; and never a pep refusal
+      expect(res.status, path).toBe(200);
       expect(await res.text()).not.toContain("pep");
     }
     expect(pep.counts()).toEqual({});

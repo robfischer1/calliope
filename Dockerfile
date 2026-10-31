@@ -22,18 +22,18 @@ WORKDIR /app
 # Numeric, so the host and the kubelet can resolve it without the image's
 # /etc/passwd: the base's bun user, measured uid=1000 gid=1000 on the running pod.
 COPY --chown=1000:1000 release/server.js ./server.js
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=8204
+# The REST door is the star's only listener (REST mesh P7, wonka68-rm39): no
+# /mcp, no loopback port. Flux sets the same port; the default lets the smoke boot.
+ENV NODE_ENV=production STELLAR_REST_PLAINTEXT_PORT=8207
 # THE BOOT SMOKE (foundry-tools build:smoke): the build lane starts this image
 # alone, on the in-memory fixture backend (no Postgres, no broker, no SPIRE),
-# and it must still answer GET /mcp (405 counts) after 8s. The identity core
-# loads at boot (http.ts), so a bundle that cannot carry its wasm is a red
+# and it must answer GET /live on the REST door after 8s. The identity core
+# loads at boot (serveCalliope), so a bundle that cannot carry its wasm is a red
 # pull here rather than a crashloop in the cluster (stellar-core-ts 0.17.0,
 # 2026-10-04).
-LABEL org.notusmi.smoke="port=8204 path=/mcp wait=8 env=CALLIOPE_MCP_BACKEND=fixture"
+LABEL org.notusmi.smoke="port=8207 path=/live wait=8 env=CALLIOPE_MCP_BACKEND=fixture"
 USER 1000:1000
-EXPOSE 8204 8205
-# Liveness — the base has bun and curl; a GET /mcp answers 405 (POST-only),
-# which still proves the HTTP server is up; only a connect failure fails.
+EXPOSE 8207
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD ["bun", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8204)+'/mcp').then(function(r){process.exit(r.status?0:1)}).catch(function(){process.exit(1)})"]
+    CMD ["bun", "-e", "fetch('http://127.0.0.1:'+(process.env.STELLAR_REST_PLAINTEXT_PORT||8207)+'/live').then(function(r){process.exit(r.status===200?0:1)}).catch(function(){process.exit(1)})"]
 CMD ["bun", "server.js"]
