@@ -62,7 +62,7 @@ few smaller additions that never got their own spec-kit dir:
   block-granular (`plan-blocks.ts` + `mcp/plan-ingest.ts`), so athena's
   `orchestrate_plan` never loads a whole `plan_text` into context.
 
-This star also publishes an op-contract heartbeat to Pontus (no C-number).
+This star also publishes an op-contract heartbeat to Redpanda (no C-number).
 It was `mcp/heartbeat.ts` until 2026-09-17; the publisher is the core's now
 (`startHeartbeat`, `@forge/stellar-core-ts` 0.12.0) and `mcp/http.ts` is the
 one call site — it supplies the star name and the per-beat standing, and
@@ -168,11 +168,12 @@ apps/calliope/
                           the gap for bodies written before the push shipped.
                           `--probe` counts only. Needs DATABASE_URL +
                           CALLIOPE_INDEX_URL (or URANIA_URL/CHAOS_URL).
-      heartbeat.ts        Bun-side mirror of stellar_core.AsyncHeartbeatPublisher:
-                          publishes {star,live,ready,metrics,ts} to
-                          calliope._ops.heartbeat on Pontus every interval.
+      (heartbeat.ts is gone — deleted; the beat is `startHeartbeat` from
+                          @forge/stellar-core-ts, called from mcp/http.ts: it
+                          publishes to calliope._ops.heartbeat on Redpanda,
+                          KAFKA_BOOTSTRAP, default redpanda:29092, every 30s.
                           Degrades gracefully — a broker that never connects logs
-                          once per beat; never throws into the request path.
+                          once per beat; never throws into the request path.)
       plan-ingest.ts      readPlan()/isReadPlanError() (C7): resolve a plan
                           DocumentStore row by reference (document id or
                           source_path, newest version wins), then either return
