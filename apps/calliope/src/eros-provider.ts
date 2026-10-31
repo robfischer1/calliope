@@ -96,7 +96,21 @@ export class ErosSearchProvider implements SearchProvider {
       { query, k, source: EROS_NOTES_SOURCE, since: SINCE_ALL },
       { signal: AbortSignal.timeout(TIMEOUT_MS) },
     );
-    return reply.structured ?? {};
+    // eros's `search` text IS the JSON of its structured content, so the
+    // door serves a plain application/json body, not the result envelope:
+    // the client then leaves `structured` unset and the body in texts[0].
+    // Falling back to `{}` here answered zero hits for a live arm; an absent
+    // or unparsable body throws instead, which `search` reports as dark.
+    if (reply.structured !== undefined && reply.structured !== null) {
+      return reply.structured;
+    }
+    const text = reply.texts[0];
+    if (text === undefined) throw new Error("eros answered no content");
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null) {
+      throw new Error("eros answered a non-object body");
+    }
+    return parsed;
   }
 }
 
