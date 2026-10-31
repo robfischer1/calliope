@@ -1,14 +1,11 @@
 /**
  * Findability F4 (spec 034) — the eros-routed pg arm: envelope mapping,
- * source filter on the wire, k pass-through, dark on unreachable/timeout.
- * The provider speaks real streamable-HTTP MCP against a stub eros server.
+ * source filter on the wire, k pass-through, dark on unreachable/refused.
+ * The provider speaks eros's openapi-http face (POST /v1/search, mesh
+ * identity stamped by the proxy); fetch is stubbed, nothing leaves the
+ * process.
  */
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { z } from "zod";
+import { describe, expect, it } from "vitest";
 
 import {
   ErosSearchProvider,
@@ -16,81 +13,98 @@ import {
   makeErosProvider,
 } from "../src/eros-provider.js";
 
-let stub: Server | null = null;
+const ENVELOPE = "application/vnd.stellar.result+json";
 
-afterEach(async () => {
-  if (stub !== null) {
-    await new Promise((resolve) => stub?.close(resolve));
-    stub = null;
-  }
-});
-
-/** A minimal eros: one `search` tool answering `results`, args recorded. */
-async function startStubEros(
-  results: Record<string, unknown>[],
-): Promise<{ base: string; calls: Record<string, unknown>[] }> {
-  const calls: Record<string, unknown>[] = [];
-  stub = createServer((req, res) => {
-    void (async (): Promise<void> => {
-      const mcp = new McpServer({ name: "eros-stub", version: "0" });
-      mcp.registerTool(
-        "search",
-        {
-          inputSchema: {
-            query: z.string(),
-            k: z.number().optional(),
-            source: z.string().optional(),
-            since: z.string().optional(),
+/** The slice of eros's /openapi.json the REST client needs for `search`. */
+const DOC = JSON.stringify({
+  info: { title: "eros", version: "v1" },
+  openapi: "3.1.0",
+  paths: {
+    "/v1/search": {
+      post: {
+        operationId: "search",
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: { $ref: "#/x-mcp-tools/search/inputSchema" },
+            },
           },
         },
-        (args) => {
-          calls.push(args);
-          return Promise.resolve({
-            content: [{ type: "text", text: "ok" }],
-            structuredContent: { results },
-          });
-        },
+        responses: { "200": { description: "the tool result's text" } },
+        "x-mcp-match": {},
+        "x-mcp-safe": true,
+        "x-mcp-tool": "search",
+      },
+    },
+  },
+  "x-mcp-tools": {
+    search: {
+      annotations: { readOnlyHint: true },
+      description: "search",
+      inputSchema: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+    },
+  },
+});
+
+interface Seen {
+  method: string;
+  url: string;
+  body: Record<string, unknown>;
+}
+
+/** A stub eros door: the document, then `search` answered by answer(). */
+function door(answer: () => Response): { fetch: typeof fetch; seen: Seen[] } {
+  const seen: Seen[] = [];
+  const fake = (input: string, init?: RequestInit): Promise<Response> => {
+    if (new URL(input).pathname === "/openapi.json") {
+      return Promise.resolve(
+        new Response(DOC, {
+          status: 200,
+          headers: { "Content-Type": "application/json", "X-Star": "eros" },
+        }),
       );
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-      });
-      res.on("close", () => {
-        void transport.close();
-        void mcp.close();
-      });
-      await mcp.connect(transport);
-      const chunks: Buffer[] = [];
-      for await (const chunk of req) chunks.push(chunk as Buffer);
-      const body =
-        chunks.length === 0
-          ? undefined
-          : (JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown);
-      await transport.handleRequest(req, res, body);
-    })().catch(() => {
-      res.writeHead(500).end();
+    }
+    const raw = typeof init?.body === "string" ? init.body : "{}";
+    seen.push({
+      method: init?.method ?? "GET",
+      url: input,
+      body: JSON.parse(raw) as Record<string, unknown>,
     });
-  });
-  await new Promise<void>((resolve) => {
-    stub?.listen(0, "127.0.0.1", resolve);
-  });
-  const address = stub.address() as AddressInfo;
-  return { base: `http://127.0.0.1:${String(address.port)}`, calls };
+    return Promise.resolve(answer());
+  };
+  return { fetch: fake as unknown as typeof fetch, seen };
+}
+
+function structured(results: Record<string, unknown>[]): Response {
+  return new Response(
+    JSON.stringify({ text: "", structuredContent: { results } }),
+    {
+      status: 200,
+      headers: { "Content-Type": ENVELOPE, "X-Star": "eros" },
+    },
+  );
 }
 
 describe("ErosSearchProvider", () => {
   it("maps eros hits to the ruled envelope with the source filter on the wire", async () => {
-    const { base, calls } = await startStubEros([
-      {
-        doc_id: 1,
-        source_id: 42,
-        title: "The Note",
-        snippet: "matched text",
-        score: 0.031,
-        source_table: "calliope_documents",
-      },
-      { doc_id: 2, source_id: 43, title: null, snippet: "bare", score: 0.02 },
-    ]);
-    const provider = new ErosSearchProvider(base);
+    const d = door(() =>
+      structured([
+        {
+          doc_id: 1,
+          source_id: 42,
+          title: "The Note",
+          snippet: "matched text",
+          score: 0.031,
+          source_table: "calliope_documents",
+        },
+        { doc_id: 2, source_id: 43, title: null, snippet: "bare", score: 0.02 },
+      ]),
+    );
+    const provider = new ErosSearchProvider("http://eros:8203", d.fetch);
     const res = await provider.search("heron", undefined, 7);
     expect(res.armsQueried).toEqual(["eros"]);
     expect(res.armsDark).toEqual([]);
@@ -103,7 +117,10 @@ describe("ErosSearchProvider", () => {
       },
       { id: "43", snippet: "bare", score: 0.02, arms: ["eros"] },
     ]);
-    expect(calls[0]).toMatchObject({
+    expect(d.seen).toHaveLength(1);
+    expect(d.seen[0]?.method).toBe("POST");
+    expect(d.seen[0]?.url).toBe("http://eros:8203/v1/search");
+    expect(d.seen[0]?.body).toMatchObject({
       query: "heron",
       k: 7,
       source: "calliope_documents",
@@ -117,6 +134,22 @@ describe("ErosSearchProvider", () => {
     expect(res.hits).toEqual([]);
     expect(res.armsQueried).toEqual([]);
     expect(res.armsDark).toEqual(["eros"]);
+  });
+
+  it("degrades to a dark arm when the door refuses the verb", async () => {
+    const d = door(
+      () =>
+        new Response(JSON.stringify({ code: "forbidden", detail: "no" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json", "X-Star": "eros" },
+        }),
+    );
+    const res = await new ErosSearchProvider(
+      "http://eros:8203",
+      d.fetch,
+    ).search("x");
+    expect(res.armsDark).toEqual(["eros"]);
+    expect(res.armsQueried).toEqual([]);
   });
 });
 
