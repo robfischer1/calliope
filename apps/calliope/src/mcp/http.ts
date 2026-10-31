@@ -1,45 +1,25 @@
 #!/usr/bin/env bun
 /**
- * Calliope-MCP HTTP entry point — the prose facet, exposed as a constellation
- * "star" over streamable-HTTP so the Hades MCP gateway can front it east-west.
+ * Calliope's network entry point: the prose facet served as a constellation
+ * star on its REST door (`/openapi.json`, `/v1/...`), the SAME server the stdio
+ * bin serves ({@link createServer} over the env-selected {@link makeBackend}
+ * backend); the tool definitions are reused, never forked.
  *
- * This serves the SAME server the stdio bin does ({@link createServer} over
- * the env-selected {@link makeBackend} backend — four-to-nine tools
- * depending on which facet stores the backend supplies) — the tool
- * definitions are reused, never forked. The only difference from `main.ts`
- * is the transport: a {@link StreamableHTTPServerTransport} on `POST /mcp`
- * instead of stdio.
+ * REST only (REST mesh P7, wonka68-rm39): no `/mcp`, no loopback listener. The
+ * door is `STELLAR_REST_PLAINTEXT_PORT` (8207), which also answers `/live`,
+ * `/ready` and `/metrics`. Each REST call runs on a fresh server built per
+ * mount over ONE long-lived backend client.
  *
- * Transport mode: stateless. Hades reaches each star with independent
- * `tools/list` / `tools/call` JSON-RPC POSTs (mirroring how this repo's own
- * {@link LiveUraniaCapture} reaches urania) — there is no per-client session to
- * keep, so each request gets a fresh server+transport pair and `GET`/`DELETE`
- * (SSE / session teardown) are not offered. This matches Hades's contract:
- * stars are discovered via live `tools/list` and invoked statelessly.
- *
- * Port: `PORT` (the constellation-standard env every star reads), else
- * `CALLIOPE_MCP_PORT`, else 8204 (calliope's assigned star port).
- * Backend: the same selection as the stdio server — `pg` when `DATABASE_URL`
- * is set (the sovereign store, the production default), else the chaos
- * substrate over `CHAOS_URL` (internal-net `http://chaos:8206/mcp`; legacy
- * `URANIA_URL` honored), or the in-memory fixture via
- * `CALLIOPE_MCP_BACKEND=fixture`. On boot, also starts the op-contract
- * heartbeat publisher ({@link startHeartbeat}, from stellar-core-ts) to the
- * telemetry bus.
+ * Backend: `pg` when `DATABASE_URL` is set (the sovereign store, the production
+ * default), else the chaos substrate over `CHAOS_URL`, or the in-memory fixture
+ * via `CALLIOPE_MCP_BACKEND=fixture`. On boot, also starts the op-contract
+ * heartbeat publisher ({@link startHeartbeat}, from stellar-core-ts).
  */
 
-import { createServer as createHttpServer } from "node:http";
-import type {
-  IncomingMessage,
-  RequestListener,
-  ServerResponse,
-} from "node:http";
 import { argv } from "node:process";
 import { pathToFileURL } from "node:url";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { BodyClient } from "../types.js";
 import type { ContainerFacet } from "../container-write.js";
-import type { DocumentStore } from "../document-store.js";
 import type { RevisionStore } from "../revision-store.js";
 import {
   backendKind,
@@ -55,8 +35,6 @@ import {
   startHeartbeat,
   startTelemetry,
   telemetryConfigFromEnv,
-  withPeerContext,
-  withSpan,
 } from "@forge/stellar-core-ts";
 import type { HeartbeatOptions, RequestLog } from "@forge/stellar-core-ts";
 import {
@@ -77,14 +55,8 @@ import {
   startPepMetrics,
 } from "@forge/stellar-core-ts/pep";
 import type { Pep } from "@forge/stellar-core-ts/pep";
-import { RouteMux } from "@forge/stellar-core-ts/rest";
 import type { RestMount } from "@forge/stellar-core-ts/rest";
 import { mountRestFace } from "./rest.js";
-
-/** The MCP route the gateway dials (Hades: `http://calliope-mcp:8204/mcp`). */
-const MCP_PATH = "/mcp";
-/** Calliope's assigned constellation star port (clotho 8200, urania 8202, …). */
-const DEFAULT_PORT = 8204;
 
 /**
  * How this star beats: its name, and what it can say about itself each beat.
@@ -125,28 +97,6 @@ export function heartbeatOptions(): HeartbeatOptions {
   };
 }
 
-/** Resolve the listen port: PORT, else CALLIOPE_MCP_PORT, else the default. */
-export function resolvePort(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env.PORT ?? env.CALLIOPE_MCP_PORT;
-  if (raw === undefined || raw.trim() === "") return DEFAULT_PORT;
-  const port = Number.parseInt(raw, 10);
-  return Number.isInteger(port) && port > 0 && port < 65536
-    ? port
-    : DEFAULT_PORT;
-}
-
-/** Read the whole request body (the gateway POSTs a single JSON-RPC envelope). */
-async function readBody(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(chunk as Buffer);
-  }
-  if (chunks.length === 0) return undefined;
-  const raw = Buffer.concat(chunks).toString("utf8");
-  if (raw.trim() === "") return undefined;
-  return JSON.parse(raw) as unknown;
-}
-
 /** The collaborators a server is built from (the MCP door's and REST's alike). */
 export interface ServerDeps {
   revisions?: RevisionStore | undefined;
@@ -183,182 +133,70 @@ export function serverOptions(deps: ServerDeps): ServerOptions {
   };
 }
 
+/** What {@link serveCalliope} is built from: the backend facets and the mesh. */
+export interface ServeOptions extends Omit<ServerDeps, "witness"> {
+  readonly kind?: ReturnType<typeof backendKind>;
+  /** A built, initialised client (the pg backend); absent builds `kind`'s full backend. */
+  readonly client?: BodyClient | undefined;
+  /** The witness: its log records every call, and it is closed with the door. */
+  readonly witness: Witness;
+  /** Reads the environment (the REST port, the trust mode). Default: `process.env`. */
+  readonly getenv?: ((name: string) => string | undefined) | undefined;
+}
+
 /**
- * Serve one POST /mcp request statelessly: build a fresh server bound to the
- * SHARED backend client, attach a session-less transport, and hand the parsed
- * body off. The protocol is stateless (per-request server+transport), but the
- * backend is long-lived — the urania store persists across requests, and a
- * fixture's in-memory body must too — so the {@link BodyClient} is created once
- * and shared, never per-request.
+ * Serve calliope: the REST door on `STELLAR_REST_PLAINTEXT_PORT`, the star's
+ * ONLY listener (REST mesh P7, wonka68-rm39). There is no `/mcp` and no
+ * loopback listener: every caller reaches calliope on the REST door, and the
+ * door answers `/live`, `/ready` and `/metrics` itself. Rejects (nothing
+ * served) when the port is unset or cannot be bound, or the server has no door.
+ *
+ * THE IDENTITY CORE LOADS FIRST, before anything is built. Lazily, a core that
+ * cannot load (stellar-core-ts 0.17.0 read its wasm off disk, beside a one-file
+ * bundle that does not carry it) took the process down on whichever call typed
+ * a peer first, seconds into a pod that had already said "serving". Now boot
+ * fails before the star serves, where the build lane's boot smoke sees it.
  */
-async function handleMcp(
-  req: IncomingMessage,
-  res: ServerResponse,
-  client: BodyClient,
-  documents?: DocumentStore,
-  revisions?: RevisionStore,
-  chaos?: ChaosFacet,
-  tags?: TagStore,
-  focus?: FocusRegister,
-  containers?: ContainerFacet,
-  consciousness?: NotePublisher,
-  witness?: RequestLog,
-  pep?: Pep,
-): Promise<void> {
-  const server = createServer(
-    client,
-    serverOptions({
-      revisions,
-      chaos,
-      tags,
-      focus,
-      containers,
-      consciousness,
-      witness,
-      pep,
-    }),
-  );
-  const transport = new StreamableHTTPServerTransport({
-    // Stateless: no session id, no server-initiated streams to keep alive.
-    sessionIdGenerator: undefined,
-  });
-  res.on("close", () => {
-    void transport.close();
-    void server.close();
-  });
-  await server.connect(transport);
-  const body = await readBody(req);
-  await transport.handleRequest(req, res, body);
-}
-
-/** The paths REST owns: the spec and the `/v1/` verbs. */
-export function isRestPath(path: string | undefined): boolean {
-  return path === "/openapi.json" || (path?.startsWith("/v1/") ?? false);
-}
-
-/** Build the bare Node HTTP server (exported for tests). */
-export function createCalliopeHttpServer(
-  kind: ReturnType<typeof backendKind> = backendKind(),
-  prebuilt?: BodyClient,
-  documents?: DocumentStore,
-  revisions?: RevisionStore,
-  chaos?: ChaosFacet,
-  tags?: TagStore,
-  // Every server carries a register (an empty one answers { focus: null });
-  // the boot passes the consumer-fed one so live focus flows in production.
-  focus: FocusRegister = new FocusRegister(),
-  containers?: ContainerFacet,
-  consciousness?: NotePublisher,
-  witness?: Witness,
-  // The endpoint PEP, armed once at boot (the servers are per-request, the
-  // ACL is not). Absent = no PEP; `main()` always passes one.
-  pep?: Pep,
-  // REST's route table (`/openapi.json`, `/v1/`): empty until `mountRestFace`
-  // registers on it after the door is armed. Absent = no REST routes at all.
-  restMux?: RouteMux,
-): ReturnType<typeof createHttpServer> {
-  // THE IDENTITY CORE LOADS WHEN THE SERVER IS BUILT, not at the first mTLS
-  // peer. Lazily, a core that cannot load (stellar-core-ts 0.17.0 read its
-  // wasm off disk, beside a one-file bundle that does not carry it) took the
-  // process down on whichever call typed a peer first, seconds into a pod
-  // that had already said "serving". Now boot fails before the star serves,
-  // where the build lane's boot smoke sees it.
+export async function serveCalliope(o: ServeOptions): Promise<RestMount> {
   reservedHeaders();
-  // One backend for the server's lifetime: the store (or fixture memory)
-  // is shared across every stateless request. A caller that needs async
-  // initialization (the pg backend) builds + inits the client itself and
-  // passes it in. When no prebuilt client is given, build the FULL backend
-  // so the fixture path serves the document verbs too.
-  let docStore = documents;
-  let revStore = revisions;
-  let chaosFacet = chaos;
-  let tagStore = tags;
-  let containerFacet = containers;
-  let client = prebuilt;
+  // One backend for the server's lifetime; a caller that needs async init (the
+  // pg backend) builds and inits the client itself and passes it in. With no
+  // client, the FULL backend of `kind`, so the fixture path serves every verb.
+  let deps: ServerDeps = { ...o, witness: o.witness.log };
+  let client = o.client;
   if (client === undefined) {
-    const backend = makeBackend(kind);
+    const backend = makeBackend(o.kind ?? backendKind());
     client = backend.client;
-    docStore ??= backend.documents;
-    revStore ??= backend.revisions;
-    chaosFacet ??= backend.chaos;
-    tagStore ??= backend.tags;
-    containerFacet ??= backend.containers;
+    deps = {
+      ...deps,
+      revisions: o.revisions ?? backend.revisions,
+      chaos: o.chaos ?? backend.chaos,
+      tags: o.tags ?? backend.tags,
+      containers: o.containers ?? backend.containers,
+    };
   }
-  const restRoutes = restMux?.listener();
-  const serve: RequestListener = (req, res) => {
-    const url = req.url ?? "";
-    const path = url.split("?", 1)[0];
-
-    if (restMux !== undefined && isRestPath(path)) {
-      restRoutes?.(req, res);
-      return;
-    }
-    if (path !== MCP_PATH) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "not found", path }));
-      return;
-    }
-    if (req.method !== "POST") {
-      // Stateless: only POST is served (no SSE GET / session DELETE).
-      res.writeHead(405, {
-        "Content-Type": "application/json",
-        Allow: "POST",
-      });
-      res.end(JSON.stringify({ error: "method not allowed" }));
-      return;
-    }
-
-    // THE SPAN IS THE POINT. stellar-core-ts wires the provider, the exporter
-    // and the W3C propagators, but it installs no instrumentation — a star
-    // that never opens a span is correctly configured and completely silent,
-    // which is the state this one was in. One span per served request is the
-    // minimum that makes calliope visible in Tempo and in hemera's
-    // per-service spanmetrics.
-    //
-    // Named for the transport, not the tool: the JSON-RPC method is in the
-    // body, which is consumed downstream by the transport itself, and reading
-    // it here to name the span would mean buffering the request twice.
-    withSpan(`POST ${MCP_PATH}`, () =>
-      handleMcp(
-        req,
-        res,
-        client,
-        docStore,
-        revStore,
-        chaosFacet,
-        tagStore,
-        focus,
-        containerFacet,
-        consciousness,
-        witness?.log,
-        pep,
-      ),
-    ).catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`calliope-mcp-http: request error: ${message}\n`);
-      if (!res.headersSent) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            error: { code: -32603, message: "Internal server error" },
-            id: null,
-          }),
-        );
-      } else {
-        res.end();
-      }
+  // Every server carries a register (an empty one answers { focus: null }).
+  const focus = o.focus ?? new FocusRegister();
+  const body = client;
+  let rest: RestMount;
+  try {
+    rest = await mountRestFace({
+      build: () => createServer(body, serverOptions({ ...deps, focus })),
+      witness: o.witness,
+      getenv: o.getenv,
     });
+  } catch (err) {
+    await o.witness.close();
+    throw err;
+  }
+  return {
+    ...rest,
+    // The sink's producer lives and dies with the door that feeds it.
+    close: async () => {
+      await rest.close();
+      await o.witness.close();
+    },
   };
-  // The peer stamp wraps the whole listener, so the peer is on the async
-  // context before any handler runs; the witness reads it where the verb is
-  // dispatched. There is no mTLS door any more (REST mesh P7, wonka68-rm30).
-  const httpServer = createHttpServer(withPeerContext(serve));
-  // The sink's producer lives and dies with the door that feeds it.
-  httpServer.once("close", () => {
-    void witness?.close();
-  });
-  return httpServer;
 }
 
 async function main(): Promise<void> {
@@ -371,8 +209,6 @@ async function main(): Promise<void> {
   const telemetryShutdown = await startTelemetry(telemetryConfigFromEnv());
 
   const kind = backendKind();
-  const port = resolvePort();
-  const host = process.env.HOST ?? "0.0.0.0";
   // The endpoint PEP (Constellation Mesh F7): witness by default, enforce on
   // STELLAR_PEP_MODE=enforce. FAIL-CLOSED BOOT: a missing or unparseable
   // composed sidecar throws here, before the backend is touched or the door binds, and main's catch
@@ -397,53 +233,24 @@ async function main(): Promise<void> {
   // The witness: one record per inbound tools/call, to the log stream and to
   // calliope._ops.calls when KAFKA_BOOTSTRAP names a broker.
   const witness = makeWitness();
-  const restMux = new RouteMux();
-
-  const httpServer = createCalliopeHttpServer(
+  // The REST door is the star's only listener; a refused mount throws and the
+  // process exits before it serves half a door.
+  const rest = await serveCalliope({
     kind,
-    backend.client,
-    backend.documents,
-    backend.revisions,
-    backend.chaos,
-    backend.tags,
-    focusRegister,
-    backend.containers,
+    client: backend.client,
+    revisions: backend.revisions,
+    chaos: backend.chaos,
+    tags: backend.tags,
+    focus: focusRegister,
+    containers: backend.containers,
     consciousness,
     witness,
     pep,
-    restMux,
-  );
-
-  await new Promise<void>((resolve) => {
-    httpServer.listen(port, host, resolve);
   });
   // stderr only — keep stdout clean (parity with the stdio bin's convention).
   process.stderr.write(
-    `calliope-mcp-http: serving (backend=${kind}) on http://${host}:${String(port)}${MCP_PATH}\n`,
+    `calliope serving (backend=${kind}) door=${String(rest.plaintextAddress()?.port)}\n`,
   );
-
-  // REST goes up AFTER the MCP door is armed (the witness and the PEP are
-  // wired into every server built above), behind STELLAR_REST=1. A refused
-  // mount throws: the star does not serve half a door. The server REST dials is
-  // its own, built the way an MCP request's is.
-  const rest: RestMount | undefined = await mountRestFace({
-    build: () =>
-      createServer(
-        backend.client,
-        serverOptions({
-          revisions: backend.revisions,
-          chaos: backend.chaos,
-          tags: backend.tags,
-          focus: focusRegister,
-          containers: backend.containers,
-          consciousness,
-          witness: witness.log,
-          pep,
-        }),
-      ),
-    witness,
-    mux: restMux,
-  });
 
   // Publish liveness to the telemetry bus (stellar-core-ts `startHeartbeat`,
   // the op-contract heartbeat) now that we serve.
@@ -451,14 +258,13 @@ async function main(): Promise<void> {
 
   const shutdown = (): void => {
     void heartbeat.stop();
-    void rest?.close();
     void focusConsumer.stop();
     // Flush what the batch processor is holding; a SIGTERM'd pod otherwise
     // drops its last window of spans, which is exactly the window that
     // explains why it was terminated.
     void telemetryShutdown();
     void pepMetrics.shutdown();
-    httpServer.close(() => {
+    void rest.close().finally(() => {
       process.exit(0);
     });
   };

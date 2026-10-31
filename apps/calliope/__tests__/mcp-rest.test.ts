@@ -1,24 +1,16 @@
-import type { AddressInfo } from "node:net";
-import type { Server } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { RequestLog } from "@forge/stellar-core-ts";
-import type { RequestRecord } from "@forge/stellar-core-ts";
-import { RouteMux } from "@forge/stellar-core-ts/rest";
-import type { RestMount } from "@forge/stellar-core-ts/rest";
+import type { RestRequest } from "@forge/stellar-core-ts/rest";
 import { makeBackend } from "../src/mcp/backend.js";
-import {
-  createCalliopeHttpServer,
-  isRestPath,
-  serverOptions,
-} from "../src/mcp/http.js";
-import { mountRestFace } from "../src/mcp/rest.js";
+import { serverOptions } from "../src/mcp/http.js";
+import { mountRestFace, spanned } from "../src/mcp/rest.js";
 import { createServer } from "../src/mcp/server.js";
-import type { Witness } from "../src/mcp/witness.js";
+import { recordingWitness } from "./rest-door.js";
 
 /**
- * The REST face: off by default, refused when the server has no door, and
- * (STELLAR_REST=1) the same verbs as the MCP door, witnessed.
+ * The REST face: the star's only listener (REST mesh P7, rm39). Refused when
+ * the server has no door or the REST port is unset; otherwise the same verbs,
+ * witnessed.
  */
 
 const closers: (() => Promise<void>)[] = [];
@@ -26,88 +18,22 @@ afterEach(async () => {
   while (closers.length > 0) await closers.pop()?.();
 });
 
-function recording(): { witness: Witness; got: RequestRecord[] } {
-  const got: RequestRecord[] = [];
-  return {
-    witness: {
-      log: new RequestLog("calliope", {
-        sink: (r) => {
-          got.push(r);
-        },
-      }),
-      close: () => Promise.resolve(),
-    },
-    got,
-  };
-}
+const port0 = (k: string): string | undefined =>
+  k === "STELLAR_REST_PLAINTEXT_PORT" ? "0" : undefined;
 
-const on = (k: string): string | undefined =>
-  k === "STELLAR_REST" ? "1" : undefined;
-
-async function listen(server: Server): Promise<string> {
-  await new Promise<void>((resolve) => {
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  closers.push(
-    () =>
-      new Promise<void>((resolve) => {
-        server.close(() => {
-          resolve();
-        });
-      }),
-  );
-  return `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`;
-}
-
-describe("isRestPath", () => {
-  it("claims the spec and /v1/, nothing else", () => {
-    expect(isRestPath("/openapi.json")).toBe(true);
-    expect(isRestPath("/v1/list_tags")).toBe(true);
-    expect(isRestPath("/v1")).toBe(false);
-    expect(isRestPath("/mcp")).toBe(false);
-    expect(isRestPath(undefined)).toBe(false);
-  });
-});
+const doored = (): (() => McpServer) => {
+  const { witness } = recordingWitness();
+  const backend = makeBackend("fixture");
+  return () =>
+    createServer(
+      backend.client,
+      serverOptions({ witness: witness.log, containers: backend.containers }),
+    );
+};
 
 describe("mountRestFace refusal paths", () => {
-  it("mounts nothing when STELLAR_REST is not 1", async () => {
-    const { witness } = recording();
-    const mux = new RouteMux();
-    let built = 0;
-    for (const value of [undefined, "0", "true", ""]) {
-      const rest = await mountRestFace({
-        build: () => {
-          built += 1;
-          return new McpServer({ name: "x", version: "0" });
-        },
-        witness,
-        mux,
-        getenv: (k) => (k === "STELLAR_REST" ? value : undefined),
-      });
-      expect(rest).toBeUndefined();
-    }
-    expect(built).toBe(0);
-    const base = await listen(
-      createCalliopeHttpServer(
-        "fixture",
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        mux,
-      ),
-    );
-    expect((await fetch(`${base}/openapi.json`)).status).toBe(404);
-  });
-
   it("refuses the mount when the server has no door", async () => {
-    const { witness } = recording();
+    const { witness } = recordingWitness();
     await expect(
       mountRestFace({
         build: () => {
@@ -118,91 +44,24 @@ describe("mountRestFace refusal paths", () => {
           return bare;
         },
         witness,
-        mux: new RouteMux(),
-        getenv: on,
+        getenv: port0,
       }),
     ).rejects.toThrow(/mounting REST: .*no door/);
   });
 
-  it("refuses a second mount on one mux", async () => {
-    const { witness } = recording();
-    const backend = makeBackend("fixture");
-    const mux = new RouteMux();
-    const build = (): McpServer =>
-      createServer(
-        backend.client,
-        serverOptions({ witness: witness.log, containers: backend.containers }),
-      );
-    const first = await mountRestFace({
-      build,
-      witness,
-      mux,
-      getenv: on,
-    });
-    closers.push(() => first?.close() ?? Promise.resolve());
+  it("refuses the mount with no REST port: the star never boots doorless", async () => {
+    const { witness } = recordingWitness();
     await expect(
-      mountRestFace({
-        build,
-        witness,
-        mux,
-        getenv: on,
-      }),
-    ).rejects.toThrow(/mounting REST/);
+      mountRestFace({ build: doored(), witness, getenv: () => undefined }),
+    ).rejects.toThrow(/STELLAR_REST_PLAINTEXT_PORT/);
   });
 });
 
-const onMux = (k: string): string | undefined =>
-  k === "STELLAR_REST" || k === "STELLAR_REST_PLAINTEXT_ON_MUX"
-    ? "1"
-    : undefined;
-
-describe("REST on (STELLAR_REST=1)", () => {
-  it("refuses REST on the legacy plaintext MCP listener (404, no route)", async () => {
-    const { witness } = recording();
+describe("the REST door", () => {
+  it("serves the spec, refuses an unknown verb, and witnesses a real call", async () => {
+    const { witness, got } = recordingWitness();
     const backend = makeBackend("fixture");
-    const mux = new RouteMux();
     const rest = await mountRestFace({
-      build: () =>
-        createServer(
-          backend.client,
-          serverOptions({
-            witness: witness.log,
-            containers: backend.containers,
-          }),
-        ),
-      witness,
-      mux,
-      getenv: on,
-    });
-    closers.push(() => rest?.close() ?? Promise.resolve());
-    const base = await listen(
-      createCalliopeHttpServer(
-        "fixture",
-        backend.client,
-        backend.documents,
-        backend.revisions,
-        backend.chaos,
-        backend.tags,
-        undefined,
-        backend.containers,
-        undefined,
-        witness,
-        undefined,
-        mux,
-      ),
-    );
-    for (const path of ["/openapi.json", "/v1/list_tags"]) {
-      const resp = await fetch(`${base}${path}`);
-      expect(resp.status).toBe(404);
-      expect(await resp.json()).toMatchObject({ code: "not_found" });
-    }
-  });
-
-  it("serves the spec and refuses an unknown verb through the star's listener", async () => {
-    const { witness, got } = recording();
-    const backend = makeBackend("fixture");
-    const mux = new RouteMux();
-    const rest: RestMount | undefined = await mountRestFace({
       build: () =>
         createServer(
           backend.client,
@@ -214,27 +73,10 @@ describe("REST on (STELLAR_REST=1)", () => {
           }),
         ),
       witness,
-      mux,
-      getenv: onMux,
+      getenv: port0,
     });
-    expect(rest).toBeDefined();
-    closers.push(() => rest?.close() ?? Promise.resolve());
-    const base = await listen(
-      createCalliopeHttpServer(
-        "fixture",
-        backend.client,
-        backend.documents,
-        backend.revisions,
-        backend.chaos,
-        backend.tags,
-        undefined,
-        backend.containers,
-        undefined,
-        witness,
-        undefined,
-        mux,
-      ),
-    );
+    closers.push(() => rest.close());
+    const base = `http://127.0.0.1:${String(rest.plaintextAddress()?.port)}`;
 
     const spec = await fetch(`${base}/openapi.json`);
     expect(spec.status).toBe(200);
@@ -253,16 +95,28 @@ describe("REST on (STELLAR_REST=1)", () => {
 
     // A real verb is called and recorded by the witness: REST is not a back door.
     const before = got.length;
-    const call = await fetch(`${base}/v1/list_tags`, {
-      method: "GET",
-    });
+    const call = await fetch(`${base}/v1/list_tags`);
     expect(call.status).toBe(200);
     const verbs = got.slice(before).map((r) => r.verb);
     expect(verbs).toContain("list_tags");
     expect(verbs).toContain("rest.list_tags");
 
-    // The MCP route still answers beside it.
-    const mcp = await fetch(`${base}/mcp`, { method: "GET" });
-    expect(mcp.status).toBe(405);
+    // No MCP route beside it.
+    expect((await fetch(`${base}/mcp`, { method: "POST" })).status).toBe(404);
+  });
+
+  it("spanned passes the request and the answer through unchanged", async () => {
+    const answer = { status: 201, headers: {}, body: "x" };
+    const seen: string[] = [];
+    const handler = spanned((req) => {
+      seen.push(req.target);
+      return Promise.resolve(answer);
+    });
+    const res = await handler({
+      method: "GET",
+      target: "/v1/look",
+    } as unknown as RestRequest);
+    expect(res).toBe(answer);
+    expect(seen).toEqual(["/v1/look"]);
   });
 });

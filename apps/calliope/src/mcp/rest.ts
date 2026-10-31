@@ -1,17 +1,18 @@
 /**
- * The REST face of calliope: the same verbs the MCP door serves, as OpenAPI 3.1
- * under `/openapi.json` and `/v1/...`, behind `STELLAR_REST=1`.
+ * The REST face of calliope: its verbs as OpenAPI 3.1 under `/openapi.json`
+ * and `/v1/...`, on the REST door, the star's ONLY listener (REST mesh P7,
+ * wonka68-rm39: `soleListener`, no `/mcp`).
  *
- * Mounted AFTER the MCP door is armed: the server REST dials in process is
- * built by the same `createServer` with the same witness and PEP, so a REST call
- * is witnessed and held to the PEP exactly as an MCP call is. Mounted before
- * that, `mountWitnessed` refuses (the server has no door). Off, nothing is
- * mounted and nothing registered.
+ * The server REST dials in process is built by `createServer` with the witness
+ * and the PEP armed (the door), so every REST call is witnessed and held to the
+ * PEP. A server with no door is refused (`mountWitnessed`), as is a missing or
+ * unbindable `STELLAR_REST_PLAINTEXT_PORT`: the star never serves half a door.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { mountWitnessed, restEnabled } from "@forge/stellar-core-ts/rest";
-import type { Mux, RestMount } from "@forge/stellar-core-ts/rest";
+import { withSpan } from "@forge/stellar-core-ts";
+import { mountWitnessed } from "@forge/stellar-core-ts/rest";
+import type { RestHandler, RestMount } from "@forge/stellar-core-ts/rest";
 import { SOURCE_STAR } from "./consciousness-emit.js";
 import type { Witness } from "./witness.js";
 
@@ -20,25 +21,28 @@ export interface RestFaceOptions {
   /** Builds a server for REST alone: a server serves one transport at a time. */
   readonly build: () => McpServer;
   readonly witness: Witness;
-  readonly mux: Mux;
   /** Reads the environment. Default: `process.env`. */
-  readonly getenv?: (name: string) => string | undefined;
+  readonly getenv?: ((name: string) => string | undefined) | undefined;
 }
 
 /**
- * Mount REST when `STELLAR_REST=1`; resolves undefined when it is off. Rejects
- * (never half-mounts) when the mount is refused, so the boot fails before the
- * star serves a REST face the witness cannot see.
+ * One span per served request, named by method and face, never the raw path
+ * (a path carries whatever a caller typed: unbounded span names). stellar-core-ts
+ * wires the provider and exporter but installs no instrumentation, so without
+ * this the star is configured and silent in Tempo.
  */
-export async function mountRestFace(
-  o: RestFaceOptions,
-): Promise<RestMount | undefined> {
+export function spanned(next: RestHandler): RestHandler {
+  return (req) => withSpan(`${req.method} /v1`, () => next(req));
+}
+
+/** Mount the REST door; rejects (never half-mounts) when the mount is refused. */
+export async function mountRestFace(o: RestFaceOptions): Promise<RestMount> {
   const getenv = o.getenv ?? ((k: string) => process.env[k]);
-  if (!restEnabled(getenv)) return undefined;
   return mountWitnessed(o.build, {
     star: SOURCE_STAR,
     log: o.witness.log,
-    mux: o.mux,
     getenv,
+    soleListener: true,
+    wrap: spanned,
   });
 }
