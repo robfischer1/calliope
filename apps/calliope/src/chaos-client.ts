@@ -3,7 +3,7 @@
  *
  * The prose tenant's east-west dials onto the constellation's graph plane:
  *
- *  - **themis** (`CALLIOPE_THEMIS_URL`, default `https://themis:8201/mcp`) —
+ *  - **themis** (`CALLIOPE_THEMIS_URL`, default `http://themis:8203/mcp`) —
  *    the gated write. `admit(ops, scope)` runs permit → capture; a refused
  *    batch surfaces its violations verbatim. The op grammar mirrors athena's
  *    `court.py` (the proven litigant): `{op:"createNode", kind, label}` ·
@@ -41,12 +41,11 @@ import { RestClient, RouteError, ToolError } from "@forge/stellar-core-ts/rest";
 import { asDateTime } from "./instant.js";
 import { type ChaosRest, chaosRestFromEnv } from "./chaos-rest.js";
 
-// ⚑ https AND 8201, for the same reason as chaos below: over plaintext 8200
-// themis typed every calliope admit `unidentified` (30 of 30 in the
-// 2026-10-03 window, matched second-for-second to calliope's write path), and
-// an enforcing themis refuses an unidentified caller. 8200 stays a live
-// plaintext door, so an `http://` CALLIOPE_THEMIS_URL is the rollback.
-export const DEFAULT_THEMIS_URL = "https://themis:8201";
+// themis's REST door (openapi-http :8203). Its mTLS door :8201 and the plaintext
+// MCP door :8200 are closed (rest-mesh P7), so the old https://themis:8201
+// default could only fail. Prod sets CALLIOPE_THEMIS_REST_URL and `admit` rides
+// REST; this default only names where an unconfigured dial would look.
+export const DEFAULT_THEMIS_URL = "http://themis:8203";
 // chaos's REST door (openapi-http :8209). Its mTLS door :8207 is closed
 // (rest-mesh P7), so the old https://chaos:8207 default could only fail. Prod
 // sets CALLIOPE_CHAOS_REST_URL and every chaos verb rides REST

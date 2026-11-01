@@ -185,7 +185,7 @@ describe("meshPeer — the scheme decides whether a dial presents the SVID", () 
     expect(meshPeer("http://themis:8200/mcp", "themis")).toBeUndefined();
   });
 
-  it("themis is dialled at its mTLS door by default", () => {
-    expect(DEFAULT_THEMIS_URL).toBe("https://themis:8201");
+  it("themis is dialled at its REST door by default", () => {
+    expect(DEFAULT_THEMIS_URL).toBe("http://themis:8203");
   });
 });
