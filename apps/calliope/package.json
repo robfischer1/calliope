@@ -20,7 +20,8 @@
   "scripts": {
     "dev": "bun run --watch src/mcp/http.ts",
     "build": "bun build src/mcp/http.ts --target=bun --outfile dist/server.js",
-    "build:sidecar": "bun build --compile --target=bun-windows-x64 src/mcp/sidecar.ts --outfile dist/calliope-sidecar.exe && bun build --compile --target=bun-linux-x64 src/mcp/sidecar.ts --outfile dist/calliope-sidecar && bun run scripts/copy-search-assets.ts",
+    "build:sidecar": "bun run scripts/build-sidecar.ts && bun run scripts/smoke-sidecar.ts && bun run scripts/copy-search-assets.ts",
+    "smoke:sidecar": "bun run scripts/smoke-sidecar.ts",
     "fetch-search-assets": "bun run scripts/fetch-search-assets.ts",
     "start": "bun run src/mcp/main.ts",
     "start:http": "bun run src/mcp/http.ts",
