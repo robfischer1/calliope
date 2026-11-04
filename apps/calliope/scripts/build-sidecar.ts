@@ -1,38 +1,30 @@
 /**
  * Compile the sidecar to single-file executables (Windows + Linux).
  *
- * `bun build --compile` embeds the JS graph but not files a module reads from
- * disk at load time. @platformatic/wasm-utils (pulled in through
- * @forge/stellar-core-ts → @platformatic/kafka) does
- * `readFileSync(new URL('../dist/native.wasm', import.meta.url))` on import,
- * so a CLI-compiled sidecar died at start with ENOENT for
- * `B:\~BUN\dist\native.wasm` (calliope#26571). The plugin below rewrites that
- * one call to read an embedded copy (`with { type: "file" }`), which the
- * compiled binary resolves inside its own virtual filesystem.
+ * `bun build --compile` from the CLI takes no plugins, and
+ * @platformatic/wasm-utils (pulled in through @forge/stellar-core-ts →
+ * @platformatic/kafka) reads `../dist/native.wasm` off disk at import, so a
+ * CLI-compiled sidecar died at start with ENOENT for
+ * `B:\~BUN\dist\native.wasm` (calliope#26571). The core's
+ * `platformaticWasmBundled` plugin swaps that import for the package's
+ * inlined twin — the same swap the image bundle (bundle.ts) makes.
+ * `smoke-sidecar.ts` proves the result reaches its handshake.
  */
 
-import type { BunPlugin } from "bun";
+import {
+  type BundlerPlugin,
+  platformaticWasmBundled,
+} from "@forge/stellar-core-ts/bundle";
 import * as path from "node:path";
 
-const embedWasm: BunPlugin = {
-  name: "embed-wasm-utils-native",
-  setup(build) {
-    build.onLoad(
-      { filter: /@platformatic[\\/]wasm-utils[\\/]dist[\\/]index\.js$/ },
-      async ({ path: file }) => {
-        const source = await Bun.file(file).text();
-        const call = "new URL('../dist/native.wasm', import.meta.url)";
-        if (!source.includes(call)) {
-          throw new Error(`embed-wasm: loader shape changed in ${file}`);
-        }
-        const wasm = path.join(path.dirname(file), "native.wasm");
-        const contents =
-          `import __nativeWasm from ${JSON.stringify(wasm)} with { type: "file" };\n` +
-          source.replace(call, "__nativeWasm");
-        return { contents, loader: "js" };
-      },
-    );
-  },
+/** The slice of `Bun.build` this script uses, declared here rather than
+ *  pulling bun-types in globally (the bundle.ts convention). */
+declare const Bun: {
+  readonly build: (options: {
+    readonly entrypoints: string[];
+    readonly compile: { readonly target: string; readonly outfile: string };
+    readonly plugins: BundlerPlugin[];
+  }) => Promise<{ readonly success: boolean; readonly logs: unknown[] }>;
 };
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -47,7 +39,7 @@ for (const [target, outfile] of targets) {
   const result = await Bun.build({
     entrypoints: [ENTRY],
     compile: { target, outfile: path.join(HERE, "..", outfile) },
-    plugins: [embedWasm],
+    plugins: [platformaticWasmBundled],
   });
   if (!result.success) {
     for (const log of result.logs) console.error(log);
