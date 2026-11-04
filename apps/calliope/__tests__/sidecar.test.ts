@@ -197,6 +197,26 @@ describe("the ferry wire", () => {
     expect(unknown.status).toBe(400);
   });
 
+  it("echoes the webview origin and allows private-network preflights", async () => {
+    const res = await fetch(`${base}/body`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "http://tauri.localhost",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+        "Access-Control-Request-Private-Network": "true",
+      },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-origin")).toBe(
+      "http://tauri.localhost",
+    );
+    expect(res.headers.get("access-control-allow-private-network")).toBe(
+      "true",
+    );
+    expect(res.headers.get("vary")).toContain("Origin");
+  });
+
   it("answers the CORS preflight the webview sends", async () => {
     const res = await fetch(`${base}/body`, { method: "OPTIONS" });
     expect(res.status).toBe(204);

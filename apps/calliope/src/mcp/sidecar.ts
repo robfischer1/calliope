@@ -95,13 +95,28 @@ function statusFor(message: string): number {
 }
 
 /** CORS: the Tauri webview is a foreign origin to this loopback server, and
- *  its JSON POSTs preflight. Loopback-only + no credentials ⇒ `*` is safe. */
-function corsHeaders(): Record<string, string> {
-  return {
-    "Access-Control-Allow-Origin": "*",
+ *  its JSON POSTs preflight. The requesting origin is echoed rather than `*`:
+ *  WebView2 156's local-network-access check refuses a wildcard preflight to
+ *  127.0.0.1 (PreflightWildcardOriginNotAllowed), and it asks for
+ *  Access-Control-Allow-Private-Network on the same preflight. Loopback-only
+ *  and no credentials, so echoing any origin grants nothing `*` did not. */
+function corsHeaders(req: IncomingMessage): Record<string, string> {
+  const origin = req.headers.origin;
+  const headers: Record<string, string> = {
+    "Access-Control-Allow-Origin":
+      typeof origin === "string" && origin !== "" ? origin : "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "content-type",
+    Vary: "Origin",
   };
+  // Credentials mode needs the explicit echo above (never `*`) plus this.
+  if (typeof origin === "string" && origin !== "") {
+    headers["Access-Control-Allow-Credentials"] = "true";
+  }
+  if (req.headers["access-control-request-private-network"] === "true") {
+    headers["Access-Control-Allow-Private-Network"] = "true";
+  }
+  return headers;
 }
 
 async function dispatch(
@@ -203,7 +218,7 @@ export function createSidecarServer(
   const focus = new FocusRegister();
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     const path = (req.url ?? "").split("?", 1)[0];
-    const cors = corsHeaders();
+    const cors = corsHeaders(req);
     if (req.method === "OPTIONS") {
       res.writeHead(204, cors);
       res.end();
