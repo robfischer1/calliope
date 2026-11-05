@@ -269,7 +269,11 @@ describe("the cross-tenant fence", () => {
     const w = await world(["01"], ["03"]);
     Object.defineProperty(w.dial, "placedEdges", { value: undefined });
     const a = w.slotsOf(w.src)[0] ?? "";
-    const res = await moveBlocks(w.facet, { from: w.from, to: w.to, slots: [a] });
+    const res = await moveBlocks(w.facet, {
+      from: w.from,
+      to: w.to,
+      slots: [a],
+    });
     expect(res.moved.map((m) => m.slot)).toEqual([a]);
   });
 });
@@ -314,9 +318,7 @@ describe("where the moved slots land", () => {
         slots: w.slotsOf(w.src),
         position,
       });
-      expect(res.moved).toEqual([
-        { slot: w.slotsOf(w.src)[0], position: "5" },
-      ]);
+      expect(res.moved).toEqual([{ slot: w.slotsOf(w.src)[0], position: "5" }]);
     }
   });
 
@@ -453,7 +455,11 @@ describe("the batch it admits", () => {
         held: [{ node: a }, { node: b }],
       },
       { s: a, predicate: "tree_position", held: [{ literal: "01" }] },
-      { s: w.to, predicate: TREE_MEMBER, held: [{ node: w.slotsOf(w.dst)[0] }] },
+      {
+        s: w.to,
+        predicate: TREE_MEMBER,
+        held: [{ node: w.slotsOf(w.dst)[0] }],
+      },
     ]);
   });
 
@@ -479,7 +485,11 @@ describe("the batch it admits", () => {
 
   it("does not guard an empty destination", async () => {
     const w = await world(["01"], []);
-    await moveBlocks(w.facet, { from: w.from, to: w.to, slots: w.slotsOf(w.src) });
+    await moveBlocks(w.facet, {
+      from: w.from,
+      to: w.to,
+      slots: w.slotsOf(w.src),
+    });
     const guard = w.dial.expects.at(-1) ?? [];
     expect(guard.map((g) => g.s)).toEqual([w.from, w.slotsOf(w.src)[0]]);
   });
@@ -487,7 +497,11 @@ describe("the batch it admits", () => {
   it("guards each member it re-keys in a rebalance by the key it held", async () => {
     const w = await world(["01"], ["9998", "9999"]);
     const [d0, d1] = w.slotsOf(w.dst);
-    await moveBlocks(w.facet, { from: w.from, to: w.to, slots: w.slotsOf(w.src) });
+    await moveBlocks(w.facet, {
+      from: w.from,
+      to: w.to,
+      slots: w.slotsOf(w.src),
+    });
     const guard = w.dial.expects.at(-1) ?? [];
     expect(guard.slice(0, 2)).toEqual([
       { s: d0, predicate: "tree_position", held: [{ literal: "9998" }] },

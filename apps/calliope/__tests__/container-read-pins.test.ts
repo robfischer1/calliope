@@ -69,9 +69,15 @@ class Spy extends FixtureChaosDial {
   }
   override resolveScalars(hashes: string[]): Scalars {
     this.scalars.push([...hashes]);
-    return this.unresolvable ? Promise.resolve({}) : super.resolveScalars(hashes);
+    return this.unresolvable
+      ? Promise.resolve({})
+      : super.resolveScalars(hashes);
   }
-  override history(subjects: string[], follow: string[], graph?: string): History {
+  override history(
+    subjects: string[],
+    follow: string[],
+    graph?: string,
+  ): History {
     this.histories.push({ subjects: [...subjects], follow: [...follow] });
     return this.historyStub === null
       ? super.history(subjects, follow, graph)
@@ -201,9 +207,9 @@ describe("the as-of read", () => {
     const { dial, facet, mint, lastTx } = rig();
     const c = await mint("empty");
     dial.reset();
-    expect((await readContainer(facet, c, { asOfTx: lastTx() })).blocks).toEqual(
-      [],
-    );
+    expect(
+      (await readContainer(facet, c, { asOfTx: lastTx() })).blocks,
+    ).toEqual([]);
     expect(dial.quads).toHaveLength(1);
     expect(dial.scalars).toHaveLength(0);
   });
@@ -211,9 +217,7 @@ describe("the as-of read", () => {
   it("does not take a blob-valued membership for a slot", async () => {
     const { dial, facet, mint, lastTx } = rig();
     const c = await mint("c");
-    await writeContainer(facet, c, [
-      { op: "add", text: "one", position: "a" },
-    ]);
+    await writeContainer(facet, c, [{ op: "add", text: "one", position: "a" }]);
     await dial.admit([opAdd(c, TREE_MEMBER, { toBlob: "777" })], "notes");
     const real = (await readTree(dial, c)).map((s) => s.slot);
     dial.reset();
@@ -339,7 +343,9 @@ describe("assembling blocks", () => {
     const blobs = new Everywhere();
     const { facet, mint, odd } = rig(blobs);
     const c = await mint("c");
-    await writeContainer(facet, c, [{ op: "add", text: "real", position: "a" }]);
+    await writeContainer(facet, c, [
+      { op: "add", text: "real", position: "a" },
+    ]);
     const bare = await odd(c, "bare", (s) => [
       opAdd(s, TREE_POSITION, { toLiteral: "b" }),
     ]);
@@ -473,7 +479,9 @@ describe("the batch read", () => {
     const blobs = new Everywhere();
     const { facet, mint, odd } = rig(blobs);
     const c = await mint("c");
-    await writeContainer(facet, c, [{ op: "add", text: "real", position: "a" }]);
+    await writeContainer(facet, c, [
+      { op: "add", text: "real", position: "a" },
+    ]);
     const bare = await odd(c, "bare", (s) => [
       opAdd(s, TREE_POSITION, { toLiteral: "b" }),
     ]);
