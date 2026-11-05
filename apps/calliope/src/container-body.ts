@@ -1,142 +1,142 @@
-/**
- * The container-backed note body (047 F12 follow-up — calliope#5290).
- *
- * After the cut, the tree + blob store are the ONLY home a note's prose has:
- * the `sections` table is dropped, so a {@link BodyClient} that still reads
- * it (the pg body client) answers `relation "sections" does not exist` on
- * every fleet call that reaches it. Measured 2026-08-22 on the live star:
- * `materialize_note(container_id)` erred for every id while `read_container`
- * on the same id answered the blocks — the tree held the note, only the
- * read path was wrong. The note verbs (dissolve / export / materialize) and
- * the inline-tag reconcile go through THIS adapter: the same tree read
- * `read_container` serves, the same write `write_container` is. Never a
- * table.
- */
+/** //p
+ * The container-backed note body (047 F12 follow-up — calliope#5290). //p
+ * //p
+ * After the cut, the tree + blob store are the ONLY home a note's prose has: //p
+ * the `sections` table is dropped, so a {@link BodyClient} that still reads //p
+ * it (the pg body client) answers `relation "sections" does not exist` on //p
+ * every fleet call that reaches it. Measured 2026-08-22 on the live star: //p
+ * `materialize_note(container_id)` erred for every id while `read_container` //p
+ * on the same id answered the blocks — the tree held the note, only the //p
+ * read path was wrong. The note verbs (dissolve / export / materialize) and //p
+ * the inline-tag reconcile go through THIS adapter: the same tree read //p
+ * `read_container` serves, the same write `write_container` is. Never a //p
+ * table. //p
+ */ //p
 
-import type { Tenant } from "./chaos-client.js";
-import type { ContainerBlock } from "./container-read.js";
-import { readContainer } from "./container-read.js";
-import type { ContainerFacet, ContainerOp } from "./container-write.js";
-import { writeContainer } from "./container-write.js";
-import { mintRun, sequence } from "./order-key.js";
-import type { NoteBodies, Section, SectionInput } from "./types.js";
+import type { Tenant } from "./chaos-client.js"; //p
+import type { ContainerBlock } from "./container-read.js"; //p
+import { readContainer } from "./container-read.js"; //p
+import type { ContainerFacet, ContainerOp } from "./container-write.js"; //p
+import { writeContainer } from "./container-write.js"; //p
+import { mintRun, sequence } from "./order-key.js"; //p
+import type { NoteBodies, Section, SectionInput } from "./types.js"; //p
 
-/**
- * Blocks → the wire Section shape: the slot is the id, the position the
- * order key. A dangling block (blob absent) reads as empty prose here —
- * `read_container` reports the dangling flag; a body still has to assemble.
- */
-export function sectionsOf(blocks: readonly ContainerBlock[]): Section[] {
-  return blocks.map((b) => ({
-    id: b.slot,
-    text: b.text ?? "",
-    orderKey: b.position,
-  }));
-}
+/** //p
+ * Blocks → the wire Section shape: the slot is the id, the position the //p
+ * order key. A dangling block (blob absent) reads as empty prose here — //p
+ * `read_container` reports the dangling flag; a body still has to assemble. //p
+ */ //p
+export function sectionsOf(blocks: readonly ContainerBlock[]): Section[] { //p
+  return blocks.map((b) => ({ //p
+    id: b.slot, //p
+    text: b.text ?? "", //p
+    orderKey: b.position, //p
+  })); //p
+} //p
 
-/**
- * The coarse-save diff — reconcile `blocks` (as they stand) to `sections`
- * (as wanted), positionally: the shared prefix updates in place (a
- * byte-identical update nets out inside the write), extras append after the
- * tail, surplus slots are removed. Slot identity survives an edit, which is
- * what keeps a block address (F11's read_block by slot) stable across a
- * save. A dangling surplus slot has no blob to name in a remove op and is
- * left for the census.
- */
-export function bodyDiffOps(
-  blocks: readonly ContainerBlock[],
-  sections: readonly SectionInput[],
-): ContainerOp[] {
-  const ops: ContainerOp[] = [];
-  const shared = Math.min(blocks.length, sections.length);
-  for (let i = 0; i < shared; i++) {
-    const cur = blocks[i];
-    const want = sections[i];
-    if (cur === undefined || want === undefined) continue;
-    if ((cur.text ?? "") !== want.text) {
-      ops.push({
-        op: "update",
-        slot: cur.slot,
-        oldBlobId: cur.blobId ?? "",
-        text: want.text,
-      });
-    }
-  }
-  const extras = sections.slice(shared);
-  const tail = blocks[shared - 1]?.position ?? null;
-  const minted = mintRun(tail, null, extras.length);
-  let addKeys: string[];
-  if (minted !== null) {
-    addKeys = minted;
-  } else {
-    // The appended keys would outgrow the cap (or no key fits): re-lay the
-    // kept blocks and the new ones with sequence(), in this same write — one
-    // batch, so no reader sees a half-rebalanced container.
-    const keys = sequence(shared + extras.length);
-    for (let i = 0; i < shared; i++) {
-      const cur = blocks[i];
-      const key = keys[i];
-      if (cur === undefined || key === undefined || cur.position === key) {
-        continue;
-      }
-      ops.push({
-        op: "reorder",
-        slot: cur.slot,
-        oldPosition: cur.position,
-        position: key,
-        guard: true,
-      });
-    }
-    addKeys = keys.slice(shared);
-  }
-  for (const [i, extra] of extras.entries()) {
-    ops.push({ op: "add", text: extra.text, position: addKeys[i] ?? "" });
-  }
-  for (const gone of blocks.slice(shared)) {
-    if (gone.blobId === null) continue;
-    ops.push({
-      op: "remove",
-      slot: gone.slot,
-      position: gone.position,
-      blobId: gone.blobId,
-    });
-  }
-  return ops;
-}
+/** //p
+ * The coarse-save diff — reconcile `blocks` (as they stand) to `sections` //p
+ * (as wanted), positionally: the shared prefix updates in place (a //p
+ * byte-identical update nets out inside the write), extras append after the //p
+ * tail, surplus slots are removed. Slot identity survives an edit, which is //p
+ * what keeps a block address (F11's read_block by slot) stable across a //p
+ * save. A dangling surplus slot has no blob to name in a remove op and is //p
+ * left for the census. //p
+ */ //p
+export function bodyDiffOps( //p
+  blocks: readonly ContainerBlock[], //p
+  sections: readonly SectionInput[], //p
+): ContainerOp[] { //p
+  const ops: ContainerOp[] = []; //p
+  const shared = Math.min(blocks.length, sections.length); //p
+  for (let i = 0; i < shared; i++) { //p
+    const cur = blocks[i]; //p
+    const want = sections[i]; //p
+    if (cur === undefined || want === undefined) continue; //p
+    if ((cur.text ?? "") !== want.text) { //p
+      ops.push({ //p
+        op: "update", //p
+        slot: cur.slot, //p
+        oldBlobId: cur.blobId ?? "", //p
+        text: want.text, //p
+      }); //p
+    } //p
+  } //p
+  const extras = sections.slice(shared); //p
+  const tail = blocks[shared - 1]?.position ?? null; //p
+  const minted = mintRun(tail, null, extras.length); //p
+  let addKeys: string[]; //p
+  if (minted !== null) { //p
+    addKeys = minted; //p
+  } else { //p
+    // The appended keys would outgrow the cap (or no key fits): re-lay the //p
+    // kept blocks and the new ones with sequence(), in this same write — one //p
+    // batch, so no reader sees a half-rebalanced container. //p
+    const keys = sequence(shared + extras.length); //p
+    for (let i = 0; i < shared; i++) { //p
+      const cur = blocks[i]; //p
+      const key = keys[i]; //p
+      if (cur === undefined || key === undefined || cur.position === key) { //p
+        continue; //p
+      } //p
+      ops.push({ //p
+        op: "reorder", //p
+        slot: cur.slot, //p
+        oldPosition: cur.position, //p
+        position: key, //p
+        guard: true, //p
+      }); //p
+    } //p
+    addKeys = keys.slice(shared); //p
+  } //p
+  for (const [i, extra] of extras.entries()) { //p
+    ops.push({ op: "add", text: extra.text, position: addKeys[i] ?? "" }); //p
+  } //p
+  for (const gone of blocks.slice(shared)) { //p
+    if (gone.blobId === null) continue; //p
+    ops.push({ //p
+      op: "remove", //p
+      slot: gone.slot, //p
+      position: gone.position, //p
+      blobId: gone.blobId, //p
+    }); //p
+  } //p
+  return ops; //p
+} //p
 
-/** A container's body as sections — the tree read, wire-shaped. */
-export async function readContainerBody(
-  facet: ContainerFacet,
-  container: string,
-): Promise<Section[]> {
-  return sectionsOf((await readContainer(facet, container)).blocks);
-}
+/** A container's body as sections — the tree read, wire-shaped. */ //p
+export async function readContainerBody( //p
+  facet: ContainerFacet, //p
+  container: string, //p
+): Promise<Section[]> { //p
+  return sectionsOf((await readContainer(facet, container)).blocks); //p
+} //p
 
-/** Coarse-save a container's body: read the tree, diff, one write. A save
- *  that diffs to nothing opens no transaction. */
-export async function saveContainerBody(
-  facet: ContainerFacet,
-  container: string,
-  sections: readonly SectionInput[],
-  tenant: Tenant = "notes",
-): Promise<void> {
-  const { blocks } = await readContainer(facet, container);
-  const ops = bodyDiffOps(blocks, sections);
-  if (ops.length === 0) return;
-  await writeContainer(facet, container, ops, tenant);
-}
+/** Coarse-save a container's body: read the tree, diff, one write. A save //p
+ *  that diffs to nothing opens no transaction. */ //p
+export async function saveContainerBody( //p
+  facet: ContainerFacet, //p
+  container: string, //p
+  sections: readonly SectionInput[], //p
+  tenant: Tenant = "notes", //p
+): Promise<void> { //p
+  const { blocks } = await readContainer(facet, container); //p
+  const ops = bodyDiffOps(blocks, sections); //p
+  if (ops.length === 0) return; //p
+  await writeContainer(facet, container, ops, tenant); //p
+} //p
 
-/**
- * The {@link NoteBodies} surface over a container facet — what the note
- * verbs are handed in place of the body client.
- */
-export function containerBodies(
-  facet: ContainerFacet,
-  tenant: Tenant = "notes",
-): NoteBodies {
-  return {
-    readBody: (nodeId) => readContainerBody(facet, nodeId),
-    saveBody: (nodeId, sections) =>
-      saveContainerBody(facet, nodeId, sections, tenant),
-  };
-}
+/** //p
+ * The {@link NoteBodies} surface over a container facet — what the note //p
+ * verbs are handed in place of the body client. //p
+ */ //p
+export function containerBodies( //p
+  facet: ContainerFacet, //p
+  tenant: Tenant = "notes", //p
+): NoteBodies { //p
+  return { //p
+    readBody: (nodeId) => readContainerBody(facet, nodeId), //p
+    saveBody: (nodeId, sections) => //p
+      saveContainerBody(facet, nodeId, sections, tenant), //p
+  }; //p
+} //p

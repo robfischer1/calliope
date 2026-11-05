@@ -1,339 +1,339 @@
-/**
- * RFC 3339 instants on the wire. Several answer-schema fields are
- * `format: "date-time"`, and the MCP client validates them (Ajv with
- * ajv-formats): a date, `T`, a time and a REQUIRED `Z` or `±HH:MM` offset.
- * Anything else fails the whole tool call, so a value this star did not mint
- * itself is checked here before it is emitted.
- */
+/** //p
+ * RFC 3339 instants on the wire. Several answer-schema fields are //p
+ * `format: "date-time"`, and the MCP client validates them (Ajv with //p
+ * ajv-formats): a date, `T`, a time and a REQUIRED `Z` or `±HH:MM` offset. //p
+ * Anything else fails the whole tool call, so a value this star did not mint //p
+ * itself is checked here before it is emitted. //p
+ */ //p
 
-import type { EdgeTarget } from "./chaos-client.js";
+import type { EdgeTarget } from "./chaos-client.js"; //p
 
-const TEXT =
-  /^(?<y>\d{4})-(?<mo>\d{2})-(?<d>\d{2})[Tt ](?<h>\d{2}):(?<mi>\d{2}):(?<s>\d{2})(?<frac>\.\d+)?(?<off>[Zz]|[+-]\d{2}(?::?\d{2})?)$/;
+const TEXT = //p
+  /^(?<y>\d{4})-(?<mo>\d{2})-(?<d>\d{2})[Tt ](?<h>\d{2}):(?<mi>\d{2}):(?<s>\d{2})(?<frac>\.\d+)?(?<off>[Zz]|[+-]\d{2}(?::?\d{2})?)$/; //p
 
-function calendarHolds(
-  y: number,
-  mo: number,
-  d: number,
-  h: number,
-  mi: number,
-  s: number,
-): boolean {
-  const at = new Date(Date.UTC(y, mo - 1, d));
-  return (
-    at.getUTCFullYear() === y &&
-    at.getUTCMonth() === mo - 1 &&
-    at.getUTCDate() === d &&
-    h <= 23 &&
-    mi <= 59 &&
-    s <= 60
-  );
-}
+function calendarHolds( //p
+  y: number, //p
+  mo: number, //p
+  d: number, //p
+  h: number, //p
+  mi: number, //p
+  s: number, //p
+): boolean { //p
+  const at = new Date(Date.UTC(y, mo - 1, d)); //p
+  return ( //p
+    at.getUTCFullYear() === y && //p
+    at.getUTCMonth() === mo - 1 && //p
+    at.getUTCDate() === d && //p
+    h <= 23 && //p
+    mi <= 59 && //p
+    s <= 60 //p
+  ); //p
+} //p
 
-/**
- * The text as a date-time Ajv accepts, or null when it names no instant.
- * Postgres's text cast of a timestamptz (`2026-08-01 09:15:00.5-04`: a space,
- * and an offset of hours only) is normalised, keeping the instant and its
- * offset; an offset-less text is null, never assumed to be UTC.
- */
-export function asDateTime(text: string | null | undefined): string | null {
-  if (typeof text !== "string") return null;
-  const m = TEXT.exec(text);
-  if (m === null) return null;
-  const g = m.groups as Record<
-    "y" | "mo" | "d" | "h" | "mi" | "s" | "off",
-    string
-  > &
-    Partial<Record<"frac", string>>;
-  const { y, mo, d, h, mi, s, frac, off } = g;
-  if (
-    !calendarHolds(
-      Number(y),
-      Number(mo),
-      Number(d),
-      Number(h),
-      Number(mi),
-      Number(s),
-    )
-  ) {
-    return null;
-  }
-  let offset = off.toUpperCase();
-  if (offset !== "Z") {
-    const digits = offset.slice(1).replace(":", "");
-    const hh = digits.slice(0, 2);
-    const mm = digits.length > 2 ? digits.slice(2) : "00";
-    if (Number(hh) > 23 || Number(mm) > 59) return null;
-    offset = `${offset.slice(0, 1)}${hh}:${mm}`;
-  }
-  return `${y}-${mo}-${d}T${h}:${mi}:${s}${frac ?? ""}${offset}`;
-}
+/** //p
+ * The text as a date-time Ajv accepts, or null when it names no instant. //p
+ * Postgres's text cast of a timestamptz (`2026-08-01 09:15:00.5-04`: a space, //p
+ * and an offset of hours only) is normalised, keeping the instant and its //p
+ * offset; an offset-less text is null, never assumed to be UTC. //p
+ */ //p
+export function asDateTime(text: string | null | undefined): string | null { //p
+  if (typeof text !== "string") return null; //p
+  const m = TEXT.exec(text); //p
+  if (m === null) return null; //p
+  const g = m.groups as Record< //p
+    "y" | "mo" | "d" | "h" | "mi" | "s" | "off", //p
+    string //p
+  > & //p
+    Partial<Record<"frac", string>>; //p
+  const { y, mo, d, h, mi, s, frac, off } = g; //p
+  if ( //p
+    !calendarHolds( //p
+      Number(y), //p
+      Number(mo), //p
+      Number(d), //p
+      Number(h), //p
+      Number(mi), //p
+      Number(s), //p
+    ) //p
+  ) { //p
+    return null; //p
+  } //p
+  let offset = off.toUpperCase(); //p
+  if (offset !== "Z") { //p
+    const digits = offset.slice(1).replace(":", ""); //p
+    const hh = digits.slice(0, 2); //p
+    const mm = digits.length > 2 ? digits.slice(2) : "00"; //p
+    if (Number(hh) > 23 || Number(mm) > 59) return null; //p
+    offset = `${offset.slice(0, 1)}${hh}:${mm}`; //p
+  } //p
+  return `${y}-${mo}-${d}T${h}:${mi}:${s}${frac ?? ""}${offset}`; //p
+} //p
 
-/** Whether the text already is a date-time the client accepts, as written. */
-export function isDateTime(text: unknown): text is string {
-  return typeof text === "string" && asDateTime(text) === text;
-}
+/** Whether the text already is a date-time the client accepts, as written. */ //p
+export function isDateTime(text: unknown): text is string { //p
+  return typeof text === "string" && asDateTime(text) === text; //p
+} //p
 
-/**
- * Time facts in the notes graph (aiws:chaos-addressing@0.2.0, R-CA15..R-CA20).
- *
- * A time predicate's value is written with a dtype, never as bare text:
- *
- *  - an offset-bearing date-time (`Z`, `+00:00`, `-04:00`) is an INSTANT.
- *    chaos stores canonical epoch microseconds and answers every read
- *    rendered as America/New_York RFC 3339 with an explicit offset;
- *  - a naive date-time is a WALLCLOCK (the zone is unknown): stored and
- *    answered verbatim as `YYYY-MM-DDTHH:MM:SS[.ffffff]`;
- *  - a bare date (`YYYY-MM-DD`) and any non-time text stay untyped.
- *
- * {@link timeDtype} is the ONE place that decides. Everything else here is
- * the arithmetic a reader or a retractor needs, because a read answers only
- * the rendering: the stored form is not the text read back, so an
- * equality check, a sort or a retract must go through the parsed instant.
- *
- * stellar-core-ts 0.74.0 (calliope's pin) does not export `timefmt`, so the
- * small canonicalisation is inline: exact, floored to the microsecond.
- */
+/** //p
+ * Time facts in the notes graph (aiws:chaos-addressing@0.2.0, R-CA15..R-CA20). //p
+ * //p
+ * A time predicate's value is written with a dtype, never as bare text: //p
+ * //p
+ *  - an offset-bearing date-time (`Z`, `+00:00`, `-04:00`) is an INSTANT. //p
+ *    chaos stores canonical epoch microseconds and answers every read //p
+ *    rendered as America/New_York RFC 3339 with an explicit offset; //p
+ *  - a naive date-time is a WALLCLOCK (the zone is unknown): stored and //p
+ *    answered verbatim as `YYYY-MM-DDTHH:MM:SS[.ffffff]`; //p
+ *  - a bare date (`YYYY-MM-DD`) and any non-time text stay untyped. //p
+ * //p
+ * {@link timeDtype} is the ONE place that decides. Everything else here is //p
+ * the arithmetic a reader or a retractor needs, because a read answers only //p
+ * the rendering: the stored form is not the text read back, so an //p
+ * equality check, a sort or a retract must go through the parsed instant. //p
+ * //p
+ * stellar-core-ts 0.74.0 (calliope's pin) does not export `timefmt`, so the //p
+ * small canonicalisation is inline: exact, floored to the microsecond. //p
+ */ //p
 
-/** Predicates whose value is a time fact when it is a date-time. */
-export const TIME_PREDICATES: ReadonlySet<string> = new Set([
-  "mtime",
-  "ctime",
-  "dissolved_at",
-  "extracted_at",
-  "migrated_at",
-  "last_active",
-  "summary_generated_at",
-  "created",
-  "updated",
-]);
+/** Predicates whose value is a time fact when it is a date-time. */ //p
+export const TIME_PREDICATES: ReadonlySet<string> = new Set([ //p
+  "mtime", //p
+  "ctime", //p
+  "dissolved_at", //p
+  "extracted_at", //p
+  "migrated_at", //p
+  "last_active", //p
+  "summary_generated_at", //p
+  "created", //p
+  "updated", //p
+]); //p
 
-export type TimeDtype = "instant" | "wallclock";
+export type TimeDtype = "instant" | "wallclock"; //p
 
-const DATE_TIME =
-  /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:([Zz])|([+-])(\d{2})(?::?(\d{2}))?)?$/;
-const CANONICAL_MICROS = /^(?:0|-?[1-9][0-9]*)$/;
-const MICRO = 1_000_000n;
-/** 0001-01-01T00:00:00Z and 9999-12-31T23:59:59.999999Z, in microseconds. */
-const MIN_MICROS = -62135596800000000n;
-const MAX_MICROS = 253402300799999999n;
+const DATE_TIME = //p
+  /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:([Zz])|([+-])(\d{2})(?::?(\d{2}))?)?$/; //p
+const CANONICAL_MICROS = /^(?:0|-?[1-9][0-9]*)$/; //p
+const MICRO = 1_000_000n; //p
+/** 0001-01-01T00:00:00Z and 9999-12-31T23:59:59.999999Z, in microseconds. */ //p
+const MIN_MICROS = -62135596800000000n; //p
+const MAX_MICROS = 253402300799999999n; //p
 
-const isLeap = (y: number): boolean =>
-  (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+const isLeap = (y: number): boolean => //p
+  (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0; //p
 
-function monthDays(y: number, m: number): number {
-  if (m === 2) return isLeap(y) ? 29 : 28;
-  return [4, 6, 9, 11].includes(m) ? 30 : 31;
-}
+function monthDays(y: number, m: number): number { //p
+  if (m === 2) return isLeap(y) ? 29 : 28; //p
+  return [4, 6, 9, 11].includes(m) ? 30 : 31; //p
+} //p
 
-/** Days since 1970-01-01 of a proleptic-Gregorian civil date. */
-function daysFromCivil(y: number, m: number, d: number): number {
-  const yy = m <= 2 ? y - 1 : y;
-  const era = Math.floor(yy / 400);
-  const yoe = yy - era * 400;
-  const doy = Math.floor((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5) + d - 1;
-  const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
-  return era * 146097 + doe - 719468;
-}
+/** Days since 1970-01-01 of a proleptic-Gregorian civil date. */ //p
+function daysFromCivil(y: number, m: number, d: number): number { //p
+  const yy = m <= 2 ? y - 1 : y; //p
+  const era = Math.floor(yy / 400); //p
+  const yoe = yy - era * 400; //p
+  const doy = Math.floor((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5) + d - 1; //p
+  const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy; //p
+  return era * 146097 + doe - 719468; //p
+} //p
 
-/** A date-time text, split: its offset (seconds) when it has one. */
-interface Scanned {
-  local: bigint; // microseconds of the local civil time, as if UTC
-  fraction: string; // the fraction digits cut to 6, "" when absent
-  stamp: string; // YYYY-MM-DDTHH:MM:SS (the naive canonical head)
-  offset: number | null;
-}
+/** A date-time text, split: its offset (seconds) when it has one. */ //p
+interface Scanned { //p
+  local: bigint; // microseconds of the local civil time, as if UTC //p
+  fraction: string; // the fraction digits cut to 6, "" when absent //p
+  stamp: string; // YYYY-MM-DDTHH:MM:SS (the naive canonical head) //p
+  offset: number | null; //p
+} //p
 
-function scan(text: string): Scanned | null {
-  const m = DATE_TIME.exec(text);
-  if (m === null) return null;
-  const num = (i: number): number => Number(m[i] ?? "0");
-  const [year, month, day] = [num(1), num(2), num(3)];
-  const [hour, minute, second] = [num(4), num(5), num(6)];
-  const hasOffset = m[8] !== undefined || m[9] !== undefined;
-  const offH = num(10);
-  const offM = num(11);
-  if (
-    year < 1 ||
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > monthDays(year, month) ||
-    hour > 23 ||
-    minute > 59 ||
-    second > 59 ||
-    offH > 23 ||
-    offM > 59
-  ) {
-    return null;
-  }
-  const fraction = (m[7] ?? "").slice(0, 6);
-  const micros = BigInt(fraction.padEnd(6, "0") || "0");
-  const secs =
-    daysFromCivil(year, month, day) * 86400 +
-    hour * 3600 +
-    minute * 60 +
-    second;
-  const sign = m[9] === "-" ? -1 : 1;
-  const pad = (n: number, w: number): string => String(n).padStart(w, "0");
-  return {
-    local: BigInt(secs) * MICRO + micros,
-    fraction,
-    stamp:
-      `${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}T` +
-      `${pad(hour, 2)}:${pad(minute, 2)}:${pad(second, 2)}`,
-    offset: hasOffset
-      ? m[8] !== undefined
-        ? 0
-        : sign * (offH * 3600 + offM * 60)
-      : null,
-  };
-}
+function scan(text: string): Scanned | null { //p
+  const m = DATE_TIME.exec(text); //p
+  if (m === null) return null; //p
+  const num = (i: number): number => Number(m[i] ?? "0"); //p
+  const [year, month, day] = [num(1), num(2), num(3)]; //p
+  const [hour, minute, second] = [num(4), num(5), num(6)]; //p
+  const hasOffset = m[8] !== undefined || m[9] !== undefined; //p
+  const offH = num(10); //p
+  const offM = num(11); //p
+  if ( //p
+    year < 1 || //p
+    month < 1 || //p
+    month > 12 || //p
+    day < 1 || //p
+    day > monthDays(year, month) || //p
+    hour > 23 || //p
+    minute > 59 || //p
+    second > 59 || //p
+    offH > 23 || //p
+    offM > 59 //p
+  ) { //p
+    return null; //p
+  } //p
+  const fraction = (m[7] ?? "").slice(0, 6); //p
+  const micros = BigInt(fraction.padEnd(6, "0") || "0"); //p
+  const secs = //p
+    daysFromCivil(year, month, day) * 86400 + //p
+    hour * 3600 + //p
+    minute * 60 + //p
+    second; //p
+  const sign = m[9] === "-" ? -1 : 1; //p
+  const pad = (n: number, w: number): string => String(n).padStart(w, "0"); //p
+  return { //p
+    local: BigInt(secs) * MICRO + micros, //p
+    fraction, //p
+    stamp: //p
+      `${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}T` + //p
+      `${pad(hour, 2)}:${pad(minute, 2)}:${pad(second, 2)}`, //p
+    offset: hasOffset //p
+      ? m[8] !== undefined //p
+        ? 0 //p
+        : sign * (offH * 3600 + offM * 60) //p
+      : null, //p
+  }; //p
+} //p
 
-/**
- * Epoch microseconds (floored) of an OFFSET-BEARING date-time, or null for
- * naive text, a bare date, anything else, or an instant out of the 0001..9999
- * domain.
- */
-export function parseInstantMicros(text: string): bigint | null {
-  const s = scan(text);
-  if (s === null) return null;
-  if (s.offset === null) return null;
-  const micros = s.local - BigInt(s.offset) * MICRO;
-  return micros >= MIN_MICROS && micros <= MAX_MICROS ? micros : null;
-}
+/** //p
+ * Epoch microseconds (floored) of an OFFSET-BEARING date-time, or null for //p
+ * naive text, a bare date, anything else, or an instant out of the 0001..9999 //p
+ * domain. //p
+ */ //p
+export function parseInstantMicros(text: string): bigint | null { //p
+  const s = scan(text); //p
+  if (s === null) return null; //p
+  if (s.offset === null) return null; //p
+  const micros = s.local - BigInt(s.offset) * MICRO; //p
+  return micros >= MIN_MICROS && micros <= MAX_MICROS ? micros : null; //p
+} //p
 
-/** The canonical decimal-microseconds form of an offset-bearing date-time
- *  (or of text that is already canonical µs); null otherwise. */
-export function canonicalInstant(text: string): string | null {
-  const micros = parseInstantMicros(text);
-  if (micros !== null) return micros.toString();
-  return CANONICAL_MICROS.test(text) ? text : null;
-}
+/** The canonical decimal-microseconds form of an offset-bearing date-time //p
+ *  (or of text that is already canonical µs); null otherwise. */ //p
+export function canonicalInstant(text: string): string | null { //p
+  const micros = parseInstantMicros(text); //p
+  if (micros !== null) return micros.toString(); //p
+  return CANONICAL_MICROS.test(text) ? text : null; //p
+} //p
 
-/** The canonical wallclock `YYYY-MM-DDTHH:MM:SS[.ffffff]` of a NAIVE
- *  date-time, or null. */
-export function canonicalWallclock(text: string): string | null {
-  const s = scan(text);
-  if (s === null) return null;
-  if (s.offset !== null) return null;
-  return s.fraction === ""
-    ? s.stamp
-    : `${s.stamp}.${s.fraction.padEnd(6, "0")}`;
-}
+/** The canonical wallclock `YYYY-MM-DDTHH:MM:SS[.ffffff]` of a NAIVE //p
+ *  date-time, or null. */ //p
+export function canonicalWallclock(text: string): string | null { //p
+  const s = scan(text); //p
+  if (s === null) return null; //p
+  if (s.offset !== null) return null; //p
+  return s.fraction === "" //p
+    ? s.stamp //p
+    : `${s.stamp}.${s.fraction.padEnd(6, "0")}`; //p
+} //p
 
-/**
- * THE decision: the dtype a write of `value` under `predicate` carries.
- * Undefined means untyped, unchanged (not a time predicate, a bare date,
- * non-time text).
- */
-export function timeDtype(
-  predicate: string,
-  value: string,
-): TimeDtype | undefined {
-  if (!TIME_PREDICATES.has(predicate)) return undefined;
-  if (parseInstantMicros(value) !== null) return "instant";
-  if (canonicalWallclock(value) !== null) return "wallclock";
-  return undefined;
-}
+/** //p
+ * THE decision: the dtype a write of `value` under `predicate` carries. //p
+ * Undefined means untyped, unchanged (not a time predicate, a bare date, //p
+ * non-time text). //p
+ */ //p
+export function timeDtype( //p
+  predicate: string, //p
+  value: string, //p
+): TimeDtype | undefined { //p
+  if (!TIME_PREDICATES.has(predicate)) return undefined; //p
+  if (parseInstantMicros(value) !== null) return "instant"; //p
+  if (canonicalWallclock(value) !== null) return "wallclock"; //p
+  return undefined; //p
+} //p
 
-/** The literal target for a write of `value` under `predicate`: typed when
- *  it is a time fact, else the bare literal. A wallclock goes in canonical
- *  form; an instant goes as the offset-bearing text (themis normalises it). */
-export function literalTarget(predicate: string, value: string): EdgeTarget {
-  const dtype = timeDtype(predicate, value);
-  if (dtype === undefined) return { toLiteral: value };
-  return {
-    toLiteral:
-      dtype === "wallclock" ? (canonicalWallclock(value) ?? value) : value,
-    dtype,
-  };
-}
+/** The literal target for a write of `value` under `predicate`: typed when //p
+ *  it is a time fact, else the bare literal. A wallclock goes in canonical //p
+ *  form; an instant goes as the offset-bearing text (themis normalises it). */ //p
+export function literalTarget(predicate: string, value: string): EdgeTarget { //p
+  const dtype = timeDtype(predicate, value); //p
+  if (dtype === undefined) return { toLiteral: value }; //p
+  return { //p
+    toLiteral: //p
+      dtype === "wallclock" ? (canonicalWallclock(value) ?? value) : value, //p
+    dtype, //p
+  }; //p
+} //p
 
-/**
- * Every literal target that retracts a fact read back as `value`: the
- * read-back text untyped (a legacy fact), plus, for a time fact, the same
- * text typed (an instant fact is stored as µs, not as the rendering read).
- * A retract of an absent fact is a no-op in chaos.
- */
-export function retractTargets(predicate: string, value: string): EdgeTarget[] {
-  const out: EdgeTarget[] = [{ toLiteral: value }];
-  const typed = literalTarget(predicate, value);
-  if (typed.dtype !== undefined) out.push(typed);
-  return out;
-}
+/** //p
+ * Every literal target that retracts a fact read back as `value`: the //p
+ * read-back text untyped (a legacy fact), plus, for a time fact, the same //p
+ * text typed (an instant fact is stored as µs, not as the rendering read). //p
+ * A retract of an absent fact is a no-op in chaos. //p
+ */ //p
+export function retractTargets(predicate: string, value: string): EdgeTarget[] { //p
+  const out: EdgeTarget[] = [{ toLiteral: value }]; //p
+  const typed = literalTarget(predicate, value); //p
+  if (typed.dtype !== undefined) out.push(typed); //p
+  return out; //p
+} //p
 
-/**
- * Do a held value and a wanted value say the same thing? Instants compare as
- * instants when BOTH parse offset-bearing; everything else compares as text.
- */
-export function sameTime(a: string, b: string): boolean {
-  const ma = parseInstantMicros(a);
-  const mb = parseInstantMicros(b);
-  return ma !== null && mb !== null ? ma === mb : a === b;
-}
+/** //p
+ * Do a held value and a wanted value say the same thing? Instants compare as //p
+ * instants when BOTH parse offset-bearing; everything else compares as text. //p
+ */ //p
+export function sameTime(a: string, b: string): boolean { //p
+  const ma = parseInstantMicros(a); //p
+  const mb = parseInstantMicros(b); //p
+  return ma !== null && mb !== null ? ma === mb : a === b; //p
+} //p
 
-/** {@link sameTime} for a predicate: only time predicates compare as instants. */
-export function sameValue(predicate: string, a: string, b: string): boolean {
-  return TIME_PREDICATES.has(predicate) ? sameTime(a, b) : a === b;
-}
+/** {@link sameTime} for a predicate: only time predicates compare as instants. */ //p
+export function sameValue(predicate: string, a: string, b: string): boolean { //p
+  return TIME_PREDICATES.has(predicate) ? sameTime(a, b) : a === b; //p
+} //p
 
-/**
- * Order two time texts by their instant (ascending). Unparseable or naive
- * text sorts before any instant; ties fall back to the text so the order is
- * total and stable.
- */
-export function compareTimes(a: string, b: string): number {
-  const ma = parseInstantMicros(a);
-  const mb = parseInstantMicros(b);
-  if (ma !== null && mb !== null && ma !== mb) return ma < mb ? -1 : 1;
-  if (ma !== null && mb === null) return 1;
-  if (ma === null && mb !== null) return -1;
-  return a < b ? -1 : a > b ? 1 : 0;
-}
+/** //p
+ * Order two time texts by their instant (ascending). Unparseable or naive //p
+ * text sorts before any instant; ties fall back to the text so the order is //p
+ * total and stable. //p
+ */ //p
+export function compareTimes(a: string, b: string): number { //p
+  const ma = parseInstantMicros(a); //p
+  const mb = parseInstantMicros(b); //p
+  if (ma !== null && mb !== null && ma !== mb) return ma < mb ? -1 : 1; //p
+  if (ma !== null && mb === null) return 1; //p
+  if (ma === null && mb !== null) return -1; //p
+  return a < b ? -1 : a > b ? 1 : 0; //p
+} //p
 
-const EASTERN = new Intl.DateTimeFormat("en-US", {
-  timeZone: "America/New_York",
-  hourCycle: "h23",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-});
+const EASTERN = new Intl.DateTimeFormat("en-US", { //p
+  timeZone: "America/New_York", //p
+  hourCycle: "h23", //p
+  year: "numeric", //p
+  month: "2-digit", //p
+  day: "2-digit", //p
+  hour: "2-digit", //p
+  minute: "2-digit", //p
+  second: "2-digit", //p
+}); //p
 
-/**
- * How chaos answers a stored instant: America/New_York RFC 3339 with an
- * explicit offset (never Z), the fraction 6 digits or absent. The fixture
- * dial and the tests use it to stand in for chaos's read verbs.
- */
-export function renderEastern(micros: bigint): string {
-  const whole = micros / MICRO - (micros % MICRO < 0n ? 1n : 0n);
-  const frac = Number(micros - whole * MICRO);
-  const utcMs = Number(whole) * 1000;
-  const parts: Record<string, string> = {};
-  for (const part of EASTERN.formatToParts(new Date(utcMs))) {
-    parts[part.type] = part.value;
-  }
-  const p = (type: string): string => parts[type] ?? "";
-  const localMs = Date.UTC(
-    Number(p("year")),
-    Number(p("month")) - 1,
-    Number(p("day")),
-    Number(p("hour")),
-    Number(p("minute")),
-    Number(p("second")),
-  );
-  const offMin = Math.round((localMs - utcMs) / 60000);
-  const sign = offMin < 0 ? "-" : "+";
-  const abs = Math.abs(offMin);
-  const hh = String(Math.floor(abs / 60)).padStart(2, "0");
-  const mm = String(abs % 60).padStart(2, "0");
-  const fraction = frac === 0 ? "" : `.${String(frac).padStart(6, "0")}`;
-  return (
-    `${p("year")}-${p("month")}-${p("day")}T` +
-    `${p("hour")}:${p("minute")}:${p("second")}` +
-    `${fraction}${sign}${hh}:${mm}`
-  );
-}
+/** //p
+ * How chaos answers a stored instant: America/New_York RFC 3339 with an //p
+ * explicit offset (never Z), the fraction 6 digits or absent. The fixture //p
+ * dial and the tests use it to stand in for chaos's read verbs. //p
+ */ //p
+export function renderEastern(micros: bigint): string { //p
+  const whole = micros / MICRO - (micros % MICRO < 0n ? 1n : 0n); //p
+  const frac = Number(micros - whole * MICRO); //p
+  const utcMs = Number(whole) * 1000; //p
+  const parts: Record<string, string> = {}; //p
+  for (const part of EASTERN.formatToParts(new Date(utcMs))) { //p
+    parts[part.type] = part.value; //p
+  } //p
+  const p = (type: string): string => parts[type] ?? ""; //p
+  const localMs = Date.UTC( //p
+    Number(p("year")), //p
+    Number(p("month")) - 1, //p
+    Number(p("day")), //p
+    Number(p("hour")), //p
+    Number(p("minute")), //p
+    Number(p("second")), //p
+  ); //p
+  const offMin = Math.round((localMs - utcMs) / 60000); //p
+  const sign = offMin < 0 ? "-" : "+"; //p
+  const abs = Math.abs(offMin); //p
+  const hh = String(Math.floor(abs / 60)).padStart(2, "0"); //p
+  const mm = String(abs % 60).padStart(2, "0"); //p
+  const fraction = frac === 0 ? "" : `.${String(frac).padStart(6, "0")}`; //p
+  return ( //p
+    `${p("year")}-${p("month")}-${p("day")}T` + //p
+    `${p("hour")}:${p("minute")}:${p("second")}` + //p
+    `${fraction}${sign}${hh}:${mm}` //p
+  ); //p
+} //p
