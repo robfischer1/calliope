@@ -60,4 +60,31 @@ describe("FixtureBodyClient", () => {
     expect((await client.readBody("a")).map((s) => s.text)).toEqual(["in a"]);
     expect((await client.readBody("b")).map((s) => s.text)).toEqual(["in b"]);
   });
+
+  it("records each seeded node as a human 'save' event with its section count", async () => {
+    const client = new FixtureBodyClient({
+      n1: [{ text: "a" }, { text: "b" }, { text: "c" }],
+    });
+    const events = await client.readRevisions("n1");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: "save",
+      authoredBy: "human",
+      kafkaOffset: null,
+      sections: 3,
+    });
+  });
+
+  it("mergeSections answers the merged section itself", async () => {
+    const client = new FixtureBodyClient({
+      n1: [{ text: "left" }, { text: "right" }],
+    });
+    const [a, b] = await client.readBody("n1");
+    if (!a || !b) throw new Error("seed failed");
+    const merged = await client.mergeSections("n1", a.id, b.id, " + ");
+    expect(merged.text).toBe("left + right");
+    expect(merged.orderKey).toBe(a.orderKey);
+    expect(merged.id).not.toBe(a.id);
+    expect(await client.readBody("n1")).toEqual([merged]);
+  });
 });

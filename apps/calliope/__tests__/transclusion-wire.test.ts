@@ -94,7 +94,17 @@ async function rig() {
     expect(w.error).toBeUndefined();
     return (w.ok as { minted: Record<string, string> }).minted["0"] ?? "";
   };
-  return { dial, publisher, call, note, write, blocks, withBlock, place };
+  return {
+    dial,
+    mcp,
+    publisher,
+    call,
+    note,
+    write,
+    blocks,
+    withBlock,
+    place,
+  };
 }
 
 describe("write_container's transclusion wire", () => {
@@ -108,6 +118,29 @@ describe("write_container's transclusion wire", () => {
     expect(both.error?.code).toBe("bad_args");
     const neither = await r.write(b, [{ op: "add", position: "a0" }]);
     expect(neither.error?.code).toBe("bad_args");
+  });
+
+  it("a ref naming no slot with content refuses not_found, with the detail", async () => {
+    const r = await rig();
+    const b = await r.note("b");
+    const res = await r.write(b, [
+      { op: "add", ref: "9".repeat(64), position: "a0" },
+    ]);
+    expect(res.error).toEqual({
+      code: "not_found",
+      detail: `write_container: ref ${"9".repeat(64)} names no slot holding content`,
+    });
+  });
+
+  it("a placement of a placement refuses bad_args (chains are refused)", async () => {
+    const r = await rig();
+    const [, origin] = await r.withBlock("a", "x");
+    const b = await r.note("b");
+    const p = await r.place(b, origin);
+    const c = await r.note("c");
+    const res = await r.write(c, [{ op: "add", ref: p, position: "a0" }]);
+    expect(res.error?.code).toBe("bad_args");
+    expect(res.error?.detail).toContain("chains are refused");
   });
 
   it("a placement reads the origin's text, and placements: true lists it", async () => {
@@ -257,5 +290,100 @@ describe("delete_note purge honours placements", () => {
       dry_run: false,
     });
     expect(res.error).toBeUndefined();
+  });
+});
+
+describe("read_container's placements flag", () => {
+  it("is off unless asked: a placed origin lists no placements by default", async () => {
+    const r = await rig();
+    const [a, origin] = await r.withBlock("a", "src");
+    const b = await r.note("b");
+    await r.place(b, origin);
+    const [plain] = await r.blocks(a);
+    expect(plain?.placements).toBeUndefined();
+    const [asked] = await r.blocks(a, { placements: true });
+    expect(asked?.placements).toHaveLength(1);
+    const { tools } = await r.mcp.listTools();
+    const read = tools.find((t) => t.name === "read_container");
+    const props = read?.inputSchema.properties as Record<
+      string,
+      { default?: unknown; description?: string }
+    >;
+    expect(props.placements?.default).toBe(false);
+    expect(props.placements?.description).toBe(
+      "Also answer each block's placements: the slots (and their " +
+        "containers) that reference it — the reverse index of ref.",
+    );
+  });
+
+  it("publishes its description, naming how a placement reads", async () => {
+    const r = await rig();
+    const { tools } = await r.mcp.listTools();
+    const read = tools.find((t) => t.name === "read_container");
+    expect(read?.description).toBe(
+      "042 F5 (Git for Ideas): resolve a container's tree and fetch its " +
+        "prose in ONE batched blob lookup — blocks in position order. " +
+        "as_of_tx reads the container as it stood at that transaction " +
+        "(members since removed included). A tree fact naming an absent " +
+        "blob surfaces as dangling (text null) — reported, never " +
+        "fabricated. A placement block (one that references another " +
+        "slot) carries ref {slot, container} and reads its origin's blobId " +
+        "and text, as of the same transaction; an orphaned placement is " +
+        "dangling with ref kept.",
+    );
+  });
+});
+
+describe("write_container's published op schema", () => {
+  const described = (node: unknown, out: Set<string> = new Set()) => {
+    if (Array.isArray(node)) {
+      for (const n of node) described(n, out);
+    } else if (node !== null && typeof node === "object") {
+      for (const [k, v] of Object.entries(node)) {
+        if (k === "description" && typeof v === "string") out.add(v);
+        else described(v, out);
+      }
+    }
+    return out;
+  };
+
+  it("describes every op and its operands", async () => {
+    const r = await rig();
+    const { tools } = await r.mcp.listTools();
+    const write = tools.find((t) => t.name === "write_container");
+    const props = write?.inputSchema.properties as Record<string, unknown>;
+    const all = described(props.ops);
+    for (const want of [
+      "Add a block: send text (a new blob) OR ref (a placement of " +
+        "an existing block), exactly one.",
+      "Place an existing block instead of new text: the origin " +
+        "slot's 64-hex token. Reads resolve through it; an edit " +
+        "through the placement rewrites the origin, so every " +
+        "placement changes. The origin must hold content (not_found " +
+        "otherwise; a placement is refused bad_args: no chains). " +
+        "Cross-tenant refuses cross_tenant_placement " +
+        "(placement-policy.ts). No facts.",
+      "Rewrite a block's prose. On a placement it rewrites the " +
+        "origin (oldBlobId is the origin's, as read).",
+      "Remove a block. On a placement only the placement goes; an " +
+        "origin that still has placements refuses has_placements " +
+        'unless placements is "orphan".',
+      "The blob the slot holds now (a placement: its origin's, as " +
+        'read; "" for a dangling placement).',
+      "Removing an origin with placements: leave them dangling " +
+        "(each keeps its ref and reads dangling).",
+    ]) {
+      expect(all.has(want), want).toBe(true);
+    }
+  });
+
+  it("marks an add as needing exactly one of text or ref", async () => {
+    const r = await rig();
+    const { tools } = await r.mcp.listTools();
+    const write = tools.find((t) => t.name === "write_container");
+    const props = write?.inputSchema.properties as Record<string, unknown>;
+    expect(JSON.stringify(props.ops)).toContain(
+      '"x-requiredOneOf":[["text"],["ref"]]',
+    );
   });
 });
