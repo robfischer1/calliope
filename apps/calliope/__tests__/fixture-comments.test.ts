@@ -142,6 +142,28 @@ describe("FixtureBodyClient — 026 comments", () => {
     expect(all[0]?.comments.map((c) => c.text)).toEqual(["on doomed"]);
   });
 
+  it("a deleted block is still a known target: a late comment on it lands as deleted", async () => {
+    const client = new FixtureBodyClient();
+    const target = await seedOneBlock(client, "doc9", "doomed");
+    await client.applySectionOps("doc9", [{ op: "delete", sectionId: target }]);
+
+    await client.createComment("doc9", target, "after the fact", PRINCIPAL);
+    const all = await client.listComments("doc9");
+    expect(all[0]?.targetState).toBe("deleted");
+    expect(all[0]?.comments.map((c) => c.text)).toEqual(["after the fact"]);
+  });
+
+  it("an edited-away target reports superseded, not deleted", async () => {
+    const client = new FixtureBodyClient();
+    const target = await seedOneBlock(client, "doc10", "v1");
+    await client.createComment("doc10", target, "on v1", PRINCIPAL);
+    await client.editSection("doc10", target, "v2");
+
+    const all = await client.listComments("doc10");
+    expect(all).toHaveLength(1);
+    expect(all[0]?.targetState).toBe("superseded");
+  });
+
   it("027: anchored reads give the as-of prose with drift (fixture twin)", async () => {
     const client = new FixtureBodyClient();
     const target = await seedOneBlock(client, "doc8", "v1 prose");

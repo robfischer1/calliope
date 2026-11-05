@@ -2,8 +2,10 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  CONSUMER_GROUP,
   FocusRegister,
   handleTelemetryMessage,
+  resolveBootstrap,
 } from "../src/focus-register.js";
 import { look as lookVerb, unpin } from "../src/mcp/tools.js";
 import { isBodyPointer, type BodyPointer } from "../src/types.js";
@@ -377,5 +379,21 @@ describe("the pointer's capture moment is an instant or the event is skipped", (
     }
     expect(reg.current()).toBeNull();
     expect(reg.pins()).toEqual([]);
+  });
+});
+
+describe("the consumer's group and bootstrap", () => {
+  it("joins the one calliope-focus-register group", () => {
+    expect(CONSUMER_GROUP).toBe("calliope-focus-register");
+  });
+
+  it("falls back to the pantheon redpanda listener when KAFKA_BOOTSTRAP is unset or blank", () => {
+    expect(resolveBootstrap({})).toBe("redpanda:29092");
+    expect(resolveBootstrap({ KAFKA_BOOTSTRAP: "" })).toBe("redpanda:29092");
+    expect(resolveBootstrap({ KAFKA_BOOTSTRAP: "   " })).toBe("redpanda:29092");
+  });
+
+  it("takes a set KAFKA_BOOTSTRAP, trimmed", () => {
+    expect(resolveBootstrap({ KAFKA_BOOTSTRAP: " b:9092 " })).toBe("b:9092");
   });
 });
