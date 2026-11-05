@@ -10,17 +10,18 @@
  * a generation-safe respawn ladder for the ONE process it spawns (the
  * sidecar), so the cheapest correct lifecycle is to let any engine child's
  * death take the whole sidecar down (exit 1) and let Grace bring the stack
- * back — one supervisor, not two. First-run `initdb` is idempotent-by-
- * presence (a data directory that exists is never re-initialized).
+ * back — one supervisor, not two. First-run `initdb` builds beside the data
+ * directory and renames in on success, so `PG_VERSION` at the real path
+ * always means a finished cluster; one that exists is never re-initialized.
  *
  * Auth is `trust` on 127.0.0.1 ONLY: a single-user desktop store behind a
  * loopback bind; nothing listens beyond the machine (the sidecar's own
  * bind rule, inherited).
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { Pool } from "pg";
@@ -132,6 +133,37 @@ async function waitForChaos(url: string, tries = 120): Promise<void> {
 }
 
 /**
+ * Build a cluster at `dataDir` without blocking the event loop or exposing a
+ * partial one. initdb takes ~30 s on a `\\wsl.localhost` root and writes
+ * PG_VERSION in its first second: run synchronously it held back the sidecar's
+ * handshake until Grace's 30 s budget nearly lapsed, and a kill mid-run would
+ * leave a directory the presence check reads as finished.
+ */
+export async function initCluster(
+  initdb: string,
+  dataDir: string,
+): Promise<void> {
+  const building = `${dataDir}.init`;
+  rmSync(building, { recursive: true, force: true });
+  const status = await new Promise<number | null>((resolve, reject) => {
+    const proc = spawn(
+      initdb,
+      ["-D", building, "-U", PG_USER, "-E", "UTF8", "--auth=trust"],
+      { stdio: ["ignore", "ignore", "inherit"] },
+    );
+    proc.on("error", reject);
+    proc.on("exit", resolve);
+  });
+  if (status !== 0) {
+    rmSync(building, { recursive: true, force: true });
+    throw new Error(
+      `babychaos: initdb failed (${String(status)}) — first run cannot proceed`,
+    );
+  }
+  renameSync(building, dataDir);
+}
+
+/**
  * Boot the engine under `root`: initdb on first run, postgres, databases,
  * chaosstore — readiness-gated at each step. `onExit` fires when any child
  * dies UNEXPECTEDLY (after boot, before stop): the crash-only signal the
@@ -148,16 +180,7 @@ export async function startEngine(
 
   // First run — a data directory that exists is NEVER re-initialized.
   if (!existsSync(join(dataDir, "PG_VERSION"))) {
-    const res = spawnSync(
-      bin(payload.pgBin, "initdb"),
-      ["-D", dataDir, "-U", PG_USER, "-E", "UTF8", "--auth=trust"],
-      { stdio: ["ignore", "ignore", "inherit"] },
-    );
-    if (res.status !== 0) {
-      throw new Error(
-        `babychaos: initdb failed (${String(res.status)}) — first run cannot proceed`,
-      );
-    }
+    await initCluster(bin(payload.pgBin, "initdb"), dataDir);
   }
 
   const pgPort = await freePort();
