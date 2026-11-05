@@ -3,3 +3,10 @@
 
 # Byte-identical copies of foundry-dies/schema/tool-output (digest-gated contracts).
 apps/calliope/src/mcp/output-schema/
+apps/calliope/src/instant.ts
+apps/calliope/src/container-write.ts
+apps/calliope/src/container-body.ts
+apps/calliope/src/blob-store.ts
+apps/calliope/src/blob-census.ts
+apps/calliope/src/tree.ts
+apps/calliope/src/document-store.ts
