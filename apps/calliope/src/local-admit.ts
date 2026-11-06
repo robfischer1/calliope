@@ -14,6 +14,7 @@
 
 import { createHash } from "node:crypto";
 
+import { ChaosRest } from "./chaos-rest.js";
 import { canonicalInstant, canonicalWallclock } from "./instant.js";
 
 /** Coerce an unknown wire field to string (typeof-narrowed, never [object]). */
@@ -27,7 +28,6 @@ import {
   type ChaosDial,
   type ChaosExpect,
   ChaosClientError,
-  refusalOf,
   type ChaosOp,
   type HistoryEntry,
   LiveChaosDial,
@@ -184,6 +184,9 @@ export function toCaptureOps(ops: ChaosOp[], scope: string): CaptureOp[] {
   return out;
 }
 
+/** How long one call on the local engine may take. */
+const LOCAL_TIMEOUT_MS = 30_000;
+
 /**
  * The desktop dial: reads (and graph registration) ride the same chaos
  * door the live dial uses — pointed at loopback chaosstore — and admit
@@ -194,13 +197,17 @@ export function toCaptureOps(ops: ChaosOp[], scope: string): CaptureOp[] {
  */
 export class LocalChaosDial implements ChaosDial {
   readonly #reads: LiveChaosDial;
-  readonly #chaosUrl: string;
+  readonly #rest: ChaosRest;
   readonly #author: string;
-  #id = 0;
 
   constructor(chaosUrl: string, author = "human") {
-    this.#chaosUrl = chaosUrl.endsWith("/mcp") ? chaosUrl : `${chaosUrl}/mcp`;
-    this.#reads = new LiveChaosDial({ chaosUrl, themisUrl: chaosUrl });
+    // chaos serves REST alone, so reads and capture share one dial onto it.
+    this.#rest = new ChaosRest(chaosUrl, LOCAL_TIMEOUT_MS);
+    this.#reads = new LiveChaosDial({
+      chaosUrl,
+      themisUrl: chaosUrl,
+      chaosRest: this.#rest,
+    });
     this.#author = author;
   }
 
@@ -210,9 +217,8 @@ export class LocalChaosDial implements ChaosDial {
     expect?: ChaosExpect[],
   ): Promise<AdmitResult> {
     const wire = toCaptureOps(ops, scope);
-    this.#id += 1;
     // chaos `capture` speaks the same `expect` grammar themis passes through.
-    const raw = (await localRpc(this.#chaosUrl, this.#id, "capture", {
+    const raw = (await localCapture(this.#rest, {
       ops: wire,
       author: this.#author,
       ...(expect !== undefined && expect.length > 0 ? { expect } : {}),
@@ -289,71 +295,32 @@ export class LocalChaosDial implements ChaosDial {
   }
 }
 
-/** One tools/call POST against the local chaosstore door (mcpserve). */
-async function localRpc(
-  endpoint: string,
-  id: number,
-  verb: string,
+/** One capture on the local chaosstore REST door, its refusals typed. */
+async function localCapture(
+  rest: ChaosRest,
   args: Record<string, unknown>,
 ): Promise<unknown> {
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id,
-      method: "tools/call",
-      params: { name: verb, arguments: args },
-    }),
-  });
-  if (!res.ok) {
+  const answer = await rest.call("capture", args);
+  if (!answer.ok) {
+    const { code, detail, text } = answer.refusal;
     throw new ChaosClientError(
-      `local capture: HTTP ${String(res.status)}`,
-      "wire_error",
+      code === "conflict"
+        ? `local capture: conflict: ${detail}`
+        : `local capture: ${text}`,
+      code === "conflict" ? "conflict" : "wire_error",
     );
   }
-  const text = await res.text();
-  const payload =
-    text.startsWith("event:") || text.includes("\ndata:")
-      ? text
-          .split("\n")
-          .filter((l) => l.startsWith("data:"))
-          .map((l) => l.slice(5).trim())
-          .join("") || "null"
-      : text;
-  const body = JSON.parse(payload) as {
-    error?: unknown;
-    result?: {
-      isError?: boolean;
-      content?: { text?: string }[];
-      structuredContent?: unknown;
-    };
-  };
-  if (body.error !== undefined) {
-    throw new ChaosClientError(
-      `local ${verb}: ${JSON.stringify(body.error)}`,
-      "wire_error",
-    );
+  const { structured, texts } = answer.reply;
+  if (structured !== undefined) {
+    return structured !== null &&
+      typeof structured === "object" &&
+      Object.keys(structured).length === 1 &&
+      "result" in structured
+      ? structured.result
+      : structured;
   }
-  const result = body.result;
-  if (result?.isError === true) {
-    const refusal = refusalOf(result.content, result.structuredContent);
-    if (refusal?.code === "conflict") {
-      throw new ChaosClientError(
-        `local ${verb}: conflict: ${refusal.detail}`,
-        "conflict",
-      );
-    }
-    throw new ChaosClientError(
-      `local ${verb}: ${JSON.stringify(result.content ?? [])}`,
-      "wire_error",
-    );
-  }
-  if (result?.structuredContent !== undefined) return result.structuredContent;
-  const first = result?.content?.[0]?.text;
-  if (first === undefined || first === "") return null;
-  return JSON.parse(first) as unknown;
+  const [first] = texts;
+  return first === undefined || first === ""
+    ? null
+    : (JSON.parse(first) as unknown);
 }
