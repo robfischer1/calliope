@@ -288,7 +288,34 @@ describe("chaos list reads — the bare array and the F17 {items} object", () =>
 });
 
 describe("LocalChaosDial delegates the placed reads to its chaos door", () => {
-  it("placedEdges and referrers ride the loopback door", async () => {
+  const VERB_DOC = (verb: string) => ({
+    post: { operationId: verb, "x-mcp-tool": verb },
+  });
+
+  it("placedEdges and referrers ride the loopback REST door", async () => {
+    const posted: string[] = [];
+    globalThis.fetch = ((url: string, init?: { method?: string }) => {
+      const { pathname, href } = new URL(url);
+      const json = { "content-type": "application/json", "X-Star": "chaos" };
+      if (pathname === "/openapi.json") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              openapi: "3.1.0",
+              paths: {
+                "/v1/materialize_edges": VERB_DOC("materialize_edges"),
+                "/v1/quads_to": VERB_DOC("quads_to"),
+              },
+            }),
+            { status: 200, headers: json },
+          ),
+        );
+      }
+      posted.push(`${init?.method ?? "GET"} ${href}`);
+      return Promise.resolve(
+        new Response(JSON.stringify(reply), { status: 200, headers: json }),
+      );
+    }) as unknown as typeof globalThis.fetch;
     const dial = new LocalChaosDial("http://127.0.0.1:9999");
     reply = { edges: [{ predicate: "p", value: "v", graph: G }] };
     expect(await dial.placedEdges(NODE)).toEqual([
@@ -303,9 +330,9 @@ describe("LocalChaosDial delegates the placed reads to its chaos door", () => {
     ]);
     reply = [{ s: OTHER, predicate: "q", o: NODE, o_domain: "node", g: G }];
     expect(await dial.referrers(NODE)).toHaveLength(1);
-    expect(calls.map((c) => [c.url, c.name])).toEqual([
-      ["http://127.0.0.1:9999/mcp", "materialize_edges"],
-      ["http://127.0.0.1:9999/mcp", "quads_to"],
+    expect(posted).toEqual([
+      "POST http://127.0.0.1:9999/v1/materialize_edges",
+      "POST http://127.0.0.1:9999/v1/quads_to",
     ]);
   });
 });

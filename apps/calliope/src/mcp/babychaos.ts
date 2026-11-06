@@ -106,23 +106,11 @@ async function waitForPg(url: string, tries = 120): Promise<void> {
   throw new Error("babychaos: postgres never became ready");
 }
 
-/** Wait until the chaosstore door answers tools/list. */
+/** Wait until the chaosstore REST door serves its document. */
 async function waitForChaos(url: string, tries = 120): Promise<void> {
   for (let i = 0; i < tries; i++) {
     try {
-      const res = await fetch(`${url}/mcp`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "tools/list",
-          params: {},
-        }),
-      });
+      const res = await fetch(`${url}/openapi.json`);
       if (res.ok) return;
     } catch {
       // not up yet
@@ -232,17 +220,24 @@ export async function startEngine(
     env: {
       ...process.env,
       CHAOS_BIGINT_DATABASE_URL: chaosDb,
-      // The real env contract (chaosstore main.go): addr strings carry
-      // bind + port together; loopback only, ephemeral mTLS bind (its
-      // SPIFFE source fail-softs on a desktop with no workload API).
-      CHAOS_GO_MCP_ADDR: `127.0.0.1:${String(chaosPort)}`,
-      CHAOS_GO_MCP_MTLS_ADDR: "127.0.0.1:0",
+      // chaos serves REST alone since its MCP face retired (a56b4058), and
+      // that listener is the only one: without the port it exits at boot.
+      // Its SPIFFE source fail-softs on a desktop with no workload API.
+      STELLAR_REST_PLAINTEXT_PORT: String(chaosPort),
       // No kafka on a desktop: empty brokers leave the witness log on the
       // child's stdout, which this spawn discards (the sidecar's own
       // stdout stays the ONE handshake line).
       KAFKA_BOOTSTRAP: "",
       CHAOS_GO_KAFKA_BOOTSTRAP: "",
       OTEL_SDK_DISABLED: "true",
+      // The desktop runs the same guards as the fleet, stated rather than
+      // inherited: chaos refuses off and warn at boot (Rob, b567f286), so a
+      // stray value in the user's environment must not stop the engine.
+      CHAOS_OBJECT_GUARD_MODE: "enforce",
+      CHAOS_CARDINALITY_GUARD_MODE: "enforce",
+      CHAOS_SHAPE_GUARD_MODE: "enforce",
+      CHAOS_SHAPE_CORE_MODE: "enforce",
+      CHAOS_WRITE_PERMISSION_MODE: "enforce",
     },
     stdio: ["ignore", "ignore", "inherit"],
   });

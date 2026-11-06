@@ -77,8 +77,7 @@ describe.skipIf(!RUN)("baby chaos: the local engine end to end", () => {
       env: {
         ...process.env,
         CHAOS_BIGINT_DATABASE_URL: `postgresql://postgres:test@127.0.0.1:${String(pgPort)}/chaos`,
-        CHAOS_GO_MCP_ADDR: `127.0.0.1:${String(chaosPort)}`,
-        CHAOS_GO_MCP_MTLS_ADDR: "127.0.0.1:0",
+        STELLAR_REST_PLAINTEXT_PORT: String(chaosPort),
         KAFKA_BOOTSTRAP: "",
         CHAOS_GO_KAFKA_BOOTSTRAP: "",
         OTEL_SDK_DISABLED: "true",
@@ -92,19 +91,7 @@ describe.skipIf(!RUN)("baby chaos: the local engine end to end", () => {
     const chaosUrl = `http://127.0.0.1:${String(chaosPort)}`;
     for (let i = 0; ; i++) {
       try {
-        const res = await fetch(`${chaosUrl}/mcp`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            accept: "application/json, text/event-stream",
-          },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "tools/list",
-            params: {},
-          }),
-        });
+        const res = await fetch(`${chaosUrl}/openapi.json`);
         if (res.ok) break;
       } catch {
         // booting
