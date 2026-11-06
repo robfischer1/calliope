@@ -50,14 +50,25 @@ interface Answer {
 /** The type nomos's prose law notes carry (nomos `ProseNoteType`). */
 export const GOVERNANCE_TYPE = "Governance";
 
-const NOMOS_TYPES: ReadonlySet<string> = new Set([
+/** The type an ingested document lands with (Demeter's docs port, the
+ *  document store): a retraction-only suppress takes it for every caller. */
+export const DOCUMENT_TYPE = "DigitalDocument";
+
+/** Hide and restore are reversible, so every caller may take a Note or a
+ *  document with them. Purge never reads this: it stays Note-only. */
+const HIDEABLE_TYPES: ReadonlySet<string> = new Set([
   ...NOTE_TYPES,
+  DOCUMENT_TYPE,
+]);
+
+const NOMOS_TYPES: ReadonlySet<string> = new Set([
+  ...HIDEABLE_TYPES,
   GOVERNANCE_TYPE,
 ]);
 
 /** What counts as a note for a hide or restore by `caller`. */
 export function hideableTypes(caller: string | undefined): ReadonlySet<string> {
-  return caller === NOMOS_PRINCIPAL ? NOMOS_TYPES : NOTE_TYPES;
+  return caller === NOMOS_PRINCIPAL ? NOMOS_TYPES : HIDEABLE_TYPES;
 }
 
 /** The request `_meta` a tool callback's `extra` carries, if any. */

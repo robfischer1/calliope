@@ -12,7 +12,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { runWithPeer } from "@forge/stellar-core-ts";
 import type { Peer } from "@forge/stellar-core-ts";
 import { FixtureBlobStore } from "../src/blob-store.js";
-import { FixtureChaosDial } from "../src/chaos-client.js";
+import { FixtureChaosDial, opAdd } from "../src/chaos-client.js";
 import { callerPrincipal, NOMOS_PRINCIPAL } from "../src/caller.js";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { createServer } from "../src/mcp/server.js";
@@ -143,12 +143,16 @@ describe("callerPrincipal", () => {
 describe("hideableTypes", () => {
   it("widens to Governance for nomos alone", () => {
     expect([...hideableTypes(NOMOS_PRINCIPAL)].sort()).toEqual([
+      "DigitalDocument",
       "Governance",
       "Note",
     ]);
-    expect(hideableTypes(undefined)).toBe(NOTE_TYPES);
-    expect(hideableTypes("spiffe://notusmi.com/star/athena")).toBe(NOTE_TYPES);
-    expect(hideableTypes("nomos")).toBe(NOTE_TYPES);
+    const everyone = ["DigitalDocument", "Note"];
+    for (const c of [undefined, "spiffe://notusmi.com/star/athena", "nomos"]) {
+      expect([...hideableTypes(c)].sort()).toEqual(everyone);
+    }
+    // Purge's set is untouched: a Note, nothing else.
+    expect([...NOTE_TYPES]).toEqual(["Note"]);
   });
 });
 
@@ -222,7 +226,7 @@ describe("delete_note on a Governance note", () => {
         expect(res.isError).toBe(true);
         expect(res.out.code).toBe("batch_refused");
         expect(String(res.out.detail)).toContain(
-          `not_a_note: ${g} carries no hasType=Note edge`,
+          `not_a_note: ${g} carries no hasType=Note|DigitalDocument edge`,
         );
       }
     }
@@ -256,7 +260,86 @@ describe("delete_note on a Governance note", () => {
     });
     expect(hid.isError).toBe(true);
     expect(String(hid.out.detail)).toContain(
-      `not_a_note: ${m} carries no hasType=Note|Governance edge`,
+      `not_a_note: ${m} carries no hasType=Note|DigitalDocument|Governance edge`,
     );
+  });
+});
+
+describe("delete_note on an ingested document (DigitalDocument)", () => {
+  async function doc(r: Rig, title: string): Promise<string> {
+    const res = await call(r, SESSION, "create_note", {
+      title,
+      type: "DigitalDocument",
+    });
+    expect(res.isError).toBe(false);
+    return (res.out as { node_id: string }).node_id;
+  }
+
+  it("any caller hides it, idempotently, and restore returns it", async () => {
+    for (const [peer, meta] of [
+      [undefined, undefined],
+      [SESSION, undefined],
+      [NOMOS, undefined],
+      [HADES, stamp("spiffe://notusmi.com/star/athena")],
+    ] as [Peer | undefined, Record<string, unknown> | undefined][]) {
+      const r = await rig();
+      const d = await doc(r, "synthetic doc");
+      const before = await r.dial.placedEdges(d);
+      const hid = await call(
+        r,
+        peer,
+        "delete_note",
+        { ids: [d], dry_run: false },
+        meta,
+      );
+      expect(hid.isError).toBe(false);
+      expect(hid.out.notes).toEqual([{ node_id: d, status: "suppressed" }]);
+      expect((await suppressedNotes(r.dial, SCOPE)).has(d)).toBe(true);
+      const again = await call(
+        r,
+        peer,
+        "delete_note",
+        { ids: [d], dry_run: false },
+        meta,
+      );
+      expect(again.out.notes).toEqual([
+        { node_id: d, status: "already_suppressed" },
+      ]);
+      const back = await call(r, peer, "restore_note", { ids: [d] }, meta);
+      expect(back.out.notes).toEqual([{ node_id: d, status: "restored" }]);
+      expect(await r.dial.placedEdges(d)).toEqual(before);
+    }
+  });
+
+  it("purge still refuses it, writing nothing", async () => {
+    const r = await rig();
+    const d = await doc(r, "synthetic doc p");
+    const admits = r.dial.admits.length;
+    const res = await call(r, NOMOS, "delete_note", {
+      ids: [d],
+      purge: true,
+      dry_run: false,
+    });
+    expect(res.isError).toBe(true);
+    expect(String(res.out.detail)).toContain(
+      `not_a_note: ${d} carries no hasType=Note edge`,
+    );
+    expect(r.dial.admits.length).toBe(admits);
+  });
+
+  it("an archived document is still protected", async () => {
+    const r = await rig();
+    const d = await doc(r, "synthetic doc a");
+    const w = await r.dial.admit(
+      [opAdd(d, "isArchived", { toLiteral: "true" })],
+      SCOPE,
+    );
+    expect(w.admitted).toBe(true);
+    const res = await call(r, SESSION, "delete_note", {
+      ids: [d],
+      dry_run: false,
+    });
+    expect(res.isError).toBe(true);
+    expect(String(res.out.detail)).toContain("protected");
   });
 });
