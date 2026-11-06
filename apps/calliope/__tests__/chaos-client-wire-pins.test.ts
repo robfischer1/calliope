@@ -103,7 +103,10 @@ describe("node refs", () => {
 
   it("resolveRefsEcho keeps the echoed ref as text, never undefined over it", async () => {
     install({
-      refs: [{ label: "L", kind: "K" }, { ref: 7, label: "M", kind: "K" }],
+      refs: [
+        { label: "L", kind: "K" },
+        { ref: 7, label: "M", kind: "K" },
+      ],
       missing: [],
     });
     expect(await dial().resolveRefsEcho(["x"])).toStrictEqual({
