@@ -22,6 +22,10 @@ star := file_name(justfile_directory())
 # the spec-kit override template; the hooks under hooks/ call them.
 import 'stages.just'
 
+# The Dev surface's private `_dev` recipe (dev.just, laid by foundry-stocks).
+# typecheck, test, build and fmt run on the cluster through it, not here.
+import? 'dev.just'
+
 # List available recipes
 default:
     @just --list
@@ -42,20 +46,24 @@ install:
 lint: check
 
 [doc('Typecheck all packages')]
-typecheck:
-    turbo run typecheck
+[positional-arguments]
+typecheck *ARGS:
+    @{{just_executable()}} --justfile {{justfile()}} --set ca_module {{quote(ca_module)}} _dev typecheck "$@"
 
 [doc('Run the test suite')]
+[positional-arguments]
 test *ARGS:
-    turbo run test {{ARGS}}
+    @{{just_executable()}} --justfile {{justfile()}} --set ca_module {{quote(ca_module)}} _dev test "$@"
 
 [doc('Build all packages')]
-build:
-    turbo run build
+[positional-arguments]
+build *ARGS:
+    @{{just_executable()}} --justfile {{justfile()}} --set ca_module {{quote(ca_module)}} _dev build "$@"
 
 # Rewrite files in place (gate runs the check-only half)
-fmt:
-    bun run format
+[positional-arguments]
+fmt *ARGS:
+    @{{just_executable()}} --justfile {{justfile()}} --set ca_module {{quote(ca_module)}} _dev fmt "$@"
 
 # Known-vulnerability scan.
 # CI gates at high; some advisories are deferred by policy — see the workflow.
