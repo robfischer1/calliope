@@ -29,6 +29,7 @@ import { Pool } from "pg";
 import { BlobStore, type ProseStore } from "../blob-store.js";
 import {
   type AdmitResult,
+  ChaosClientError,
   type ChaosDial,
   type ChaosExpect,
   type ChaosOp,
@@ -352,6 +353,24 @@ function isMissingSubject(err: unknown, node: string): boolean {
   return text.includes("no nodes row") && text.includes(`s=${node}`);
 }
 
+/** The direct-capture path (CALLIOPE_DIRECT_CAPTURE) answers the subject
+ *  guard's refusal as `admitted:false` with the guard's text in a violation,
+ *  where themis admit threw it. Throw it again here so the carrier fallback
+ *  below still sees the error it matches, and nothing else changes. */
+export function throwIfMissingSubject(res: AdmitResult, node: string): void {
+  if (res.admitted) return;
+  for (const v of res.violations) {
+    const detail = (v as { detail?: unknown }).detail;
+    if (typeof detail === "string" && isMissingSubject(detail, node)) {
+      throw new ChaosClientError(
+        `admit: ${detail}`,
+        "admit_refused",
+        res.violations,
+      );
+    }
+  }
+}
+
 /** Diff one revision step into tree ops. Mutates `slots` to the new state
  *  once the admit lands (the caller applies `next` after success). */
 function diffRevision(
@@ -617,6 +636,7 @@ export async function migrateTree(
             }
           }
           const res = await dial.admit(cleanup, scope);
+          throwIfMissingSubject(res, node);
           if (!res.admitted) {
             record.status = "parity_failed";
             report.refused.push(
@@ -658,6 +678,7 @@ export async function migrateTree(
             continue;
           }
           const res = await dial.admit(batch, scope);
+          throwIfMissingSubject(res, node);
           if (!res.admitted) {
             record.status = "parity_failed";
             report.refused.push(
@@ -694,6 +715,7 @@ export async function migrateTree(
         ).build();
         if (headDiff.batch.length > 0) {
           const res = await dial.admit(headDiff.batch, scope);
+          throwIfMissingSubject(res, node);
           if (!res.admitted) {
             record.status = "parity_failed";
             report.refused.push(

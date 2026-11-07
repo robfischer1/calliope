@@ -40,6 +40,11 @@ import {
 import { RestClient, RouteError, ToolError } from "@forge/stellar-core-ts/rest";
 import { asDateTime } from "./instant.js";
 import { type ChaosRest, chaosRestFromEnv } from "./chaos-rest.js";
+import {
+  classifyRefusal,
+  mintedOf,
+  toDirectCaptureOps,
+} from "./direct-capture.js";
 
 // themis's REST door (openapi-http :8203). Its mTLS door :8201 and the plaintext
 // MCP door :8200 are closed (rest-mesh P7), so the old https://themis:8201
@@ -52,6 +57,8 @@ export const DEFAULT_THEMIS_URL = "http://themis:8203";
 // (CHAOS_MCP_ONLY is empty); this default is what a build without it names.
 const DEFAULT_CHAOS_URL = "http://chaos:8209";
 const TIMEOUT_MS = 30_000;
+/** The author calliope's direct captures carry (its own mTLS/Cilium identity). */
+const DIRECT_AUTHOR = "calliope";
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -624,6 +631,16 @@ export class LiveChaosDial implements ChaosDial {
    * never inherits the cluster's flip.
    */
   private readonly chaosRest: ChaosRest | undefined;
+  /**
+   * CALLIOPE_DIRECT_CAPTURE=on (or `directCapture: true`): `admit` writes by
+   * ONE chaos `capture` as calliope, over {@link chaosRest}, and never calls
+   * themis. Off by default; unsetting it is the rollback. Read from the env
+   * only when neither themisUrl nor chaosUrl was passed (as chaosRest and the
+   * themis REST base are), so a dial built for another engine never inherits
+   * the cluster's flip. Reading it calls nothing: the flag only chooses a
+   * branch inside `admit`.
+   */
+  private readonly directCapture: boolean;
   private id = 0;
   /**
    * The workload identity, held for the process's whole life.
@@ -646,6 +663,7 @@ export class LiveChaosDial implements ChaosDial {
     chaosUrl?: string;
     chaosRest?: ChaosRest;
     themisRestUrl?: string;
+    directCapture?: boolean;
   }) {
     const themisBase = (
       opts?.themisUrl ??
@@ -665,6 +683,11 @@ export class LiveChaosDial implements ChaosDial {
     this.chaosRest =
       opts?.chaosRest ??
       (opts?.chaosUrl === undefined ? chaosRestFromEnv(TIMEOUT_MS) : undefined);
+    this.directCapture =
+      opts?.directCapture ??
+      (opts?.themisUrl === undefined &&
+        opts?.chaosUrl === undefined &&
+        process.env.CALLIOPE_DIRECT_CAPTURE === "on");
     const restBase = (
       opts?.themisRestUrl ??
       (opts?.themisUrl === undefined
@@ -801,6 +824,7 @@ export class LiveChaosDial implements ChaosDial {
     expect?: ChaosExpect[],
   ): Promise<AdmitResult> {
     this.id += 1;
+    if (this.directCapture) return this.admitDirect(ops, scope, expect);
     // `expect` rides only when stated: an empty list is a plain admit.
     const args: Record<string, unknown> =
       expect !== undefined && expect.length > 0
@@ -833,6 +857,78 @@ export class LiveChaosDial implements ChaosDial {
       violations: raw.violations ?? [],
     };
     if (typeof raw.tx === "number") out.tx = raw.tx;
+    return out;
+  }
+
+  /**
+   * `admit` as one chaos `capture` (CALLIOPE_DIRECT_CAPTURE). The reply keeps
+   * admit's shape for callers: a definite refusal is `admitted:false` with one
+   * violation (callers read `violations` / raise `admit_refused`); a failed
+   * `expect` is a thrown `conflict`; every other failure (transport, timeout,
+   * 5xx, a store fault wearing `capture_refused`) is in doubt and THROWS
+   * untouched — the write may have landed, so it is never a refusal and
+   * RetryingDial retries only what proves the connection never opened.
+   */
+  private async admitDirect(
+    ops: ChaosOp[],
+    scope: string,
+    expect?: ChaosExpect[],
+  ): Promise<AdmitResult> {
+    const rest = this.chaosRest;
+    if (rest === undefined) {
+      throw new ChaosClientError(
+        "capture: CALLIOPE_DIRECT_CAPTURE needs chaos's REST door " +
+          "(CALLIOPE_CHAOS_REST_URL); chaos's /mcp is closed to calliope",
+        "wire_error",
+      );
+    }
+    const args: Record<string, unknown> = {
+      ops: toDirectCaptureOps(ops, scope),
+      author: DIRECT_AUTHOR,
+      ...(expect !== undefined && expect.length > 0 ? { expect } : {}),
+    };
+    const answer = await rest.call("capture", args);
+    if (!answer.ok) {
+      const { code, detail, text } = answer.refusal;
+      const verdict = classifyRefusal(code, detail);
+      if (verdict.kind === "conflict") {
+        throw new ChaosClientError(`capture: conflict: ${detail}`, "conflict");
+      }
+      if (verdict.kind === "in_doubt") {
+        throw new ChaosClientError(`capture: ${text}`, "wire_error");
+      }
+      return {
+        admitted: false,
+        minted: [],
+        violations: [
+          { subject: "", check: verdict.check, detail, predicate: null },
+        ],
+      };
+    }
+    const { structured, texts } = answer.reply;
+    let raw: unknown = structured;
+    if (raw === undefined) {
+      const [first] = texts;
+      raw = first === undefined || first === "" ? null : JSON.parse(first);
+    }
+    if (
+      raw !== null &&
+      typeof raw === "object" &&
+      Object.keys(raw).length === 1 &&
+      "result" in raw
+    ) {
+      raw = raw.result;
+    }
+    if (raw === null || typeof raw !== "object") {
+      throw new ChaosClientError("capture: empty result", "bad_result");
+    }
+    const body = raw as { tx?: unknown; results?: unknown; minted?: unknown };
+    const out: AdmitResult = {
+      admitted: true,
+      minted: mintedOf(body),
+      violations: [],
+    };
+    if (typeof body.tx === "number") out.tx = body.tx;
     return out;
   }
 
