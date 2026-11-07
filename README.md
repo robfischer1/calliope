@@ -76,6 +76,17 @@ Backend selection (`src/mcp/backend.ts`) reads the environment, in order:
 | `urania` | fallback | `UraniaBodyClient` + `LiveUraniaCapture` | direct `chaos`/`urania` engine service (`CHAOS_URL`, legacy `URANIA_URL`) — migration reads only, post-C2 |
 | `fixture` | explicit only | `FixtureBodyClient` | in-memory — dev/test |
 
+**Graph writes: `CALLIOPE_DIRECT_CAPTURE`.** `LiveChaosDial.admit` writes
+through themis `admit` (REST when `CALLIOPE_THEMIS_REST_URL` is set, else
+MCP). `CALLIOPE_DIRECT_CAPTURE=on` (exactly `on`; anything else is off, and it
+is read only when the dial was given neither a themis nor a chaos URL) moves
+it to ONE chaos `capture` as `author: calliope` over chaos's REST door
+(`CALLIOPE_CHAOS_REST_URL` is required; `/mcp` is closed). Off by default;
+unset is the rollback. The reply keeps admit's shape: a definite refusal is
+`admitted:false` with one violation, a failed `expect` throws `conflict`, and
+every other failure (transport, timeout, 5xx, a store fault) throws as in
+doubt. Nothing calls `capture` at startup. See `src/direct-capture.ts`.
+
 The `pg` and `fixture` backends additionally provide a **document store**
 (C3, the internal dissolve sink — its verbs retired in F12), a **revision
 store** (C4), and the **container facet** (blobs + the chaos dial — the
