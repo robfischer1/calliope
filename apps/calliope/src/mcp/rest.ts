@@ -13,6 +13,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withSpan } from "@forge/stellar-core-ts";
 import { mountWitnessed } from "@forge/stellar-core-ts/rest";
 import type { RestHandler, RestMount } from "@forge/stellar-core-ts/rest";
+import { actGate } from "../act-gate.js";
+import type { ActGateOptions } from "../act-gate.js";
 import { SOURCE_STAR } from "./consciousness-emit.js";
 import type { Witness } from "./witness.js";
 
@@ -23,6 +25,10 @@ export interface RestFaceOptions {
   readonly witness: Witness;
   /** Reads the environment. Default: `process.env`. */
   readonly getenv?: ((name: string) => string | undefined) | undefined;
+  /** The act-assertion gate (act-gate.ts); absent mounts the door without it. */
+  readonly act?: ActGateOptions | undefined;
+  /** Wraps OUTSIDE the gate (tests stamp a peer here; production passes none). */
+  readonly outer?: ((next: RestHandler) => RestHandler) | undefined;
 }
 
 /**
@@ -43,6 +49,10 @@ export async function mountRestFace(o: RestFaceOptions): Promise<RestMount> {
     log: o.witness.log,
     getenv,
     soleListener: true,
-    wrap: spanned,
+    wrap: (next) => {
+      const gated = o.act === undefined ? next : actGate(o.act)(next);
+      const inner = spanned(gated);
+      return o.outer === undefined ? inner : o.outer(inner);
+    },
   });
 }

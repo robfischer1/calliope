@@ -45,6 +45,7 @@ import {
 import type { ContainerFacet } from "../container-write.js";
 import { FixtureTagStore, PgTagStore, type TagStore } from "../tag-store.js";
 import { FixtureRevisionStore, PgRevisionStore } from "../revision-store.js";
+import { attributing } from "../attributing-dial.js";
 import { FixtureBodyClient } from "../fixture-client.js";
 import { UraniaBodyClient } from "../urania-client.js";
 import { PgBodyClient } from "../pg-client.js";
@@ -239,13 +240,14 @@ export function makeBackend(
     // production — one model, so the fixture cannot drift from the store
     // the fleet actually runs.
     const client = new FixtureBodyClient();
-    const dial = new FixtureChaosDial();
+    const revisions = new FixtureRevisionStore();
+    const dial = attributing(new FixtureChaosDial(), revisions);
     const scope = notesScope(env);
     const tags = new FixtureTagStore();
     return {
       client,
       documents: new NotesDocumentStore(client, dial, scope, tags),
-      revisions: new FixtureRevisionStore(),
+      revisions,
       chaos: { dial, scope },
       // The SAME dial instance as the chaos facet, so containers minted via
       // create_note are addressable by the container write.
@@ -260,7 +262,8 @@ export function makeBackend(
     // ONE pool for every facet — the sovereign store is one database.
     const pool = pgPool(env, login);
     const client = withIndexPush(new PgBodyClient(pool), env);
-    const dial = new LiveChaosDial();
+    const revisions = new PgRevisionStore(pool);
+    const dial = attributing(new LiveChaosDial(), revisions);
     const scope = notesScope(env);
     const tags = new PgTagStore(pool);
     return {
@@ -269,7 +272,7 @@ export function makeBackend(
       // PgDocumentStore leaves the backend (its ensureSchema no longer
       // runs, so a post-drop boot cannot resurrect the table).
       documents: new NotesDocumentStore(client, dial, scope, tags),
-      revisions: new PgRevisionStore(pool),
+      revisions,
       chaos: { dial, scope },
       // ONE pool (the sovereign store is one database), one dial.
       containers: { blobs: new BlobStore(pool), dial, gc: new PgBlobGc(pool) },
