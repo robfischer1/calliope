@@ -50,17 +50,21 @@ export const LEEWAY_S = 5;
 /** The longest an assertion may live (kairos `Acts` TTL for calliope_write). */
 export const MAX_LIFETIME_S = 120;
 
-/** The six body-write verbs an assertion may ride, by REST path. */
-export const WRITE_VERB_PATHS: ReadonlySet<string> = new Set(
-  [
-    "write_container",
-    "create_note",
-    "set_properties",
-    "delete_note",
-    "restore_note",
-    "move_blocks",
-  ].map((v) => `/v1/${v}`),
-);
+/**
+ * The REST paths an assertion may ride: the six body-write verbs, plus
+ * delete_note's live face. The adapter spells dry_run:false as the `/live` path
+ * suffix (stellar-core rest/table.ts DANGEROUS); calliope's other verbs have no
+ * dry_run, force or confirm, so they have no suffixed path.
+ */
+export const WRITE_VERB_PATHS: ReadonlySet<string> = new Set([
+  "/v1/write_container",
+  "/v1/create_note",
+  "/v1/set_properties",
+  "/v1/delete_note",
+  "/v1/delete_note/live",
+  "/v1/restore_note",
+  "/v1/move_blocks",
+]);
 
 /** Why an assertion was not honoured: the HTTP status and a stable code. */
 export class ActRefusal extends Error {
@@ -94,9 +98,20 @@ export interface ActConfig {
 }
 
 /**
+ * Kairos's session issuer and trust domain as Kairos issues them: the defaults
+ * of `KAIROS_SESSION_ISSUER` / `KAIROS_SESSION_TRUST_DOMAIN` in
+ * kairos `internal/config/config.go`, which no flux manifest overrides. They
+ * name WHAT to expect, never what to trust: a token still has to verify under
+ * Kairos's JWKS.
+ */
+export const DEFAULT_ISSUER = "https://kairos.notusmi.com";
+export const DEFAULT_TRUST_DOMAIN = "notusmi.com";
+
+/**
  * The config from the environment. `CALLIOPE_ACT_JWKS_URL` falls back to
- * `STELLAR_KAIROS_JWKS_URL` (the same Kairos the PEP already reads); issuer and
- * trust domain have NO default: a deployment states them or assertions are refused.
+ * `STELLAR_KAIROS_JWKS_URL` (the same Kairos the PEP already reads) and has no
+ * default: unset, a present assertion is refused. Issuer and trust domain
+ * default to Kairos's own ({@link DEFAULT_ISSUER}) and env overrides.
  */
 export function actConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -110,8 +125,8 @@ export function actConfigFromEnv(
   };
   return {
     jwksUrl: pick("CALLIOPE_ACT_JWKS_URL", "STELLAR_KAIROS_JWKS_URL"),
-    issuer: pick("CALLIOPE_ACT_ISSUER"),
-    trustDomain: pick("CALLIOPE_ACT_TRUST_DOMAIN"),
+    issuer: pick("CALLIOPE_ACT_ISSUER") || DEFAULT_ISSUER,
+    trustDomain: pick("CALLIOPE_ACT_TRUST_DOMAIN") || DEFAULT_TRUST_DOMAIN,
   };
 }
 
@@ -163,6 +178,7 @@ export class JwksCache {
   #fetchedAt = Number.NEGATIVE_INFINITY;
   #attemptedAt = Number.NEGATIVE_INFINITY;
   #inflight: Promise<void> | undefined;
+  #failed = false;
   readonly #fetch: FetchLike;
 
   constructor(
@@ -171,6 +187,11 @@ export class JwksCache {
     private readonly nowMs: () => number = Date.now,
   ) {
     this.#fetch = fetchImpl ?? globalThis.fetch;
+  }
+
+  /** True when no key is held and the last fetch failed: Kairos is unreachable. */
+  get down(): boolean {
+    return this.#keys.size === 0 && this.#failed;
   }
 
   async keyFor(kid: string): Promise<KeyObject | undefined> {
@@ -193,7 +214,9 @@ export class JwksCache {
     try {
       this.#keys = await this.#read();
       this.#fetchedAt = now;
+      this.#failed = false;
     } catch (err) {
+      this.#failed = true;
       process.stderr.write(
         `calliope-act: the Kairos JWKS could not be read url=${this.url} held=${String(this.#keys.size)} err=${err instanceof Error ? err.message : String(err)}\n`,
       );
@@ -382,6 +405,13 @@ export async function verifyActAssertion(i: VerifyInput): Promise<ActAuthor> {
   const payload = decodeSegment(p);
 
   const key = await i.keys.keyFor(kid);
+  if (key === undefined && i.keys.down) {
+    throw new ActRefusal(
+      503,
+      "act_assertion_unavailable",
+      "the Kairos keys could not be fetched",
+    );
+  }
   if (key === undefined) {
     throw new ActRefusal(
       401,
@@ -458,6 +488,6 @@ export async function verifyActAssertion(i: VerifyInput): Promise<ActAuthor> {
     authoredBy: `human/${handle}`,
     via: VIA_CHARON,
     jti,
-    verb: i.verb.slice("/v1/".length),
+    verb: i.verb.slice("/v1/".length).split("/")[0] ?? "",
   };
 }

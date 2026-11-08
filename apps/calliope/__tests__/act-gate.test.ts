@@ -24,9 +24,14 @@ const ENV = {
   CALLIOPE_ACT_ISSUER: "https://kairos.notusmi.com",
   CALLIOPE_ACT_TRUST_DOMAIN: TD,
 };
+// The adapter's method per verb: a destructiveHint verb is DELETE, else POST
+// (stellar-core rest/table.ts methodFor; the hints are in server.ts and
+// delete-verbs.ts).
 const METHOD: Record<string, string> = {
   write_container: "DELETE",
   delete_note: "DELETE",
+  set_properties: "DELETE",
+  move_blocks: "DELETE",
 };
 
 interface CallOpts {
@@ -78,7 +83,9 @@ async function door(env: Record<string, string> = ENV) {
       headers[o.headerName ?? ACT_ASSERTION_HEADER] =
         o.token ?? mint(argsDigest(JSON.stringify(o.mintedOver ?? args)));
     }
-    const r = await fetch(`${base}/v1/${verb}`, {
+    // dry_run:false rides the path as /live (rest/table.ts DANGEROUS).
+    const live = verb === "delete_note" && args.dry_run === false;
+    const r = await fetch(`${base}/v1/${verb}${live ? "/live" : ""}`, {
       method: METHOD[verb] ?? "POST",
       headers,
       body: JSON.stringify(args),
@@ -123,6 +130,8 @@ describe("act gate: the six write verbs, attributed", () => {
     r = await call("move_blocks", { from: a, to: b, slots: [slot] });
     expect(r.status, r.text).toBe(200);
 
+    r = await call("delete_note", { ids: [a] });
+    expect(r.status, r.text).toBe(200);
     r = await call("delete_note", { ids: [a], dry_run: false });
     expect(r.status, r.text).toBe(200);
     r = await call("restore_note", { ids: [a] });

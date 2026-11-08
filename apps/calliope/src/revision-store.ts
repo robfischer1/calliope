@@ -253,11 +253,16 @@ export class PgRevisionStore implements RevisionStore {
   }
 
   async recordAuthorship(r: WriteAuthorship): Promise<void> {
-    await this.#pool.query(
+    const res = await this.#pool.query(
       `INSERT INTO write_authorship (scope, tx, authored_by, via, verb, jti)
        VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (scope, tx) DO NOTHING`,
       [r.scope, r.tx, r.authored_by, r.via, r.verb, r.jti],
     );
+    if (res.rowCount === 0) {
+      process.stderr.write(
+        `calliope-act: tx ${String(r.tx)} in ${r.scope} already has an authorship row; kept the first (dropped ${r.authored_by} jti=${r.jti})\n`,
+      );
+    }
   }
 
   async authorshipFor(

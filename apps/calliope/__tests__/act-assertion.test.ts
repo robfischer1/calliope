@@ -5,6 +5,7 @@ import {
   ActRefusal,
   JwksCache,
   MemoryJtiStore,
+  actConfigFromEnv,
   verifyActAssertion,
 } from "../src/act-assertion.js";
 import type { ActConfig, FetchLike } from "../src/act-assertion.js";
@@ -163,7 +164,26 @@ describe("verifyActAssertion", () => {
   it("fails closed when the JWKS is unreachable and nothing is cached", async () => {
     const down: FetchLike = () => Promise.reject(new Error("econnrefused"));
     const e = await refused(run(mint(DIGEST), { fetch: down }));
-    expect(e.code).toBe("act_assertion_invalid");
+    expect(e.status).toBe(503);
+    expect(e.code).toBe("act_assertion_unavailable");
+  });
+
+  it("defaults issuer and trust domain to Kairos's own; the JWKS URL has none", () => {
+    expect(actConfigFromEnv({})).toEqual({
+      jwksUrl: "",
+      issuer: ISS,
+      trustDomain: TD,
+    });
+    expect(
+      actConfigFromEnv({
+        STELLAR_KAIROS_JWKS_URL: "http://kairos:9211/jwks",
+        CALLIOPE_ACT_ISSUER: "https://other",
+      }),
+    ).toEqual({
+      jwksUrl: "http://kairos:9211/jwks",
+      issuer: "https://other",
+      trustDomain: TD,
+    });
   });
 
   it("refuses when config is unset", async () => {

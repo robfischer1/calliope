@@ -26,7 +26,8 @@ import {
   withActAuthor,
 } from "./act-assertion.js";
 import type { ActConfig, FetchLike, JtiStore } from "./act-assertion.js";
-import { argsDigest, DigestError } from "./args-digest.js";
+import { argsDigest, DigestError, parseRaw } from "./args-digest.js";
+import type { RawObj } from "./args-digest.js";
 
 const MAX_BODY = 8 << 20;
 const TOKEN_RE = /^[A-Za-z0-9_.-]+$/;
@@ -37,6 +38,28 @@ function refusal(e: ActRefusal): RestResponse {
     headers: { "Content-Type": "application/json", "X-Star": "calliope" },
     body: JSON.stringify({ code: e.code, detail: e.message }),
   };
+}
+
+/**
+ * The digest of the arguments the adapter will assemble for `path` from `body`:
+ * the body, with the path's own dangerous value (`/live` is dry_run:false)
+ * injected as the adapter injects it. A body that contradicts its path would be
+ * refused by the adapter; it is refused here too, so the digest is never taken
+ * over arguments that will not run.
+ */
+function assembledDigest(path: string, body: string): string {
+  const raw = body.trim() === "" ? new Map() : parseRaw(body);
+  if (!(raw instanceof Map))
+    throw new DigestError("arguments are not an object");
+  const args: RawObj = raw as RawObj;
+  if (path.endsWith("/live")) {
+    const have = args.get("dry_run");
+    if (have !== undefined && have !== false) {
+      throw new DigestError("dry_run contradicts the path");
+    }
+    args.set("dry_run", false);
+  }
+  return argsDigest(args);
 }
 
 export interface ActGateOptions {
@@ -78,7 +101,7 @@ export function actGate(o: ActGateOptions): (next: RestHandler) => RestHandler {
       }
       let digest: string;
       try {
-        digest = argsDigest(new TextDecoder().decode(bytes));
+        digest = assembledDigest(path, new TextDecoder().decode(bytes));
       } catch (e) {
         if (!(e instanceof DigestError)) throw e;
         throw new ActRefusal(401, "act_assertion_invalid", "malformed");
