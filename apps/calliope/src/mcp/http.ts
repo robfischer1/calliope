@@ -55,8 +55,10 @@ import {
   startPepMetrics,
 } from "@forge/stellar-core-ts/pep";
 import type { Pep } from "@forge/stellar-core-ts/pep";
-import type { RestMount } from "@forge/stellar-core-ts/rest";
+import type { RestHandler, RestMount } from "@forge/stellar-core-ts/rest";
 import { mountRestFace } from "./rest.js";
+import { MemoryJtiStore, actConfigFromEnv } from "../act-assertion.js";
+import type { FetchLike } from "../act-assertion.js";
 
 /**
  * How this star beats: its name, and what it can say about itself each beat.
@@ -142,6 +144,9 @@ export interface ServeOptions extends Omit<ServerDeps, "witness"> {
   readonly witness: Witness;
   /** Reads the environment (the REST port, the trust mode). Default: `process.env`. */
   readonly getenv?: ((name: string) => string | undefined) | undefined;
+  /** Test seams: the JWKS fetch, and a wrap outside the act gate. */
+  readonly actFetch?: FetchLike | undefined;
+  readonly restOuter?: ((next: RestHandler) => RestHandler) | undefined;
 }
 
 /**
@@ -178,12 +183,28 @@ export async function serveCalliope(o: ServeOptions): Promise<RestMount> {
   // Every server carries a register (an empty one answers { focus: null }).
   const focus = o.focus ?? new FocusRegister();
   const body = client;
+  // The act-assertion gate: config from the environment the door reads; the
+  // jti is spent in the sovereign store when there is one (survives restarts
+  // and a rolling update's overlap), in memory otherwise.
+  const env = o.getenv ?? ((k: string) => process.env[k]);
+  const act = {
+    jti: deps.revisions ?? new MemoryJtiStore(),
+    config: actConfigFromEnv({
+      CALLIOPE_ACT_JWKS_URL: env("CALLIOPE_ACT_JWKS_URL"),
+      STELLAR_KAIROS_JWKS_URL: env("STELLAR_KAIROS_JWKS_URL"),
+      CALLIOPE_ACT_ISSUER: env("CALLIOPE_ACT_ISSUER"),
+      CALLIOPE_ACT_TRUST_DOMAIN: env("CALLIOPE_ACT_TRUST_DOMAIN"),
+    }),
+    ...(o.actFetch !== undefined ? { fetch: o.actFetch } : {}),
+  };
   let rest: RestMount;
   try {
     rest = await mountRestFace({
       build: () => createServer(body, serverOptions({ ...deps, focus })),
       witness: o.witness,
       getenv: o.getenv,
+      act,
+      outer: o.restOuter,
     });
   } catch (err) {
     await o.witness.close();

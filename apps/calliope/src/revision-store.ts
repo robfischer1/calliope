@@ -17,6 +17,7 @@
  */
 
 import type { Pool } from "pg";
+import { MemoryJtiStore } from "./act-assertion.js";
 
 /** A file revision row (the phdb `history.file_revisions` shape, id-preserved). */
 export interface RevisionRow {
@@ -61,6 +62,30 @@ export interface RevisionStore {
   revisions(query?: RevisionQuery): Promise<RevisionRow[]>;
   deltasFor(revisionId: number): Promise<RevisionDeltaRow[]>;
   counts(): Promise<{ revisions: number; deltas: number }>;
+  /** Record who a landed graph transaction was written for (act assertion). */
+  recordAuthorship(row: WriteAuthorship): Promise<void>;
+  /** The authorship rows of these transactions in `scope` (absent tx = unattributed). */
+  authorshipFor(scope: string, txs: number[]): Promise<WriteAuthorship[]>;
+  /** Spend a act-assertion jti once: true = this call spent it, false = replay. */
+  claimJti(jti: string, expUnix: number): Promise<boolean>;
+}
+
+/**
+ * Who a graph transaction (a revision of a note: the write verbs' `tx`) was
+ * written for. Calliope's own record, beside the graph's: the chaos log's
+ * `author` stays what the door resolved (calliope-sa); this adds the human
+ * charon vouched for. Rows exist only for attributed writes; every older
+ * revision has none.
+ */
+export interface WriteAuthorship {
+  tx: number;
+  scope: string;
+  /** `human/<handle>`. */
+  authored_by: string;
+  /** `star/charon`. */
+  via: string;
+  verb: string;
+  jti: string;
 }
 
 const DEFAULT_LIMIT = 50;
@@ -97,6 +122,25 @@ CREATE TABLE IF NOT EXISTS revision_deltas (
 );
 CREATE INDEX IF NOT EXISTS revision_deltas_revision
   ON revision_deltas (revision_id, id);
+
+-- Additive (act assertion): who a write's graph transaction was written for.
+CREATE TABLE IF NOT EXISTS write_authorship (
+  scope       text        NOT NULL,
+  tx          bigint      NOT NULL,
+  authored_by text        NOT NULL,
+  via         text        NOT NULL,
+  verb        text        NOT NULL,
+  jti         text        NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (scope, tx)
+);
+
+-- Spent act-assertion jtis, kept until their exp has passed.
+CREATE TABLE IF NOT EXISTS act_jti (
+  jti text   PRIMARY KEY,
+  exp bigint NOT NULL
+);
+CREATE INDEX IF NOT EXISTS act_jti_exp ON act_jti (exp);
 `;
 
 interface PgRevisionRow extends Omit<RevisionRow, "id" | "captured_at"> {
@@ -208,6 +252,41 @@ export class PgRevisionStore implements RevisionStore {
     }));
   }
 
+  async recordAuthorship(r: WriteAuthorship): Promise<void> {
+    await this.#pool.query(
+      `INSERT INTO write_authorship (scope, tx, authored_by, via, verb, jti)
+       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (scope, tx) DO NOTHING`,
+      [r.scope, r.tx, r.authored_by, r.via, r.verb, r.jti],
+    );
+  }
+
+  async authorshipFor(
+    scope: string,
+    txs: number[],
+  ): Promise<WriteAuthorship[]> {
+    if (txs.length === 0) return [];
+    const res = await this.#pool.query<
+      Omit<WriteAuthorship, "tx"> & { tx: string | number }
+    >(
+      `SELECT scope, tx, authored_by, via, verb, jti FROM write_authorship
+        WHERE scope = $1 AND tx = ANY($2::bigint[]) ORDER BY tx`,
+      [scope, txs],
+    );
+    return res.rows.map((r) => ({ ...r, tx: Number(r.tx) }));
+  }
+
+  async claimJti(jti: string, expUnix: number): Promise<boolean> {
+    // Expired rows go first (past exp + leeway the assertion is dead anyway).
+    await this.#pool.query(`DELETE FROM act_jti WHERE exp < $1`, [
+      Math.floor(Date.now() / 1000) - 60,
+    ]);
+    const res = await this.#pool.query(
+      `INSERT INTO act_jti (jti, exp) VALUES ($1,$2) ON CONFLICT (jti) DO NOTHING`,
+      [jti, expUnix],
+    );
+    return res.rowCount === 1;
+  }
+
   async counts(): Promise<{ revisions: number; deltas: number }> {
     const res = await this.#pool.query<{ revisions: string; deltas: string }>(
       `SELECT (SELECT COUNT(*) FROM file_revisions) AS revisions,
@@ -225,6 +304,26 @@ export class PgRevisionStore implements RevisionStore {
 export class FixtureRevisionStore implements RevisionStore {
   readonly #revisions = new Map<number, RevisionRow>();
   readonly #deltas = new Map<number, RevisionDeltaRow>();
+  readonly #authorship = new Map<string, WriteAuthorship>();
+  readonly #jtis = new MemoryJtiStore();
+
+  recordAuthorship(r: WriteAuthorship): Promise<void> {
+    const k = `${r.scope}\u0000${String(r.tx)}`;
+    if (!this.#authorship.has(k)) this.#authorship.set(k, r);
+    return Promise.resolve();
+  }
+
+  authorshipFor(scope: string, txs: number[]): Promise<WriteAuthorship[]> {
+    return Promise.resolve(
+      [...this.#authorship.values()]
+        .filter((r) => r.scope === scope && txs.includes(r.tx))
+        .sort((a, b) => a.tx - b.tx),
+    );
+  }
+
+  claimJti(jti: string, expUnix: number): Promise<boolean> {
+    return this.#jtis.claimJti(jti, expUnix);
+  }
 
   importRevision(row: RevisionRow): Promise<void> {
     if (!this.#revisions.has(row.id)) this.#revisions.set(row.id, row);

@@ -1,0 +1,106 @@
+/**
+ * The REST door's act-assertion gate: a `wrap` for the adapter (rest.ts).
+ *
+ * It is the only place the header is read, and the only caller of
+ * {@link withActAuthor}. Behaviour:
+ *  - no `x-charon-act-assertion` header: the request passes untouched;
+ *  - the header present (even empty, even repeated): the request is refused
+ *    unless the assertion verifies for THIS request (peer charon, POST of one
+ *    of the six write verbs with no query, digest of the received body), and
+ *    then it runs with the human on its async context.
+ * Header-name case is the HTTP layer's (RestHeaders is case-insensitive).
+ */
+
+import type {
+  RestHandler,
+  RestRequest,
+  RestResponse,
+} from "@forge/stellar-core-ts/rest";
+import {
+  ACT_ASSERTION_HEADER,
+  ActRefusal,
+  JwksCache,
+  WRITE_VERB_PATHS,
+  actConfigFromEnv,
+  verifyActAssertion,
+  withActAuthor,
+} from "./act-assertion.js";
+import type { ActConfig, FetchLike, JtiStore } from "./act-assertion.js";
+import { argsDigest, DigestError } from "./args-digest.js";
+
+const MAX_BODY = 8 << 20;
+const TOKEN_RE = /^[A-Za-z0-9_.-]+$/;
+
+function refusal(e: ActRefusal): RestResponse {
+  return {
+    status: e.status,
+    headers: { "Content-Type": "application/json", "X-Star": "calliope" },
+    body: JSON.stringify({ code: e.code, detail: e.message }),
+  };
+}
+
+export interface ActGateOptions {
+  readonly jti: JtiStore;
+  readonly config?: ActConfig | undefined;
+  readonly fetch?: FetchLike | undefined;
+}
+
+/** The wrap: `(next) => handler` for {@link mountRestFace}. */
+export function actGate(o: ActGateOptions): (next: RestHandler) => RestHandler {
+  const config = o.config ?? actConfigFromEnv();
+  const keys =
+    config.jwksUrl === "" ? undefined : new JwksCache(config.jwksUrl, o.fetch);
+  return (next) => async (req: RestRequest) => {
+    const values = req.headers.getAll(ACT_ASSERTION_HEADER);
+    if (values.length === 0) return next(req);
+    try {
+      const token = values[0] ?? "";
+      if (values.length !== 1 || !TOKEN_RE.test(token)) {
+        throw new ActRefusal(401, "act_assertion_invalid", "malformed");
+      }
+      const path = req.target;
+      // A mutation is POST, a destructive one (write_container, delete_note) DELETE.
+      if (
+        (req.method !== "POST" && req.method !== "DELETE") ||
+        !WRITE_VERB_PATHS.has(path)
+      ) {
+        throw new ActRefusal(
+          403,
+          "act_assertion_forbidden",
+          "an act assertion rides only the note write verbs",
+        );
+      }
+      let bytes: Uint8Array;
+      try {
+        bytes = await req.body(MAX_BODY);
+      } catch {
+        throw new ActRefusal(413, "act_assertion_invalid", "unreadable body");
+      }
+      let digest: string;
+      try {
+        digest = argsDigest(new TextDecoder().decode(bytes));
+      } catch (e) {
+        if (!(e instanceof DigestError)) throw e;
+        throw new ActRefusal(401, "act_assertion_invalid", "malformed");
+      }
+      const author = await verifyActAssertion({
+        token,
+        argsSha256: digest,
+        verb: path,
+        peer: req.peer,
+        config,
+        keys,
+        jti: o.jti,
+      });
+      // The adapter reads the body itself: hand it the bytes verified here.
+      const replay: RestRequest = {
+        ...req,
+        body: () => Promise.resolve(bytes),
+      };
+      return await withActAuthor(author, () => next(replay));
+    } catch (e) {
+      if (e instanceof ActRefusal) return refusal(e);
+      throw e;
+    }
+  };
+}
