@@ -10,16 +10,13 @@
  * charon `lib/act-assertion.ts`.
  *
  * WHAT MAKES A NAME TRUSTWORTHY HERE (all of it, or nothing is honoured):
- *  1. the PEER is charon, named by the Cilium X-Forge-Peer REPLACE stamp (or a
- *     verified certificate) on the REST door, never by a header the caller
- *     wrote; any other peer sending the header is refused, not ignored;
- *  2. the signature verifies under a key in Kairos's JWKS (alg exactly ES256,
+ *  1. the signature verifies under a key in Kairos's JWKS (alg exactly ES256,
  *     typ exactly `act+jwt`, no `crit`), issuer, audience `calliope`, azp
  *     `star/charon` in the configured trust domain, act `calliope_write`,
  *     passkey in amr, a short validity window;
- *  3. args_sha256 equals the digest of the arguments ACTUALLY RECEIVED, so an
+ *  2. args_sha256 equals the digest of the arguments ACTUALLY RECEIVED, so an
  *     assertion cannot be lent to other arguments;
- *  4. the jti is spent exactly once ({@link JtiStore}); Kairos does not track it.
+ *  3. the jti is spent exactly once ({@link JtiStore}); Kairos does not track it.
  *
  * Absent header: today's behaviour, unattributed. Present but unacceptable:
  * refused, whoever sent it.
@@ -31,7 +28,6 @@
 import { createPublicKey, timingSafeEqual, verify } from "node:crypto";
 import type { KeyObject } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { Peer } from "@forge/stellar-core-ts";
 
 /** The request header charon sends the assertion in. */
 export const ACT_ASSERTION_HEADER = "x-charon-act-assertion";
@@ -332,30 +328,12 @@ function jsonObject(buf: Buffer): Record<string, unknown> {
 const isInt = (v: unknown): v is number =>
   typeof v === "number" && Number.isSafeInteger(v);
 
-/** Whether `peer` is charon, named by the network stamp or a certificate. */
-export function isCharonPeer(
-  peer: Peer | undefined,
-  trustDomain: string,
-): boolean {
-  return (
-    peer !== undefined &&
-    trustDomain !== "" &&
-    peer.kind === "star" &&
-    peer.name === "charon" &&
-    peer.spiffeId === `spiffe://${trustDomain}/star/charon` &&
-    // The stamp is the Cilium proxy's or a verified certificate's. The plain
-    // `network` fence names the gateway, never charon.
-    (peer.attest === "cilium-stamp" || peer.attest === undefined)
-  );
-}
-
 /** What {@link verifyActAssertion} is given. */
 export interface VerifyInput {
   readonly token: string;
   /** The digest of the arguments actually received (args-digest.ts). */
   readonly argsSha256: string;
   readonly verb: string;
-  readonly peer: Peer | undefined;
   readonly config: ActConfig;
   readonly keys: JwksCache | undefined;
   readonly jti: JtiStore;
@@ -381,15 +359,6 @@ export async function verifyActAssertion(i: VerifyInput): Promise<ActAuthor> {
       "act assertions are not configured on this star",
     );
   }
-  // Peer first, so a stranger learns nothing about the token's validity.
-  if (!isCharonPeer(i.peer, config.trustDomain)) {
-    throw new ActRefusal(
-      403,
-      "act_assertion_forbidden",
-      "only charon may present an act assertion",
-    );
-  }
-
   const parts = i.token.split(".");
   if (parts.length !== 3) throw invalid("malformed");
   const [h, p, s] = parts as [string, string, string];

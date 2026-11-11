@@ -1,7 +1,6 @@
 // Test-only: a Kairos stand-in (an ES256 key, its JWKS, an assertion minter).
 import { generateKeyPairSync, sign } from "node:crypto";
 import type { KeyObject } from "node:crypto";
-import type { Peer } from "@forge/stellar-core-ts";
 import type { ActConfig, FetchLike } from "../src/act-assertion.js";
 
 export const TD = "notusmi.com";
@@ -12,12 +11,6 @@ export const CONFIG: ActConfig = {
   jwksUrl: "http://kairos/jwks",
   issuer: ISS,
   trustDomain: TD,
-};
-export const CHARON: Peer = {
-  spiffeId: `spiffe://${TD}/star/charon`,
-  kind: "star",
-  name: "charon",
-  attest: "cilium-stamp",
 };
 
 const pair = generateKeyPairSync("ec", { namedCurve: "P-256" });

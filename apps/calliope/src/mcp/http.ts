@@ -55,7 +55,7 @@ import {
   startPepMetrics,
 } from "@forge/stellar-core-ts/pep";
 import type { Pep } from "@forge/stellar-core-ts/pep";
-import type { RestHandler, RestMount } from "@forge/stellar-core-ts/rest";
+import type { RestMount } from "@forge/stellar-core-ts/rest";
 import { mountRestFace } from "./rest.js";
 import { MemoryJtiStore, actConfigFromEnv } from "../act-assertion.js";
 import type { FetchLike } from "../act-assertion.js";
@@ -144,9 +144,8 @@ export interface ServeOptions extends Omit<ServerDeps, "witness"> {
   readonly witness: Witness;
   /** Reads the environment (the REST port, the trust mode). Default: `process.env`. */
   readonly getenv?: ((name: string) => string | undefined) | undefined;
-  /** Test seams: the JWKS fetch, and a wrap outside the act gate. */
+  /** Test seam: the JWKS fetch. */
   readonly actFetch?: FetchLike | undefined;
-  readonly restOuter?: ((next: RestHandler) => RestHandler) | undefined;
 }
 
 /**
@@ -204,7 +203,6 @@ export async function serveCalliope(o: ServeOptions): Promise<RestMount> {
       witness: o.witness,
       getenv: o.getenv,
       act,
-      outer: o.restOuter,
     });
   } catch (err) {
     await o.witness.close();

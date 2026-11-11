@@ -5,7 +5,7 @@
  * {@link withActAuthor}. Behaviour:
  *  - no `x-charon-act-assertion` header: the request passes untouched;
  *  - the header present (even empty, even repeated): the request is refused
- *    unless the assertion verifies for THIS request (peer charon, POST of one
+ *    unless the assertion verifies for THIS request (POST of one
  *    of the six write verbs with no query, digest of the received body), and
  *    then it runs with the human on its async context.
  * Header-name case is the HTTP layer's (RestHeaders is case-insensitive).
@@ -133,7 +133,6 @@ export function actGate(o: ActGateOptions): (next: RestHandler) => RestHandler {
         token,
         argsSha256: digest,
         verb: path,
-        peer: req.peer,
         config,
         keys,
         jti: o.jti,

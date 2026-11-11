@@ -5,13 +5,12 @@
  * stream and to `<star>._ops.calls`, and nyx builds the witnessed call graph
  * from those topics. Calliope recorded nothing, so every edge into it was
  * invisible. This wires `@forge/stellar-core-ts`'s witness: the record, the
- * peer stamp (http.ts wraps the listener with it), the dispatcher interceptor
- * (server.ts installs it) and the sink (built here from `KAFKA_BOOTSTRAP`).
+ * dispatcher interceptor (server.ts installs it) and the sink (built here from
+ * `KAFKA_BOOTSTRAP`).
  *
  * It records and refuses nothing (the PEP, `@forge/stellar-core-ts/pep`, decides on the same record).
- * Callers reach calliope on its REST door (openapi-http), where the Cilium
- * X-Forge-Peer stamp names them; the mTLS door is gone (REST mesh P7). A call
- * on the loopback MCP port reads `unidentified` with path `unknown`.
+ * Callers reach calliope on its REST door (openapi-http); which workloads may
+ * is Cilium's port-level policy, and the record names no calling star.
  */
 
 import { RequestLog, witnessSink } from "@forge/stellar-core-ts";

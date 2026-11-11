@@ -1,18 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { Peer } from "@forge/stellar-core-ts";
-import type { RestHandler } from "@forge/stellar-core-ts/rest";
 import { makeBackend } from "../src/mcp/backend.js";
 import type { WriteAuthorship } from "../src/revision-store.js";
 import { argsDigest } from "../src/args-digest.js";
 import { ACT_ASSERTION_HEADER } from "../src/act-assertion.js";
 import { actJwksFetch } from "../src/act-gate.js";
 import { recordingWitness, serveDoor } from "./rest-door.js";
-import { CHARON, TD, mint, okFetch } from "./act-fixtures.js";
+import { TD, mint, okFetch } from "./act-fixtures.js";
 
 /**
- * The act-assertion gate on the SERVED door. The peer is stamped by a wrap
- * outside the gate (a loopback request is never named by the Cilium stamp, so
- * a test cannot get one off the wire); everything else is the real door.
+ * The act-assertion gate on the SERVED door; everything is the real door.
  */
 
 const closers: (() => Promise<void>)[] = [];
@@ -41,7 +37,6 @@ interface CallOpts {
   headerName?: string;
   /** The args the token is minted over, when not the args sent. */
   mintedOver?: Record<string, unknown>;
-  peer?: Peer | undefined;
 }
 
 async function door(env: Record<string, string> = ENV) {
@@ -54,7 +49,6 @@ async function door(env: Record<string, string> = ENV) {
     rows.push(r);
     return orig(r);
   };
-  const stamp: { peer: Peer | undefined } = { peer: CHARON };
   const { witness } = recordingWitness();
   const { rest, base } = await serveDoor(
     {
@@ -65,8 +59,6 @@ async function door(env: Record<string, string> = ENV) {
       tags: backend.tags,
       containers: backend.containers,
       actFetch: okFetch,
-      restOuter: (next: RestHandler) => (req) =>
-        next({ ...req, peer: stamp.peer }),
     },
     env,
   );
@@ -76,7 +68,6 @@ async function door(env: Record<string, string> = ENV) {
     args: Record<string, unknown>,
     o: CallOpts = {},
   ): Promise<{ status: number; text: string }> => {
-    stamp.peer = "peer" in o ? o.peer : CHARON;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -157,30 +148,6 @@ describe("act gate: the six write verbs, attributed", () => {
     const { call, rows } = await door();
     const r = await call("create_note", { title: "U" }, { token: false });
     expect(r.status, r.text).toBe(200);
-    expect(rows).toHaveLength(0);
-  });
-
-  it("no header from a non-charon peer is untouched too", async () => {
-    const { call, rows } = await door();
-    const r = await call(
-      "create_note",
-      { title: "U2" },
-      { token: false, peer: undefined },
-    );
-    expect(r.status, r.text).toBe(200);
-    expect(rows).toHaveLength(0);
-  });
-
-  it("the same header from a non-charon peer is refused, nothing written", async () => {
-    const { call, rows } = await door();
-    for (const peer of [
-      undefined,
-      { ...CHARON, spiffeId: `spiffe://${TD}/star/nomos`, name: "nomos" },
-    ]) {
-      const r = await call("create_note", { title: "S" }, { peer });
-      expect(r.status).toBe(403);
-      expect(r.text).toContain("act_assertion_forbidden");
-    }
     expect(rows).toHaveLength(0);
   });
 

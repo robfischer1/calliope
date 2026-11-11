@@ -4,10 +4,9 @@
  * e.g. `http://chaos:8209`) with stellar-core-ts's RestClient, instead of a
  * `tools/call` on the mTLS `/mcp` door.
  *
- * Authorization is Cilium's: flux grants-chaos admits calliope-sa on exactly
- * the compiled star:calliope routes and stamps `X-Forge-Peer: calliope`,
- * which chaos (attributed) reads as the caller. A verb outside that grant is
- * dropped by the proxy, so {@link CHAOS_MCP_ONLY} keeps those on `/mcp`.
+ * Whether calliope-sa may reach chaos is Cilium's, at the port; which verbs
+ * the session may call is its token's scope. No caller identity rides the
+ * request. {@link CHAOS_MCP_ONLY} keeps any verb the REST face lacks on `/mcp`.
  *
  * Unset `CALLIOPE_CHAOS_REST_URL` is today's behaviour: every chaos call
  * rides `/mcp`. Setting it is the flip; unsetting it is the revert.
@@ -20,8 +19,7 @@ import {
 } from "@forge/stellar-core-ts/rest";
 
 /**
- * Verbs calliope sends chaos that grants-chaos does not admit calliope-sa
- * to. Empty: register_graph (the migration tools' per-tenant graph ensure)
+ * Verbs calliope sends chaos that the REST face does not carry. Empty: register_graph (the migration tools' per-tenant graph ensure)
  * rides POST /v1/register_graph since REST mesh P7 (wonka68-rm15), when
  * grants-chaos admitted calliope-sa on it and chaos's mTLS /mcp closed.
  */

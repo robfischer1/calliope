@@ -1,6 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import type { Peer } from "@forge/stellar-core-ts";
 import {
   ActRefusal,
   JwksCache,
@@ -10,7 +9,6 @@ import {
 } from "../src/act-assertion.js";
 import type { ActConfig, FetchLike } from "../src/act-assertion.js";
 import {
-  CHARON,
   CONFIG,
   ISS,
   KID,
@@ -25,7 +23,6 @@ const DIGEST = "a".repeat(64);
 const nowS = (): number => Math.floor(Date.now() / 1000);
 
 interface Over {
-  peer?: Peer | undefined;
   config?: ActConfig;
   fetch?: FetchLike;
   jti?: MemoryJtiStore;
@@ -38,7 +35,6 @@ function run(token: string, over: Over = {}): Promise<unknown> {
     token,
     argsSha256: over.digest ?? DIGEST,
     verb: "/v1/write_container",
-    peer: "peer" in over ? over.peer : CHARON,
     config,
     keys:
       config.jwksUrl === ""
@@ -141,24 +137,6 @@ describe("verifyActAssertion", () => {
     const t = mint(DIGEST);
     await refused(run(t, { jti, digest: "b".repeat(64) }));
     await run(t, { jti });
-  });
-
-  it("refuses any peer but charon, with a good token", async () => {
-    const nomos: Peer = {
-      ...CHARON,
-      spiffeId: `spiffe://${TD}/star/nomos`,
-      name: "nomos",
-    };
-    const peers: (Peer | undefined)[] = [
-      undefined,
-      nomos,
-      { ...CHARON, attest: "network" },
-      { ...CHARON, spiffeId: "spiffe://evil.test/star/charon" },
-    ];
-    for (const peer of peers) {
-      const e = await refused(run(mint(DIGEST), { peer }));
-      expect(e.status).toBe(403);
-    }
   });
 
   it("fails closed when the JWKS is unreachable and nothing is cached", async () => {
