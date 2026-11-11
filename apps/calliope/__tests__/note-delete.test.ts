@@ -850,7 +850,7 @@ describe("delete_note — retract-in-own-graph", () => {
     expect(removed.length).toBeGreaterThan(0);
     for (const op of removed) {
       // Every retraction names a graph that holds a fact of the note, never none and never a stranger.
-      expect(homes.has(op.graph ?? "")).toBe(true);
+      expect(typeof op.graph === "string" && homes.has(op.graph)).toBe(true);
     }
     expect(removed.find((o) => o.predicate === "supersededBy")?.graph).toBe(
       scopeHash("backfill"),
