@@ -84,7 +84,7 @@ export function actJwksFetch(
   given: FetchLike | undefined,
   door: () => FetchLike = kairosDoorFetch,
 ): FetchLike | undefined {
-  if (given !== undefined || !url.startsWith("https:")) return given;
+  if (given !== undefined || !/^https:/i.test(url)) return given;
   let f: FetchLike | undefined;
   return (u, init) => (f ??= door())(u, init);
 }
@@ -95,10 +95,7 @@ export function actGate(o: ActGateOptions): (next: RestHandler) => RestHandler {
   const keys =
     config.jwksUrl === ""
       ? undefined
-      : new JwksCache(
-          config.jwksUrl,
-          actJwksFetch(config.jwksUrl, o.fetch),
-        );
+      : new JwksCache(config.jwksUrl, actJwksFetch(config.jwksUrl, o.fetch));
   return (next) => async (req: RestRequest) => {
     const values = req.headers.getAll(ACT_ASSERTION_HEADER);
     if (values.length === 0) return next(req);
