@@ -8,15 +8,7 @@ import {
   verifyActAssertion,
 } from "../src/act-assertion.js";
 import type { ActConfig, FetchLike } from "../src/act-assertion.js";
-import {
-  CONFIG,
-  ISS,
-  KID,
-  TD,
-  b64,
-  mint,
-  okFetch,
-} from "./act-fixtures.js";
+import { CONFIG, ISS, KID, TD, b64, mint, okFetch } from "./act-fixtures.js";
 import type { MintOpts } from "./act-fixtures.js";
 
 const DIGEST = "a".repeat(64);
