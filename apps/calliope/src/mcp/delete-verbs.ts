@@ -155,7 +155,7 @@ export function registerDeleteVerbs(
           dial,
           scope,
           { ids, dry_run },
-          types,
+          HIDEABLE_TYPES,
         );
         if (isDeleteNotesError(result)) {
           return refusalResult(result);
@@ -222,7 +222,7 @@ export function registerDeleteVerbs(
       inputSchema: z.strictObject({ ids }),
     },
     async ({ ids }) => {
-      const result = await restoreNotes(dial, scope, { ids }, types);
+      const result = await restoreNotes(dial, scope, { ids }, HIDEABLE_TYPES);
       if (isDeleteNotesError(result)) {
         return refusalResult(result);
       }
