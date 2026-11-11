@@ -1104,6 +1104,7 @@ export class LiveChaosDial implements ChaosDial {
     await this.chaosRpc("register_graph", {
       graph: name,
       name,
+      author: DIRECT_AUTHOR,
     });
   }
 
