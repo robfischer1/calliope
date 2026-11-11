@@ -137,6 +137,7 @@ describe("LiveChaosDial with the chaos REST flip", () => {
     expect(JSON.parse(rest.seen[0]?.body ?? "{}")).toEqual({
       graph: "notes",
       name: "notes",
+      author: "calliope",
     });
   });
 });
