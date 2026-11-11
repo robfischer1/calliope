@@ -828,3 +828,35 @@ describe("delete_note's published surface", () => {
     ]);
   });
 });
+
+describe("delete_note — retract-in-own-graph", () => {
+  it("pins each retraction to the graph its fact lives in and names no other", async () => {
+    const r = await rig();
+    const a = await note(r.mcp, "Rich");
+    const target = await note(r.mcp, "Target");
+    // One fact lives in a graph other than the batch scope.
+    const admitted = await r.dial.admit(
+      [opAdd(a, "supersededBy", { toNode: target })],
+      "backfill",
+    );
+    expect(admitted.admitted).toBe(true);
+
+    const { isError } = await del(r.mcp, [a], false);
+    expect(isError).toBe(false);
+
+    const last = r.dial.admits.at(-1);
+    const homes = new Set([scopeHash(SCOPE), scopeHash("backfill")]);
+    const removed = last?.ops.filter((o) => o.op === "removeEdge") ?? [];
+    expect(removed.length).toBeGreaterThan(0);
+    for (const op of removed) {
+      // Every retraction names a graph that holds a fact of the note, never none and never a stranger.
+      expect(typeof op.graph === "string" && homes.has(op.graph)).toBe(true);
+    }
+    expect(removed.find((o) => o.predicate === "supersededBy")?.graph).toBe(
+      scopeHash("backfill"),
+    );
+    expect(removed.find((o) => o.predicate === "hasName")?.graph).toBe(
+      scopeHash(SCOPE),
+    );
+  });
+});
