@@ -16,6 +16,7 @@ import type {
   RestRequest,
   RestResponse,
 } from "@forge/stellar-core-ts/rest";
+import { kairosDoorFetch } from "@forge/stellar-core-ts/pep";
 import {
   ACT_ASSERTION_HEADER,
   ActRefusal,
@@ -68,11 +69,33 @@ export interface ActGateOptions {
   readonly fetch?: FetchLike | undefined;
 }
 
+/**
+ * The fetch the key cache reads Kairos's JWKS with. An https:// keyset is
+ * Kairos's mTLS door (`https://kairos:8301/jwks`): its certificate is an SVID
+ * with no DNS name, so a plain fetch fails the handshake
+ * (ERR_TLS_CERT_ALTNAME_INVALID), the cache holds no key, and every PRESENT
+ * assertion is refused 503 act_assertion_unavailable. It is fetched as the
+ * SDK's PEP fetches the same URL: with this star's SVID, the peer pinned to
+ * star/kairos. `door` is built on first use, so a gate that never sees an
+ * assertion never starts the identity source. A caller's own fetch wins.
+ */
+export function actJwksFetch(
+  url: string,
+  given: FetchLike | undefined,
+  door: () => FetchLike = kairosDoorFetch,
+): FetchLike | undefined {
+  if (given !== undefined || !/^https:/i.test(url)) return given;
+  let f: FetchLike | undefined;
+  return (u, init) => (f ??= door())(u, init);
+}
+
 /** The wrap: `(next) => handler` for {@link mountRestFace}. */
 export function actGate(o: ActGateOptions): (next: RestHandler) => RestHandler {
   const config = o.config ?? actConfigFromEnv();
   const keys =
-    config.jwksUrl === "" ? undefined : new JwksCache(config.jwksUrl, o.fetch);
+    config.jwksUrl === ""
+      ? undefined
+      : new JwksCache(config.jwksUrl, actJwksFetch(config.jwksUrl, o.fetch));
   return (next) => async (req: RestRequest) => {
     const values = req.headers.getAll(ACT_ASSERTION_HEADER);
     if (values.length === 0) return next(req);

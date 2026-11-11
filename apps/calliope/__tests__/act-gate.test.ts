@@ -5,6 +5,7 @@ import { makeBackend } from "../src/mcp/backend.js";
 import type { WriteAuthorship } from "../src/revision-store.js";
 import { argsDigest } from "../src/args-digest.js";
 import { ACT_ASSERTION_HEADER } from "../src/act-assertion.js";
+import { actJwksFetch } from "../src/act-gate.js";
 import { recordingWitness, serveDoor } from "./rest-door.js";
 import { CHARON, TD, mint, okFetch } from "./act-fixtures.js";
 
@@ -232,5 +233,48 @@ describe("act gate: the six write verbs, attributed", () => {
     const ok = await call("create_note", { title: "N" }, { token: false });
     expect(ok.status, ok.text).toBe(200);
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe("actJwksFetch: Kairos's JWKS over its mTLS door", () => {
+  const plain = okFetch;
+  it("an https:// keyset with no fetch given is read through the door, built on first use", async () => {
+    let built = 0;
+    const seen: string[] = [];
+    const door = () => {
+      built += 1;
+      return (u: string) => {
+        seen.push(u);
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve("{}"),
+        });
+      };
+    };
+    const f = actJwksFetch("https://kairos:8301/jwks", undefined, door);
+    expect(f).toBeDefined();
+    expect(built).toBe(0);
+    const signal = new AbortController().signal;
+    await f?.("https://kairos:8301/jwks", { signal });
+    await f?.("https://kairos:8301/jwks", { signal });
+    expect(built).toBe(1);
+    expect(seen).toEqual([
+      "https://kairos:8301/jwks",
+      "https://kairos:8301/jwks",
+    ]);
+  });
+  it("a caller's own fetch wins over the door", () => {
+    const f = actJwksFetch("https://kairos:8301/jwks", plain, () => {
+      throw new Error("the door must not be built");
+    });
+    expect(f).toBe(plain);
+  });
+  it("an http:// keyset keeps the plain fetch (undefined: the global)", () => {
+    expect(
+      actJwksFetch("http://kairos/jwks", undefined, () => {
+        throw new Error("the door must not be built");
+      }),
+    ).toBeUndefined();
   });
 });
