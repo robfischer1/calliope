@@ -8,21 +8,25 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FixtureBlobStore } from "../src/blob-store.js";
 import { ChaosClientError, LiveChaosDial } from "../src/chaos-client.js";
 import { writeContainer } from "../src/container-write.js";
+import { installChaosDoor } from "./helpers/chaos-door.js";
 
 const realFetch = globalThis.fetch;
 let result: Record<string, unknown> = {};
 let sent = "";
 
 beforeEach(() => {
-  globalThis.fetch = (_url, init) => {
-    sent = typeof init?.body === "string" ? init.body : "";
-    return Promise.resolve(
-      new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
-  };
+  installChaosDoor((c) => {
+    sent = JSON.stringify({ params: { name: c.verb, arguments: c.args } });
+    if (result.isError === true) {
+      const [block] = result.content as { text: string }[];
+      const refusal = JSON.parse(block?.text ?? "{}") as { code: string };
+      return new Response(JSON.stringify(refusal), {
+        status: refusal.code === "conflict" ? 409 : 400,
+        headers: { "Content-Type": "application/json", "X-Star": "chaos" },
+      });
+    }
+    return result.structuredContent;
+  });
 });
 afterEach(() => {
   globalThis.fetch = realFetch;
@@ -31,8 +35,8 @@ afterEach(() => {
 const SLOT = "ab".repeat(32);
 const live = () =>
   new LiveChaosDial({
-    themisUrl: "http://themis:8200",
-    chaosUrl: "http://chaos:8206",
+    themisUrl: "http://themis:8203",
+    chaosUrl: "http://chaos:8209",
   });
 
 describe("a text-only conflict refusal on the wire", () => {

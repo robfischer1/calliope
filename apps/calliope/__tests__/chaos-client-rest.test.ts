@@ -1,8 +1,7 @@
 /**
  * LiveChaosDial.admit over themis's plaintext REST door (rest-mesh P4):
- * with a REST base the admit is POST /v1/admit and never an MCP call; a
- * themis refusal keeps the MCP path's error shape; with none, admit stays
- * MCP. fetch is stubbed; nothing leaves the process. The document is
+ * admit is POST /v1/admit; a themis refusal keeps its error shape.
+ * fetch is stubbed; nothing leaves the process. The document is
  * themis's own GET /openapi.json, trimmed to admit (2026-10-29).
  */
 import { readFileSync } from "node:fs";
@@ -42,20 +41,6 @@ beforeEach(() => {
     const json = { "content-type": "application/json", "X-Star": "themis" };
     if (url.endsWith("/openapi.json")) {
       return Promise.resolve(new Response(DOC, { status: 200, headers: json }));
-    }
-    if (url.endsWith("/mcp")) {
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            result: {
-              structuredContent: { admitted: true, minted: [], tx: 1 },
-            },
-          }),
-          { status: 200, headers: json },
-        ),
-      );
     }
     return Promise.resolve(
       new Response(answer.body, { status: answer.status, headers: json }),
@@ -123,18 +108,5 @@ describe("LiveChaosDial.admit over REST", () => {
     const err = await dial.admit(OPS, "notes").catch((e: unknown) => e);
     expect((err as ChaosClientError).code).toBe("wire_error");
     expect(seen.some((s) => s.url.endsWith("/mcp"))).toBe(false);
-  });
-
-  it("without a REST base, admit stays MCP", async () => {
-    const prev = process.env.CALLIOPE_THEMIS_REST_URL;
-    delete process.env.CALLIOPE_THEMIS_REST_URL;
-    try {
-      const dial = new LiveChaosDial({ themisUrl: "http://themis:8200" });
-      const out = await dial.admit(OPS, "notes");
-      expect(out.admitted).toBe(true);
-      expect(seen.map((s) => s.url)).toEqual(["http://themis:8200/mcp"]);
-    } finally {
-      if (prev !== undefined) process.env.CALLIOPE_THEMIS_REST_URL = prev;
-    }
   });
 });

@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { makeBodyClient } from "../src/mcp/backend.js";
-import { IndexingBodyClient, type IndexPusher } from "../src/mcp/index-push.js";
+import {
+  IndexingBodyClient,
+  UraniaIndexClient,
+  type IndexPusher,
+} from "../src/mcp/index-push.js";
+import { installChaosDoor } from "./helpers/chaos-door.js";
 import type { BodyClient } from "../src/types.js";
 import { bareClient } from "./helpers/bare-client.js";
 
@@ -123,5 +128,36 @@ describe("makeBodyClient — index-push wiring", () => {
       URANIA_URL: "http://urania:8206",
     });
     expect(client).not.toBeInstanceOf(IndexingBodyClient);
+  });
+});
+
+describe("UraniaIndexClient — index_document over REST", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it("posts /v1/index_document with the node, graph and body", async () => {
+    const { calls } = installChaosDoor(() => ({ ok: true }));
+    await new UraniaIndexClient("http://urania:8205/").indexDocument(
+      "n1",
+      "prose",
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("http://urania:8205/v1/index_document");
+    expect(calls[0]?.args).toMatchObject({ node: "n1", body: "prose" });
+  });
+
+  it("a star refusal is thrown with the verb named", async () => {
+    installChaosDoor(
+      () =>
+        new Response(JSON.stringify({ code: "denied", detail: "no" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json", "X-Star": "chaos" },
+        }),
+    );
+    await expect(
+      new UraniaIndexClient("http://urania:8205").indexDocument("n", "b"),
+    ).rejects.toThrow(/^index_document:/);
   });
 });

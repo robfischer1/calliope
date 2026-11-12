@@ -3,7 +3,6 @@ import {
   ANCHORS_ROLE,
   DEFAULT_THEMIS_URL,
   FixtureChaosDial,
-  decodeRpcBody,
   shapeFromTextBlocks,
   NOTE_ROOT_KIND,
   NOTE_ROOT_LABEL,
@@ -80,66 +79,6 @@ describe("ensureNotesRoot", () => {
     await expect(ensureNotesRoot(dial, SCOPE, () => undefined)).rejects.toThrow(
       /mint refused/,
     );
-  });
-});
-
-describe("decodeRpcBody — both framings streamable-HTTP allows", () => {
-  const VERB = "find_by_name";
-  const ENVELOPE = { jsonrpc: "2.0", id: 1, result: { structuredContent: {} } };
-
-  it("plain application/json parses as before", () => {
-    expect(
-      decodeRpcBody(JSON.stringify(ENVELOPE), "application/json", VERB),
-    ).toEqual(ENVELOPE);
-  });
-
-  it("an SSE body is read, not thrown on — the Go-door regression", () => {
-    // Bun's Response.json() threw `Failed to parse JSON` on exactly this,
-    // which is what took every chaos-backed calliope read down 2026-08-14.
-    const sse = `event: message\ndata: ${JSON.stringify(ENVELOPE)}\n\n`;
-    expect(decodeRpcBody(sse, "text/event-stream", VERB)).toEqual(ENVELOPE);
-  });
-
-  it("content-type is matched case- and parameter-insensitively", () => {
-    const sse = `event: message\ndata: ${JSON.stringify(ENVELOPE)}\n\n`;
-    expect(
-      decodeRpcBody(sse, "Text/Event-Stream; charset=utf-8", VERB),
-    ).toEqual(ENVELOPE);
-  });
-
-  it("several data: lines in one event join with newlines", () => {
-    // Split at a STRUCTURAL boundary, never mid-string: a newline inside a
-    // JSON string literal is an illegal control character, so an arbitrary
-    // midpoint split tests the splitter rather than the joiner.
-    const sse =
-      `event: message\n` +
-      `data: {"jsonrpc":"2.0","id":1,\n` +
-      `data: "result":{"structuredContent":{}}}\n\n`;
-    expect(decodeRpcBody(sse, "text/event-stream", VERB)).toEqual(ENVELOPE);
-  });
-
-  it("the LAST event wins — a progress notification is not the answer", () => {
-    const progress = { jsonrpc: "2.0", method: "notifications/progress" };
-    const sse =
-      `event: message\ndata: ${JSON.stringify(progress)}\n\n` +
-      `event: message\ndata: ${JSON.stringify(ENVELOPE)}\n\n`;
-    expect(decodeRpcBody(sse, "text/event-stream", VERB)).toEqual(ENVELOPE);
-  });
-
-  it("CRLF line endings are tolerated", () => {
-    const sse = `event: message\r\ndata: ${JSON.stringify(ENVELOPE)}\r\n\r\n`;
-    expect(decodeRpcBody(sse, "text/event-stream", VERB)).toEqual(ENVELOPE);
-  });
-
-  it("a trailing event with no blank line still counts", () => {
-    const sse = `event: message\ndata: ${JSON.stringify(ENVELOPE)}`;
-    expect(decodeRpcBody(sse, "text/event-stream", VERB)).toEqual(ENVELOPE);
-  });
-
-  it("an event-stream carrying no data: field fails loudly", () => {
-    expect(() =>
-      decodeRpcBody("event: message\n\n", "text/event-stream", VERB),
-    ).toThrow(/carried no data/);
   });
 });
 

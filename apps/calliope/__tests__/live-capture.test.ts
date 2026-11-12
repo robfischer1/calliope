@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   LiveUraniaCapture,
   contentHash,
@@ -11,6 +11,7 @@ import {
   UraniaBodyClient,
 } from "../src/urania-client.js";
 import type { UraniaOp } from "../src/urania-client.js";
+import { installChaosDoor } from "./helpers/chaos-door.js";
 
 /**
  * Reference hashes computed by moirae's Python urania contract
@@ -49,51 +50,16 @@ describe("urania content-addressing contract (matches moirae Python)", () => {
   });
 });
 
-/** Capture each JSON-RPC POST so the wire ops can be asserted. */
+/** Capture each REST POST so the wire ops can be asserted. */
 interface CapturedCall {
   url: string;
-  method: string;
   verb: string;
   args: Record<string, unknown>;
 }
 
-/** Read a fetch init.body as the JSON-RPC string it always is in this client. */
-function bodyText(init: RequestInit | undefined): string {
-  const b = init?.body;
-  return typeof b === "string" ? b : "";
-}
-
-interface JsonRpcRequest {
-  method: string;
-  params: { name: string; arguments: Record<string, unknown> };
-}
-
 function stubFetch(): { calls: CapturedCall[]; restore: () => void } {
-  const calls: CapturedCall[] = [];
   const original = globalThis.fetch;
-  const urlOf = (input: RequestInfo | URL): string => {
-    if (typeof input === "string") return input;
-    if (input instanceof URL) return input.href;
-    return input.url; // Request
-  };
-  const fake: typeof fetch = (input, init) => {
-    const req = JSON.parse(bodyText(init)) as JsonRpcRequest;
-    calls.push({
-      url: urlOf(input),
-      method: req.method,
-      verb: req.params.name,
-      args: req.params.arguments,
-    });
-    // Minimal FastMCP-shaped success envelope.
-    const response: Pick<Response, "json"> = {
-      json: () =>
-        Promise.resolve({
-          result: { structuredContent: { result: { ok: true } } },
-        }),
-    };
-    return Promise.resolve(response as Response);
-  };
-  globalThis.fetch = vi.fn(fake);
+  const { calls } = installChaosDoor(() => ({ ok: true }));
   return {
     calls,
     restore: () => {
@@ -120,14 +86,14 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
     stub.restore();
   });
 
-  it("POSTs a tools/call to ${URANIA_URL}/mcp", async () => {
+  it("POSTs /v1/capture on the REST door", async () => {
     const cap = new LiveUraniaCapture("http://nas01:8202");
     await cap.capture([
       { op: "createNode", id: nameHash("calliope:s1"), hasType: "section" },
     ]);
     expect(stub.calls).toHaveLength(1);
-    expect(stub.calls[0]?.url).toBe("http://nas01:8202/mcp");
-    expect(stub.calls[0]?.method).toBe("tools/call");
+    expect(stub.calls[0]?.url).toBe("http://nas01:8202/v1/capture");
+    expect(stub.calls[0]?.verb).toBe("capture");
   });
 
   it("createNode -> intern + addEdge hasType scalar(section), in moirae g", async () => {
@@ -217,30 +183,16 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
     const note = nameHash("calliope:note");
     const s0 = nameHash("calliope:s0");
     const s1 = nameHash("calliope:s1");
-    const calls: { verb: string; args: Record<string, unknown> }[] = [];
-    const edgesResult = {
-      result: {
-        structuredContent: {
-          id: note,
-          edges: [
-            { predicate: "hasPart", value: s0, is_node: true },
-            { predicate: "hasPart", value: s1, is_node: true },
-            { predicate: "text", value: "body prose", is_node: false },
-            // a predicate outside calliope's body model is dropped
-            { predicate: "servesObjective", value: "x", is_node: false },
-          ],
-        },
-      },
-    };
-    const fake: typeof fetch = (_input, init) => {
-      const req = JSON.parse(bodyText(init)) as JsonRpcRequest;
-      calls.push({ verb: req.params.name, args: req.params.arguments });
-      const response: Pick<Response, "json"> = {
-        json: () => Promise.resolve(edgesResult),
-      };
-      return Promise.resolve(response as Response);
-    };
-    globalThis.fetch = vi.fn(fake);
+    const { calls } = installChaosDoor(() => ({
+      id: note,
+      edges: [
+        { predicate: "hasPart", value: s0, is_node: true },
+        { predicate: "hasPart", value: s1, is_node: true },
+        { predicate: "text", value: "body prose", is_node: false },
+        // a predicate outside calliope's body model is dropped
+        { predicate: "servesObjective", value: "x", is_node: false },
+      ],
+    }));
 
     const cap = new LiveUraniaCapture();
     const triples = await cap.resolve(note);
@@ -358,22 +310,15 @@ function uraniaSubstrateFetch(): { restore: () => void } {
     return out;
   };
 
-  const fake: typeof fetch = (_input, init) => {
-    const req = JSON.parse(bodyText(init)) as JsonRpcRequest;
-    let structured: Record<string, unknown> = { result: { ok: true } };
-    if (req.params.name === "capture") {
-      apply(req.params.arguments.ops as WireOp[]);
-    } else if (req.params.name === "materialize_edges") {
-      const node = req.params.arguments.node as string;
-      structured = { id: node, edges: edgesFor(node) };
+  installChaosDoor((c) => {
+    if (c.verb === "capture") {
+      apply(c.args.ops as WireOp[]);
+    } else if (c.verb === "materialize_edges") {
+      const node = c.args.node as string;
+      return { id: node, edges: edgesFor(node) };
     }
-    const response: Pick<Response, "json"> = {
-      json: () =>
-        Promise.resolve({ result: { structuredContent: structured } }),
-    };
-    return Promise.resolve(response as Response);
-  };
-  globalThis.fetch = vi.fn(fake);
+    return { ok: true };
+  });
   return {
     restore: () => {
       globalThis.fetch = original;
@@ -414,5 +359,32 @@ describe("body round-trip over materialize_edges (write 3 -> read 3 in order)", 
     const body = await client.readBody(note);
     expect(body.map((s) => s.text)).toEqual(["first", "second", "third"]);
     expect(body).toHaveLength(3); // proves the multi-hasPart read (no LWW)
+  });
+});
+
+describe("LiveUraniaCapture — a refusal and a text-only answer", () => {
+  const original = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = original;
+  });
+
+  it("a star refusal is a UraniaError naming the verb", async () => {
+    installChaosDoor(
+      () =>
+        new Response(JSON.stringify({ code: "denied", detail: "no" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json", "X-Star": "chaos" },
+        }),
+    );
+    await expect(
+      new LiveUraniaCapture("http://chaos:8209").resolve(nameHash("n")),
+    ).rejects.toThrow(/^materialize_edges:/);
+  });
+
+  it("resolve() answers no triples for an answer with no edges", async () => {
+    installChaosDoor(() => null);
+    expect(
+      await new LiveUraniaCapture("http://chaos:8209").resolve(nameHash("n")),
+    ).toEqual([]);
   });
 });

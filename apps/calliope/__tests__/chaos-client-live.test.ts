@@ -1,22 +1,17 @@
 /**
- * LiveChaosDial through an injected fetch: the JSON-RPC envelope it sends, how
- * it reads every answer shape (error body, refusal, text blocks, structured
- * content, the {result} wrapper), the timeout, endpoint and REST-flip
- * resolution, and admit's argument and result shaping over both MCP and
- * themis's REST door. Pinned against the surviving mutants; nothing leaves the
- * process.
+ * LiveChaosDial through an injected fetch: how it reads every REST answer
+ * shape (refusal, text, structured content, the {result} wrapper), endpoint
+ * resolution, and admit's argument and result shaping over themis's REST
+ * door. Nothing leaves the process.
  */
 import { readFileSync } from "node:fs";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ChaosClientError, LiveChaosDial } from "../src/chaos-client.js";
 import type { ChaosRest, ChaosRestAnswer } from "../src/chaos-rest.js";
+import { CHAOS_DOC } from "./helpers/chaos-door.js";
 
-const CHAOS_DOC = readFileSync(
-  new URL("./fixtures/chaos-openapi-subset.json", import.meta.url),
-  "utf8",
-);
 const THEMIS_DOC = readFileSync(
   new URL("./fixtures-themis-admit-openapi.json", import.meta.url),
   "utf8",
@@ -34,9 +29,6 @@ interface Call {
 }
 
 interface RpcBody {
-  jsonrpc: string;
-  id: number;
-  method: string;
   params: { name: string; arguments: Record<string, unknown> };
 }
 
@@ -70,30 +62,34 @@ function install(handler: Handler): void {
       hasTls: init !== undefined && "tls" in init,
     };
     calls.push(call);
-    return Promise.resolve(handler(call));
+    const star = new URL(url).hostname.startsWith("themis")
+      ? "themis"
+      : "chaos";
+    return Promise.resolve(handler(call)).then((res) => {
+      const headers = new Headers(res.headers);
+      headers.set("X-Star", star);
+      return new Response(res.body, { status: res.status, headers });
+    });
   }) as unknown as typeof fetch;
 }
 
+/** The verb (from /v1/<verb>) and the JSON arguments of a REST call. */
 function rpcOf(c: Call): RpcBody {
-  return JSON.parse(c.body) as RpcBody;
+  const verb = new URL(c.url).pathname.replace(/^\/v1\//, "");
+  return {
+    params: {
+      name: verb,
+      arguments: (c.body === "" ? {} : JSON.parse(c.body)) as Record<
+        string,
+        unknown
+      >,
+    },
+  };
 }
 
+/** A structured answer in the result envelope. */
 function mcp(structured: unknown): Response {
-  return new Response(
-    JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      result: { structuredContent: structured },
-    }),
-    { status: 200, headers: { "content-type": "application/json" } },
-  );
-}
-
-function mcpRaw(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
+  return envelope(structured);
 }
 
 function envelope(
@@ -116,9 +112,6 @@ function plain(status: number, body: string, star = "themis"): Response {
 }
 
 const ENV_KEYS = [
-  "CALLIOPE_THEMIS_URL",
-  "CALLIOPE_CHAOS_URL",
-  "CHAOS_URL",
   "CALLIOPE_CHAOS_REST_URL",
   "CALLIOPE_THEMIS_REST_URL",
 ] as const;
@@ -143,41 +136,19 @@ afterEach(() => {
 
 function mcpDial(): LiveChaosDial {
   return new LiveChaosDial({
-    themisUrl: "http://themis:8200",
-    chaosUrl: "http://chaos:8206",
+    themisUrl: "http://themis:8203",
+    chaosUrl: "http://chaos:8209",
   });
 }
 
 function fakeRest(answer: ChaosRestAnswer): ChaosRest {
   return {
-    serves: () => true,
     call: () => Promise.resolve(answer),
   } as unknown as ChaosRest;
 }
 
-describe("rpc — the JSON-RPC envelope on the wire", () => {
-  it("posts one tools/call with the advertised framings", async () => {
-    install(() => mcp([]));
-    await mcpDial().findByName("Note", "x");
-    expect(calls).toHaveLength(1);
-    const [c] = calls;
-    expect(c?.url).toBe("http://chaos:8206/mcp");
-    expect(c?.method).toBe("POST");
-    expect(c?.rawHeaders).toStrictEqual({
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-    });
-    expect(JSON.parse(c?.body ?? "")).toStrictEqual({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: { name: "find_by_name", arguments: { kind: "Note", label: "x" } },
-    });
-    expect(c?.signal).toBeInstanceOf(AbortSignal);
-    expect(c?.hasTls).toBe(false);
-  });
-
-  it("numbers every call in order and names each verb", async () => {
+describe("the verbs on the wire", () => {
+  it("posts every verb to its own /v1 path", async () => {
     install((c) => {
       const name = rpcOf(c).params.name;
       if (name === "held_blobs") return mcp({ held: [] });
@@ -206,168 +177,26 @@ describe("rpc — the JSON-RPC envelope on the wire", () => {
     await d.resolveScalars([TOKEN]);
     await d.history([TOKEN], []);
     await d.heldBlobs();
-    expect(calls.map((c) => [rpcOf(c).id, rpcOf(c).params.name])).toEqual([
-      [1, "admit"],
-      [2, "find_by_name"],
-      [3, "resolve_nodes"],
-      [4, "resolve_node_refs"],
-      [5, "resolve_node_refs"],
-      [6, "find_by_value"],
-      [7, "materialize_edges"],
-      [8, "materialize_edges"],
-      [9, "quads_to"],
-      [10, "register_graph"],
-      [11, "quads_from"],
-      [12, "resolve_scalars"],
-      [13, "history"],
-      [14, "held_blobs"],
+    expect(calls.map((c) => rpcOf(c).params.name)).toEqual([
+      "admit",
+      "find_by_name",
+      "resolve_nodes",
+      "resolve_node_refs",
+      "resolve_node_refs",
+      "find_by_value",
+      "materialize_edges",
+      "materialize_edges",
+      "quads_to",
+      "register_graph",
+      "quads_from",
+      "resolve_scalars",
+      "history",
+      "held_blobs",
     ]);
   });
 });
 
-describe("rpc — timeout", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("aborts the request at 30 seconds, not before", async () => {
-    vi.useFakeTimers();
-    const seen: { signal?: AbortSignal | null } = {};
-    globalThis.fetch = ((_u: string, init?: RequestInit) => {
-      seen.signal = init?.signal;
-      return new Promise((_res, rej) => {
-        init?.signal?.addEventListener("abort", () => {
-          rej(new Error("aborted"));
-        });
-      });
-    }) as unknown as typeof fetch;
-    const pending = mcpDial()
-      .findByName("Note", "x")
-      .catch((e: unknown) => e);
-    await vi.advanceTimersByTimeAsync(29_999);
-    expect(seen.signal?.aborted).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(seen.signal?.aborted).toBe(true);
-    expect(((await pending) as Error).message).toBe("aborted");
-  });
-
-  it("clears its timer once the call settles", async () => {
-    vi.useFakeTimers();
-    install(() => mcp([]));
-    await mcpDial().findByName("Note", "x");
-    expect(vi.getTimerCount()).toBe(0);
-  });
-});
-
-describe("rpc — reading the answer", () => {
-  it("a JSON-RPC error body is thrown with its verb and the error", async () => {
-    install(() =>
-      mcpRaw({ jsonrpc: "2.0", id: 1, error: { code: -1, message: "bad" } }),
-    );
-    const err = await mcpDial()
-      .findByName("Note", "x")
-      .catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ChaosClientError);
-    expect((err as ChaosClientError).message).toBe(
-      'find_by_name: {"code":-1,"message":"bad"}',
-    );
-    expect((err as ChaosClientError).code).toBe("wire_error");
-  });
-
-  it("an answer with no result is an empty read, not a crash", async () => {
-    install(() => mcpRaw({ jsonrpc: "2.0", id: 1 }));
-    expect(await mcpDial().findByName("Note", "x")).toStrictEqual([]);
-  });
-
-  it("an isError result with no refusal body keeps the raw content", async () => {
-    install(() =>
-      mcpRaw({
-        jsonrpc: "2.0",
-        id: 1,
-        result: { isError: true, content: [{ type: "text", text: "boom" }] },
-      }),
-    );
-    const err = await mcpDial()
-      .findByName("Note", "x")
-      .catch((e: unknown) => e);
-    expect((err as ChaosClientError).message).toBe(
-      'find_by_name: [{"type":"text","text":"boom"}]',
-    );
-    expect((err as ChaosClientError).code).toBe("wire_error");
-  });
-
-  it("an isError refusal that is not a conflict stays a wire error", async () => {
-    const content = [
-      { type: "text", text: JSON.stringify({ code: "denied", detail: "no" }) },
-    ];
-    install(() =>
-      mcpRaw({ jsonrpc: "2.0", id: 1, result: { isError: true, content } }),
-    );
-    const err = await mcpDial()
-      .findByName("Note", "x")
-      .catch((e: unknown) => e);
-    expect((err as ChaosClientError).code).toBe("wire_error");
-    expect((err as ChaosClientError).message).toBe(
-      `find_by_name: ${JSON.stringify(content)}`,
-    );
-  });
-
-  it("a conflict refusal in a text block is the registered conflict", async () => {
-    install(() =>
-      mcpRaw({
-        jsonrpc: "2.0",
-        id: 1,
-        result: {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ code: "conflict", detail: "held" }),
-            },
-          ],
-        },
-      }),
-    );
-    const err = await mcpDial()
-      .admit([], "s")
-      .catch((e: unknown) => e);
-    expect((err as ChaosClientError).code).toBe("conflict");
-    expect((err as ChaosClientError).message).toBe("admit: conflict: held");
-  });
-
-  it("a conflict in structuredContent is read when no text block carries it", async () => {
-    install(() =>
-      mcpRaw({
-        jsonrpc: "2.0",
-        id: 1,
-        result: {
-          isError: true,
-          content: [],
-          structuredContent: { code: "conflict", detail: "d" },
-        },
-      }),
-    );
-    const err = await mcpDial()
-      .admit([], "s")
-      .catch((e: unknown) => e);
-    expect((err as ChaosClientError).code).toBe("conflict");
-  });
-
-  it("a result with only text blocks is parsed from them", async () => {
-    install(() =>
-      mcpRaw({
-        jsonrpc: "2.0",
-        id: 1,
-        result: {
-          content: [{ type: "text", text: JSON.stringify([TOKEN, "junk"]) }],
-        },
-      }),
-    );
-    expect(await mcpDial().findByName("Note", "x")).toStrictEqual([TOKEN]);
-  });
-});
-
-describe("the {result} wrapper — one reader over MCP and REST", () => {
+describe("the {result} wrapper", () => {
   const SHAPES: [string, unknown, Record<string, string>][] = [
     ["unwraps a lone {result}", { result: { k: "v" } }, { k: "v" }],
     [
@@ -379,11 +208,6 @@ describe("the {result} wrapper — one reader over MCP and REST", () => {
     ["leaves null as null", null, {}],
     ["leaves a bare string alone", "a", {}],
   ];
-
-  it.each(SHAPES)("MCP: %s", async (_name, structured, want) => {
-    install(() => mcp(structured));
-    expect(await mcpDial().resolveNodes([TOKEN])).toStrictEqual(want);
-  });
 
   it.each(SHAPES)("REST: %s", async (_name, structured, want) => {
     const dial = new LiveChaosDial({
@@ -432,125 +256,80 @@ describe("the {result} wrapper — one reader over MCP and REST", () => {
   });
 });
 
-describe("endpoints — URL normalising and the REST flips", () => {
+describe("endpoints — base URLs", () => {
   it.each([
-    ["http://themis:8200///", "http://themis:8200/mcp"],
-    ["http://themis:8200", "http://themis:8200/mcp"],
-    ["http://themis:8200/mcp", "http://themis:8200/mcp"],
-    ["http://themis:8200/mcp/", "http://themis:8200/mcp"],
+    ["http://themis-x:8203///", "http://themis-x:8203/v1/admit"],
+    ["http://themis-x:8203", "http://themis-x:8203/v1/admit"],
   ])("themis %s dials %s", async (given, want) => {
-    install(() => mcp({ admitted: true }));
+    install(() => envelope({ admitted: true }));
     await new LiveChaosDial({ themisUrl: given }).admit([], "s");
     expect(calls.map((c) => c.url)).toEqual([want]);
   });
 
-  it.each([
-    ["http://chaos:8206//", "http://chaos:8206/mcp"],
-    ["http://chaos:8206", "http://chaos:8206/mcp"],
-    ["http://chaos:8206/mcp", "http://chaos:8206/mcp"],
-    ["http://chaos:8206/mcp/", "http://chaos:8206/mcp"],
-  ])("chaos %s dials %s", async (given, want) => {
-    install(() => mcp([]));
-    await new LiveChaosDial({ chaosUrl: given }).findByName("k", "l");
-    expect(calls.map((c) => c.url)).toEqual([want]);
-  });
-
-  it("with no URL given, the env then the defaults decide", async () => {
-    install((c) =>
-      c.url.includes("themis") ? mcp({ admitted: true }) : mcp([]),
-    );
-    await new LiveChaosDial().admit([], "s");
-    await new LiveChaosDial().findByName("k", "l");
-    process.env.CALLIOPE_THEMIS_URL = "http://themis-env:1/";
-    process.env.CHAOS_URL = "http://chaos-legacy:2/";
-    await new LiveChaosDial().admit([], "s");
-    await new LiveChaosDial().findByName("k", "l");
-    process.env.CALLIOPE_CHAOS_URL = "http://chaos-env:3";
-    await new LiveChaosDial().findByName("k", "l");
-    expect(calls.map((c) => c.url)).toEqual([
-      "http://themis:8203/mcp",
-      "http://chaos:8209/mcp",
-      "http://themis-env:1/mcp",
-      "http://chaos-legacy:2/mcp",
-      "http://chaos-env:3/mcp",
-    ]);
-  });
-
-  function door(): void {
-    install((c) => {
-      if (c.url.endsWith("/mcp")) {
-        return mcp(rpcOf(c).params.name === "admit" ? { admitted: true } : []);
-      }
-      if (c.url.includes("/v1/admit")) {
-        return envelope({ admitted: true, minted: [] });
-      }
-      return envelope([], "", "chaos");
-    });
-  }
-
-  it("CALLIOPE_CHAOS_REST_URL flips chaos reads to REST when no chaosUrl is given", async () => {
-    door();
-    process.env.CALLIOPE_CHAOS_REST_URL = "http://chaos-r:8209";
-    await new LiveChaosDial().findByName("k", "l");
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toMatch(/^http:\/\/chaos-r:8209\/v1\/find_by_name\?/);
-  });
-
-  it("an explicit chaosUrl never inherits the cluster's REST flip", async () => {
-    door();
-    process.env.CALLIOPE_CHAOS_REST_URL = "http://chaos-r:8209";
-    await new LiveChaosDial({ chaosUrl: "http://chaos:8206" }).findByName(
+  it("chaos http://chaos-x:8209// dials /v1/<verb> on that base", async () => {
+    install(() => envelope([], "", "chaos"));
+    await new LiveChaosDial({ chaosUrl: "http://chaos-x:8209//" }).findByName(
       "k",
       "l",
     );
-    expect(calls.map((c) => c.url)).toEqual(["http://chaos:8206/mcp"]);
-  });
-
-  it("with no flip and no URL, chaos reads stay on /mcp", async () => {
-    door();
-    await new LiveChaosDial().findByName("k", "l");
-    expect(calls.map((c) => c.url)).toEqual(["http://chaos:8209/mcp"]);
-  });
-
-  it("CALLIOPE_THEMIS_REST_URL moves admit to REST when no themisUrl is given", async () => {
-    door();
-    process.env.CALLIOPE_THEMIS_REST_URL = "http://themis-r:8203";
-    await new LiveChaosDial().admit([], "s");
-    expect(calls.map((c) => c.url)).toEqual(["http://themis-r:8203/v1/admit"]);
-  });
-
-  it("an explicit themisUrl never inherits the themis REST flip", async () => {
-    door();
-    process.env.CALLIOPE_THEMIS_REST_URL = "http://themis-r:8203";
-    await new LiveChaosDial({ themisUrl: "http://themis:8200" }).admit([], "s");
-    expect(calls.map((c) => c.url)).toEqual(["http://themis:8200/mcp"]);
-  });
-
-  it("a blank REST base is no REST base", async () => {
-    door();
-    await new LiveChaosDial({
-      themisUrl: "http://themis:8200",
-      themisRestUrl: "   ",
-    }).admit([], "s");
-    process.env.CALLIOPE_THEMIS_REST_URL = "   ";
-    await new LiveChaosDial().admit([], "s");
     expect(calls.map((c) => c.url)).toEqual([
-      "http://themis:8200/mcp",
-      "http://themis:8203/mcp",
+      "http://chaos-x:8209/v1/find_by_name",
     ]);
   });
 
+  it("with no URL given, the REST env then the defaults decide", async () => {
+    install((c) =>
+      c.url.includes("themis") ? envelope({ admitted: true }) : envelope([]),
+    );
+    await new LiveChaosDial().admit([], "s");
+    await new LiveChaosDial().findByName("k", "l");
+    process.env.CALLIOPE_THEMIS_REST_URL = "http://themis-r:8203/";
+    process.env.CALLIOPE_CHAOS_REST_URL = "http://chaos-r:8209";
+    await new LiveChaosDial().admit([], "s");
+    await new LiveChaosDial().findByName("k", "l");
+    expect(calls.map((c) => c.url)).toEqual([
+      "http://themis:8203/v1/admit",
+      "http://chaos:8209/v1/find_by_name",
+      "http://themis-r:8203/v1/admit",
+      "http://chaos-r:8209/v1/find_by_name",
+    ]);
+  });
+
+  it("an explicit chaosUrl never inherits the cluster's chaos base", async () => {
+    install(() => envelope([], "", "chaos"));
+    process.env.CALLIOPE_CHAOS_REST_URL = "http://chaos-r:8209";
+    await new LiveChaosDial({ chaosUrl: "http://chaos:8209" }).findByName(
+      "k",
+      "l",
+    );
+    expect(calls.map((c) => c.url)).toEqual([
+      "http://chaos:8209/v1/find_by_name",
+    ]);
+  });
+
+  it("an explicit themisUrl never inherits the themis base", async () => {
+    install(() => envelope({ admitted: true }));
+    process.env.CALLIOPE_THEMIS_REST_URL = "http://themis-r:8203";
+    await new LiveChaosDial({ themisUrl: "http://themis:8203" }).admit([], "s");
+    expect(calls.map((c) => c.url)).toEqual(["http://themis:8203/v1/admit"]);
+  });
+
+  it("a blank REST base is no REST base", async () => {
+    install(() => envelope({ admitted: true }));
+    await new LiveChaosDial({ themisRestUrl: "   " }).admit([], "s");
+    expect(calls.map((c) => c.url)).toEqual(["http://themis:8203/v1/admit"]);
+  });
+
   it("every trailing slash of a REST base is dropped", async () => {
-    door();
+    install(() => envelope({ admitted: true }));
     await new LiveChaosDial({
-      themisUrl: "http://themis:8200",
       themisRestUrl: "  http://themis-r2:8203///  ",
     }).admit([], "s");
     expect(calls.map((c) => c.url)).toEqual(["http://themis-r2:8203/v1/admit"]);
   });
 });
 
-describe("admit — arguments and result over MCP", () => {
+describe("admit — arguments and result", () => {
   const OPS = [{ op: "createNode", kind: "Note", label: "n" }];
   const EXPECT = [{ s: "a", predicate: "p", held: [{ literal: "x" }] }];
 
@@ -694,40 +473,13 @@ describe("admit — over themis's REST door", () => {
     expect((denied as ChaosClientError).message).toBe(`admit: ${body}`);
   });
 
-  it("a transport failure is rethrown as itself, never re-sent over MCP", async () => {
+  it("a transport failure is rethrown as itself, never retried", async () => {
     install(() => Promise.reject(new Error("boom")));
     const err = await rest()
       .admit(OPS, "s")
       .catch((e: unknown) => e);
     expect(err).not.toBeInstanceOf(ChaosClientError);
     expect((err as Error).message).toBe("boom");
-    expect(calls.some((c) => c.url.endsWith("/mcp"))).toBe(false);
-  });
-
-  it("a door whose document cannot be read falls back to MCP", async () => {
-    globalThis.fetch = ((input: string, init?: RequestInit) => {
-      const url = input;
-      calls.push({
-        url,
-        method: init?.method ?? "GET",
-        rawHeaders: init?.headers,
-        body: typeof init?.body === "string" ? init.body : "",
-        signal: init?.signal,
-        hasTls: false,
-      });
-      return Promise.resolve(
-        url.endsWith("/openapi.json")
-          ? new Response("gone", { status: 404 })
-          : mcp({ admitted: true }),
-      );
-    }) as unknown as typeof fetch;
-    calls = [];
-    const out = await new LiveChaosDial({
-      themisUrl: "http://themis-nodoc:8200",
-      themisRestUrl: "http://themis-nodoc:8203",
-    }).admit(OPS, "s");
-    expect(out.admitted).toBe(true);
-    expect(calls.at(-1)?.url).toBe("http://themis-nodoc:8200/mcp");
   });
 });
 

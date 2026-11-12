@@ -14,47 +14,19 @@ import {
   scopeHash,
 } from "../src/chaos-client.js";
 import { LocalChaosDial, toCaptureOps } from "../src/local-admit.js";
+import { installChaosDoor, type WireCall } from "./helpers/chaos-door.js";
 
 const NODE = "aa".repeat(32);
 const OTHER = "bb".repeat(32);
 const G = "cc".repeat(32);
 
-interface Call {
-  url: string;
-  id: number;
-  name: string;
-  args: Record<string, unknown>;
-}
-
-let calls: Call[] = [];
+let calls: WireCall[] = [];
 let reply: unknown = null;
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
-  calls = [];
   reply = null;
-  globalThis.fetch = ((url: string, init?: { body?: string }) => {
-    const body = JSON.parse(init?.body ?? "{}") as {
-      id: number;
-      params: { name: string; arguments: Record<string, unknown> };
-    };
-    calls.push({
-      url,
-      id: body.id,
-      name: body.params.name,
-      args: body.params.arguments,
-    });
-    return Promise.resolve(
-      new Response(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          result: { structuredContent: reply },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
-    );
-  }) as unknown as typeof globalThis.fetch;
+  calls = installChaosDoor(() => reply).calls;
 });
 
 afterEach(() => {
@@ -63,8 +35,8 @@ afterEach(() => {
 
 const live = () =>
   new LiveChaosDial({
-    themisUrl: "http://themis:8200",
-    chaosUrl: "http://chaos:8206",
+    themisUrl: "http://themis:8203",
+    chaosUrl: "http://chaos:8209",
   });
 
 describe("graphToken / opRemove's pin", () => {
@@ -137,9 +109,8 @@ describe("LiveChaosDial.placedEdges", () => {
     ]);
     expect(calls).toEqual([
       {
-        url: "http://chaos:8206/mcp",
-        id: 1,
-        name: "materialize_edges",
+        url: "http://chaos:8209/v1/materialize_edges",
+        verb: "materialize_edges",
         args: { node: NODE, full: true },
       },
     ]);
@@ -192,9 +163,8 @@ describe("LiveChaosDial.referrers", () => {
     ]);
     expect(calls).toEqual([
       {
-        url: "http://chaos:8206/mcp",
-        id: 1,
-        name: "quads_to",
+        url: "http://chaos:8209/v1/quads_to",
+        verb: "quads_to",
         args: { objects: [NODE], full: true },
       },
     ]);
@@ -272,7 +242,7 @@ describe("chaos list reads — the bare array and the F17 {items} object", () =>
     expect(await live().findByName("note", "x")).toEqual([]);
     reply = { items: [TOKEN], more: 1 };
     expect(await live().findByName("note", "x")).toEqual([]);
-    expect(calls.map((c) => c.name)).toEqual(Array(4).fill("find_by_name"));
+    expect(calls.map((c) => c.verb)).toEqual(Array(4).fill("find_by_name"));
   });
 
   it("quadsFrom reads a bare array and {items} to the same literal rows", async () => {
