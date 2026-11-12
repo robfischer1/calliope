@@ -1,6 +1,6 @@
 /**
- * The sidecar over the ONE backend (046 F14) — the ferry wire and /mcp
- * ride a LocalEngineStore; the fs backend is gone. Fixture engine (dial +
+ * The sidecar over the ONE backend (046 F14) — the ferry wire
+ * rides a LocalEngineStore; the fs backend is gone. Fixture engine (dial +
  * blob store), real working-tree directory: reads/writes hit the graph
  * fixtures AND project markdown to disk.
  */
@@ -36,7 +36,6 @@ beforeEach(async () => {
     state: () => "ready",
     ports: () => ({ pg: 1, chaos: 2 }),
     ready: () => Promise.resolve(store),
-    containers: () => facet,
     root: store.root,
   };
   server = createSidecarServer(backend);
@@ -318,7 +317,6 @@ describe("the boot gate", () => {
       state: () => "booting",
       ports: () => null,
       ready: () => gate,
-      containers: () => undefined,
       root,
     };
     const gated = createSidecarServer(backend);
@@ -341,69 +339,10 @@ describe("the boot gate", () => {
   });
 });
 
-describe("the sidecar MCP endpoint", () => {
-  async function mcp(payload: unknown): Promise<unknown> {
-    const res = await fetch(`${base}/mcp`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-      },
-      body: JSON.stringify(payload),
-    });
-    const text = await res.text();
-    const line = text.split("\n").find((l) => l.startsWith("data:"));
-    return JSON.parse(line !== undefined ? line.slice(5) : text) as unknown;
-  }
-
-  it("serves the body surface, look, search AND the container verbs", async () => {
-    const listed = (await mcp({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/list",
-      params: {},
-    })) as { result?: { tools?: { name: string }[] } };
-    const names = (listed.result?.tools ?? []).map((t) => t.name);
-    expect(names).toContain("read_body");
-    expect(names).toContain("write_body");
-    expect(names).toContain("look");
-    expect(names).toContain("search");
-    // F13/F14: one engine — the container surface serves locally too.
-    expect(names).toContain("write_container");
-    expect(names).toContain("read_container");
-    expect(names).toContain("container_history");
-    // chaos-gated fleet verbs stay absent — no gate on the desktop
-    expect(names).not.toContain("create_note");
-  });
-
-  it("round-trips a body read over MCP against the engine", async () => {
-    await ferry("write_body", {
-      node_id: "agent.md",
-      sections: [{ text: "hello agent" }],
-    });
-    const called = (await mcp({
-      jsonrpc: "2.0",
-      id: 2,
-      method: "tools/call",
-      params: { name: "read_body", arguments: { node_id: "agent.md" } },
-    })) as {
-      result?: { structuredContent?: { sections?: { text: string }[] } };
-    };
-    const sections = called.result?.structuredContent?.sections ?? [];
-    expect(sections.map((s) => s.text)).toEqual(["hello agent"]);
-  });
-
-  it("look answers the honest empty register", async () => {
-    const called = (await mcp({
-      jsonrpc: "2.0",
-      id: 3,
-      method: "tools/call",
-      params: { name: "look", arguments: {} },
-    })) as {
-      result?: { structuredContent?: { focus: unknown; pins: unknown[] } };
-    };
-    expect(called.result?.structuredContent?.focus).toBeNull();
-    expect(called.result?.structuredContent?.pins).toEqual([]);
+describe("the sidecar serves no /mcp", () => {
+  it("answers 404 on /mcp", async () => {
+    const res = await fetch(`${base}/mcp`, { method: "POST", body: "{}" });
+    expect(res.status).toBe(404);
   });
 });
 

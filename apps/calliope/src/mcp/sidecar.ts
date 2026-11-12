@@ -4,7 +4,7 @@
  * and ONLY the engine (046 F14: the fs backend and its companions are
  * deleted; there is no second implementation left to fall back to).
  *
- * The ferry wire (`/body`) and the MCP endpoint (`/mcp`) both ride ONE
+ * The ferry wire (`/body`) rides ONE
  * {@link LocalEngineStore}: sections are the graph's tree, history is the
  * graph as-of a transaction, search is the engine's postgres, and the
  * markdown directory is the WORKING TREE the store projects and ingests.
@@ -20,14 +20,13 @@
  *    without the engine there is no store to serve
  *
  * The handshake never waits on the engine: the listener answers first and
- * `/body` + `/mcp` requests WAIT (bounded by the boot itself) until the
+ * `/body` requests WAIT (bounded by the boot itself) until the
  * engine is ready. Supervision stays crash-only: an engine child dying
  * after boot exits the sidecar; Grace's respawn ladder brings it back.
  */
 
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { statSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import { argv, execPath, exit } from "node:process";
@@ -36,12 +35,10 @@ import { Pool } from "pg";
 import { BlobStore } from "../blob-store.js";
 import { TENANTS, tenantScope } from "../chaos-client.js";
 import type { ContainerFacet } from "../container-write.js";
-import { FocusRegister } from "../focus-register.js";
 import { LocalChaosDial } from "../local-admit.js";
 import { LocalEngineStore } from "../local-store.js";
 import { PgBodyClient } from "../pg-client.js";
 import { type Engine, resolvePayload, startEngine } from "./babychaos.js";
-import { createServer as createMcpServer } from "./server.js";
 import type { SectionInput } from "../types.js";
 import {
   applySectionOps,
@@ -207,15 +204,12 @@ export interface SidecarBackend {
   ports: () => { pg: number; chaos: number } | null;
   /** Resolves when the store is servable; rejects if the boot failed. */
   ready: () => Promise<LocalEngineStore>;
-  containers: () => ContainerFacet | undefined;
   root: string;
 }
 
 export function createSidecarServer(
   backend: SidecarBackend,
 ): ReturnType<typeof createServer> {
-  // 031 ("Look At This" F12): one register for the sidecar's lifetime.
-  const focus = new FocusRegister();
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     const path = (req.url ?? "").split("?", 1)[0];
     const cors = corsHeaders(req);
@@ -235,36 +229,6 @@ export function createSidecarServer(
           engine_ports: backend.ports(),
         }),
       );
-      return;
-    }
-    if (path === "/mcp" && req.method === "POST") {
-      void (async () => {
-        const store = await backend.ready();
-        const server = createMcpServer(store, {
-          focus,
-          search: store,
-          containers: backend.containers(),
-          // The desktop's loopback keeps the path-addressed body verbs —
-          // engine-backed since F14; the FLEET surface retired them (F12).
-          pathBodies: true,
-        });
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: undefined,
-        });
-        res.on("close", () => {
-          void transport.close();
-          void server.close();
-        });
-        await server.connect(transport);
-        const body = await readJson(req);
-        await transport.handleRequest(req, res, body);
-      })().catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!res.headersSent) {
-          res.writeHead(500, { "Content-Type": "application/json", ...cors });
-        }
-        res.end(JSON.stringify({ error: message }));
-      });
       return;
     }
     if (path !== "/body" || req.method !== "POST") {
@@ -369,10 +333,6 @@ function main(): void {
         : { pg: engine.pgPort, chaos: engine.chaosPort };
     },
     ready: () => readyGate,
-    containers: () => {
-      const store = state.store;
-      return store === undefined ? undefined : storeFacet(store);
-    },
     root,
   };
 
@@ -417,11 +377,6 @@ function main(): void {
     process.stdin.on("close", shutdown);
     process.stdin.on("end", shutdown);
   }
-}
-
-/** The store's facet, re-exposed for the /mcp container verbs. */
-function storeFacet(store: LocalEngineStore): ContainerFacet {
-  return store.facet;
 }
 
 const entry = argv[1];

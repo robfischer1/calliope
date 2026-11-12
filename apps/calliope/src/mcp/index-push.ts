@@ -13,6 +13,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { RestClient, ToolError } from "@forge/stellar-core-ts/rest";
 import type {
   AuthoredBy,
   BodyClient,
@@ -37,57 +38,32 @@ export interface IndexPusher {
 }
 
 /**
- * Direct client for urania's `index_document` verb over its MCP endpoint
- * (`tools/call` JSON-RPC), mirroring {@link LiveUraniaCapture}'s wire. The
- * `moirae` graph is the scope — the same `g` bodies are written into.
+ * Direct client for urania's `index_document` verb over its REST door
+ * (`POST /v1/index_document`). The `moirae` graph is the scope — the same `g`
+ * bodies are written into.
  */
 export class UraniaIndexClient implements IndexPusher {
-  private readonly endpoint: string;
-  private id = 0;
+  private readonly client: RestClient;
 
-  constructor(url: string) {
-    this.endpoint = `${url.replace(/\/+$/, "")}/mcp`;
+  constructor(url: string, fetchFn?: typeof fetch) {
+    const base = url.replace(/\/+$/, "");
+    this.client = new RestClient(
+      fetchFn === undefined ? { base } : { base, fetch: fetchFn },
+    );
   }
 
   async indexDocument(node: string, body: string): Promise<void> {
-    this.id += 1;
-    const payload = JSON.stringify({
-      jsonrpc: "2.0",
-      id: this.id,
-      method: "tools/call",
-      params: {
-        name: "index_document",
-        arguments: { node, graph: MOIRAE_GRAPH, body },
-      },
-    });
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-    }, TIMEOUT_MS);
     try {
-      const resp = await fetch(this.endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-        },
-        body: payload,
-        signal: controller.signal,
-      });
-      const parsed = (await resp.json()) as {
-        error?: unknown;
-        result?: { isError?: boolean; content?: unknown };
-      };
-      if (parsed.error !== undefined) {
-        throw new Error(`index_document: ${JSON.stringify(parsed.error)}`);
+      await this.client.call(
+        "index_document",
+        { node, graph: MOIRAE_GRAPH, body },
+        { signal: AbortSignal.timeout(TIMEOUT_MS) },
+      );
+    } catch (e) {
+      if (e instanceof ToolError) {
+        throw new Error(`index_document: ${e.text}`);
       }
-      if (parsed.result?.isError === true) {
-        throw new Error(
-          `index_document: ${JSON.stringify(parsed.result.content)}`,
-        );
-      }
-    } finally {
-      clearTimeout(timer);
+      throw e;
     }
   }
 }

@@ -12,8 +12,7 @@
  *
  * Backend: `pg` when `DATABASE_URL` is set (the sovereign store, the production
  * default), else the chaos substrate over `CHAOS_URL`, or the in-memory fixture
- * via `CALLIOPE_MCP_BACKEND=fixture`. On boot, also starts the op-contract
- * heartbeat publisher ({@link startHeartbeat}, from stellar-core-ts).
+ * via `CALLIOPE_MCP_BACKEND=fixture`.
  */
 
 import { argv } from "node:process";
@@ -31,64 +30,18 @@ import { createServer } from "./server.js";
 import type { ServerOptions } from "./server.js";
 import type { ChaosFacet } from "../chaos-client.js";
 import type { TagStore } from "../tag-store.js";
+import { startTelemetry, telemetryConfigFromEnv } from "@forge/stellar-core-ts";
+import type { RequestLog } from "@forge/stellar-core-ts";
 import {
-  startHeartbeat,
-  startTelemetry,
-  telemetryConfigFromEnv,
-} from "@forge/stellar-core-ts";
-import type { HeartbeatOptions, RequestLog } from "@forge/stellar-core-ts";
-import {
-  SOURCE_STAR,
-  consciousnessMetrics,
   makeConsciousnessPublisher,
   type NotePublisher,
 } from "./consciousness-emit.js";
-import { convergeMetrics } from "../converge-witness.js";
 import { FocusRegister, startFocusConsumer } from "../focus-register.js";
 import { makeErosProvider } from "../eros-provider.js";
 import { makeWitness } from "./witness.js";
 import type { Witness } from "./witness.js";
 import type { RestMount } from "@forge/stellar-core-ts/rest";
 import { mountRestFace } from "./rest.js";
-
-/**
- * How this star beats: its name, and what it can say about itself each beat.
- *
- * The PUBLISHER is the core's since `@forge/stellar-core-ts` 0.12.0 — calliope
- * had hand-rolled the whole thing (`src/mcp/heartbeat.ts`, deleted), and its
- * own module doc called it "the bun-side mirror of the Python stars'
- * `stellar_core.AsyncHeartbeatPublisher`". The loop, the 30s cadence, the
- * process-scoped `boot_id`, the `STELLAR_REVISION` read, the broker and the
- * graceful degradation all live there now. What is left here is the only half
- * that was ever this star's: who it is, and how it is doing.
- *
- * `SOURCE_STAR` rather than a second `"calliope"` literal — it is this star's
- * `star.toml` name, which the consciousness producer already stamps on every
- * event. A heartbeat beating under one name while the consciousness plane
- * carried another would be attributed to two stars, and nothing downstream
- * could tell.
- *
- * `ready: true` unconditionally, which is exactly what this star has always
- * published: the HTTP listener is up by the time the beat starts, and there is
- * no probe behind it that could answer otherwise. A real readiness latch — the
- * store's health, the broker's — is the deferred half of the heartbeat
- * contract, in this star and in the core.
- *
- * Split out of `main()` and exported because `main()` is the bin entry and no
- * test drives it: stated inline there, every one of these decisions would be
- * stated untested.
- */
-export function heartbeatOptions(): HeartbeatOptions {
-  return {
-    star: SOURCE_STAR,
-    // Read PER BEAT, so a counter that moves between beats is reported as it
-    // stands rather than as it was at boot.
-    standing: () => ({
-      ready: true,
-      metrics: { ...consciousnessMetrics(), ...convergeMetrics() },
-    }),
-  };
-}
 
 /** The collaborators a server is built from (the MCP door's and REST's alike). */
 export interface ServerDeps {
@@ -223,12 +176,7 @@ async function main(): Promise<void> {
     `calliope serving (backend=${kind}) door=${String(rest.plaintextAddress()?.port)}\n`,
   );
 
-  // Publish liveness to the telemetry bus (stellar-core-ts `startHeartbeat`,
-  // the op-contract heartbeat) now that we serve.
-  const heartbeat = startHeartbeat(heartbeatOptions());
-
   const shutdown = (): void => {
-    void heartbeat.stop();
     void focusConsumer.stop();
     // Flush what the batch processor is holding; a SIGTERM'd pod otherwise
     // drops its last window of spans, which is exactly the window that

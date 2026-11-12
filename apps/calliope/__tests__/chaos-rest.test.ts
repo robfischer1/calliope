@@ -1,8 +1,7 @@
 /**
  * LiveChaosDial over chaos's openapi-http face (chaos-rest.ts): the REST
- * flip routes granted reads to /v1/<verb> on the plaintext door, shapes the
- * answer as the /mcp path does, keeps ungranted verbs on /mcp, and stays off
- * unless CALLIOPE_CHAOS_REST_URL is set. The document is a slice of chaos's
+ * routes every read to /v1/<verb> on the plaintext door and shapes the
+ * answer. The document is a slice of chaos's
  * live /openapi.json (2026-10-29); fetch is stubbed, nothing leaves the
  * process.
  */
@@ -11,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { LiveChaosDial } from "../src/chaos-client.js";
-import { ChaosRest, chaosRestFromEnv } from "../src/chaos-rest.js";
+import { ChaosRest } from "../src/chaos-rest.js";
 
 const DOC = readFileSync(
   new URL("./fixtures/chaos-openapi-subset.json", import.meta.url),
@@ -102,7 +101,7 @@ describe("LiveChaosDial with the chaos REST flip", () => {
     expect(await dial.findByName("Note", "x")).toEqual([TOKEN]);
   });
 
-  it("types chaos's conflict refusal as the /mcp path does", async () => {
+  it("types chaos's conflict refusal", async () => {
     const d = door(
       () =>
         new Response(JSON.stringify({ code: "conflict", detail: "held" }), {
@@ -119,18 +118,12 @@ describe("LiveChaosDial with the chaos REST flip", () => {
     });
   });
 
-  it("sends register_graph as POST /v1/register_graph, never /mcp", async () => {
+  it("sends register_graph as POST /v1/register_graph", async () => {
     const rest = door(() => structured({}));
-    const mcp: string[] = [];
-    globalThis.fetch = ((input: string) => {
-      mcp.push(input);
-      return Promise.reject(new Error("no /mcp dial expected"));
-    }) as unknown as typeof fetch;
     const dial = new LiveChaosDial({
       chaosRest: new ChaosRest("http://chaos:8209", 5_000, rest.fetch),
     });
     await dial.registerGraph("notes");
-    expect(mcp).toEqual([]);
     expect(rest.seen).toHaveLength(1);
     expect(rest.seen[0]?.method).toBe("POST");
     expect(rest.seen[0]?.url).toBe("http://chaos:8209/v1/register_graph");
@@ -142,22 +135,8 @@ describe("LiveChaosDial with the chaos REST flip", () => {
   });
 });
 
-describe("chaosRestFromEnv", () => {
-  it("is off unless CALLIOPE_CHAOS_REST_URL is set", () => {
-    expect(chaosRestFromEnv(1_000, {})).toBeUndefined();
-    expect(chaosRestFromEnv(1_000, { CALLIOPE_CHAOS_REST_URL: " " })).toBe(
-      undefined,
-    );
-    expect(
-      chaosRestFromEnv(1_000, { CALLIOPE_CHAOS_REST_URL: "http://chaos:8209" }),
-    ).toBeInstanceOf(ChaosRest);
-  });
-
+describe("ChaosRest", () => {
   it("refuses a base that is not plaintext http://host[:port]", () => {
-    expect(() =>
-      chaosRestFromEnv(1_000, {
-        CALLIOPE_CHAOS_REST_URL: "https://chaos:8207",
-      }),
-    ).toThrow(TypeError);
+    expect(() => new ChaosRest("https://chaos:8207", 1_000)).toThrow(TypeError);
   });
 });

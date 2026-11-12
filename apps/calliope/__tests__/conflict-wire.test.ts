@@ -9,7 +9,6 @@ import { FixtureBlobStore } from "../src/blob-store.js";
 import {
   ChaosClientError,
   LiveChaosDial,
-  refusalOf,
 } from "../src/chaos-client.js";
 import { writeContainer } from "../src/container-write.js";
 
@@ -38,22 +37,6 @@ const live = () =>
     themisUrl: "http://themis:8200",
     chaosUrl: "http://chaos:8206",
   });
-
-describe("refusalOf", () => {
-  it("reads the text block, then structuredContent, else null", () => {
-    const body = { code: "conflict", detail: "d" };
-    expect(
-      refusalOf([{ type: "text", text: JSON.stringify(body) }], undefined),
-    ).toEqual(body);
-    expect(refusalOf([], body)).toEqual(body);
-    expect(refusalOf([{ type: "text", text: "plain words" }], undefined)).toBe(
-      null,
-    );
-    expect(refusalOf([{ type: "image" }], 7)).toBe(null);
-    expect(refusalOf([{ type: "text", text: "{}" }], undefined)).toBe(null);
-    expect(refusalOf(undefined, undefined)).toBe(null);
-  });
-});
 
 describe("a text-only conflict refusal on the wire", () => {
   it("surfaces as code conflict from admit", async () => {
