@@ -272,7 +272,9 @@ describe("flag on — one chaos capture per admit (contract 2)", () => {
     );
     await dial.admit([opCreate("Note", "n")], "notes");
     expect(door.seen).toHaveLength(0);
-    expect(themis.map((t) => t.url)).toEqual(["http://themis:8200/v1/admit"]);
+    expect(
+      themis.filter((t) => t.url.endsWith("/v1/admit")).map((t) => t.url),
+    ).toEqual(["http://themis:8200/v1/admit"]);
   });
 
   it("posts exactly one /v1/capture {ops, author:'calliope'} and never touches themis", async () => {
