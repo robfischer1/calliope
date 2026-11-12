@@ -24,7 +24,6 @@ import {
   witnessToolCalls,
   withHeartbeat,
 } from "@forge/stellar-core-ts";
-import { SOURCE_STAR } from "./consciousness-emit.js";
 import { isAuthoredBy, validateWriteProvenance } from "../types.js";
 import type { AuthoredBy, BodyClient } from "../types.js";
 import type { RevisionStore } from "../revision-store.js";
