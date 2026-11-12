@@ -8,17 +8,15 @@
  * false here and no caller sets it for him.
  *
  * GOVERNANCE NOTES. nomos keeps each prose law file as a `Governance` note,
- * and retires one when a deletion of that file lands. So the suppress mode,
- * and restore, also take a Governance note when, and only when, the caller
- * is nomos: the verified peer (or the gateway's stamp), read by
- * `callerPrincipal`, never an argument. Every other caller is refused
- * `not_a_note` for it exactly as before, and purge never takes one: a
- * Governance note is hidden, never erased.
+ * and retires one when a deletion of that file lands. The suppress mode, and
+ * restore, take a Governance note like any other hideable type: who may call
+ * the verb is the session token's scope and the Cilium policy, not a check on
+ * the caller here. Purge never takes one: a Governance note is hidden, never
+ * erased.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { callerPrincipal, NOMOS_PRINCIPAL } from "../caller.js";
 import type { ChaosDial } from "../chaos-client.js";
 import {
   DELETE_NOTE_MAX,
@@ -54,31 +52,13 @@ export const GOVERNANCE_TYPE = "Governance";
  *  document store): a retraction-only suppress takes it for every caller. */
 export const DOCUMENT_TYPE = "DigitalDocument";
 
-/** Hide and restore are reversible, so every caller may take a Note or a
- *  document with them. Purge never reads this: it stays Note-only. */
+/** Hide and restore are reversible, so they take a Note, a document or a
+ *  Governance note. Purge never reads this: it stays Note-only. */
 const HIDEABLE_TYPES: ReadonlySet<string> = new Set([
   ...NOTE_TYPES,
   DOCUMENT_TYPE,
-]);
-
-const NOMOS_TYPES: ReadonlySet<string> = new Set([
-  ...HIDEABLE_TYPES,
   GOVERNANCE_TYPE,
 ]);
-
-/** What counts as a note for a hide or restore by `caller`. */
-export function hideableTypes(caller: string | undefined): ReadonlySet<string> {
-  return caller === NOMOS_PRINCIPAL ? NOMOS_TYPES : HIDEABLE_TYPES;
-}
-
-/** The request `_meta` a tool callback's `extra` carries, if any. */
-function metaOf(extra: unknown): Record<string, unknown> | undefined {
-  if (typeof extra !== "object" || extra === null) return undefined;
-  const meta = (extra as { _meta?: unknown })._meta;
-  return typeof meta === "object" && meta !== null
-    ? (meta as Record<string, unknown>)
-    : undefined;
-}
 
 function answer(text: string, result: object, isError = false): Answer {
   return {
@@ -169,14 +149,13 @@ export function registerDeleteVerbs(
           ),
       }),
     },
-    async ({ ids, dry_run, purge, placements }, extra) => {
+    async ({ ids, dry_run, purge, placements }) => {
       if (purge !== true) {
-        const types = hideableTypes(callerPrincipal(metaOf(extra)));
         const result = await suppressNotes(
           dial,
           scope,
           { ids, dry_run },
-          types,
+          HIDEABLE_TYPES,
         );
         if (isDeleteNotesError(result)) {
           return refusalResult(result);
@@ -242,9 +221,8 @@ export function registerDeleteVerbs(
         "protected note refuses the call, writing nothing.",
       inputSchema: z.strictObject({ ids }),
     },
-    async ({ ids }, extra) => {
-      const types = hideableTypes(callerPrincipal(metaOf(extra)));
-      const result = await restoreNotes(dial, scope, { ids }, types);
+    async ({ ids }) => {
+      const result = await restoreNotes(dial, scope, { ids }, HIDEABLE_TYPES);
       if (isDeleteNotesError(result)) {
         return refusalResult(result);
       }

@@ -2,8 +2,7 @@
  * The sidecar over the REAL engine (spec 045 F13) — full boot as Grace
  * runs it: the sidecar is a CHILD PROCESS launched with the exact spawn
  * contract (--root, --port 0, --parent-guard, one stdout handshake line),
- * the payload beside it boots initdb + postgres + chaosstore, and the
- * container surface answers over /mcp. Plus the crash-only pin: a dead
+ * the payload beside it boots initdb + postgres + chaosstore. Plus the crash-only pin: a dead
  * engine child takes the sidecar down for Grace's respawn ladder.
  *
  * Gated on CALLIOPE_BABYCHAOS_DIR (an assembled payload —
@@ -17,8 +16,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { opCreate } from "../src/chaos-client.js";
-import { LocalChaosDial } from "../src/local-admit.js";
 
 const PAYLOAD = process.env.CALLIOPE_BABYCHAOS_DIR ?? "";
 const RUN = PAYLOAD !== "" && existsSync(join(PAYLOAD, "pg", "bin"));
@@ -90,20 +87,6 @@ async function waitEngineReady(port: number, tries = 240): Promise<void> {
   throw new Error("engine never became ready");
 }
 
-async function mcp(port: number, payload: unknown): Promise<unknown> {
-  const res = await fetch(`http://127.0.0.1:${String(port)}/mcp`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify(payload),
-  });
-  const text = await res.text();
-  const line = text.split("\n").find((l) => l.startsWith("data:"));
-  return JSON.parse(line !== undefined ? line.slice(5) : text) as unknown;
-}
-
 describe.skipIf(!RUN)("the sidecar over the real engine (045 F13)", () => {
   let root: string;
   let booted: Booted;
@@ -128,54 +111,12 @@ describe.skipIf(!RUN)("the sidecar over the real engine (045 F13)", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("boots to ready and serves the container surface over /mcp", async () => {
-    // Mint the container the way the F14 backend will: through the local
-    // dial at the engine's own door (/health names the port).
-    const ports = (await health(booted.port)).engine_ports as {
-      chaos: number;
-    } | null;
-    const chaosPort = ports?.chaos;
-    if (chaosPort === undefined) throw new Error("no engine ports in /health");
-    const dial = new LocalChaosDial(`http://127.0.0.1:${String(chaosPort)}`);
-    const minted = await dial.admit([opCreate("Note", "f13 doc")], "notes");
-    const doc = minted.minted[0];
-    if (doc === undefined) throw new Error("no container minted");
-    const wrote = (await mcp(booted.port, {
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: {
-        name: "write_container",
-        arguments: {
-          container: doc,
-          ops: [
-            { op: "add", text: "grace's first engine block", position: "a0" },
-            { op: "add", text: "and the second", position: "a1" },
-          ],
-        },
-      },
-    })) as { result?: { isError?: boolean; content?: unknown } };
-    expect(wrote.result?.isError ?? false).toBe(false);
-
-    const read = (await mcp(booted.port, {
-      jsonrpc: "2.0",
-      id: 2,
-      method: "tools/call",
-      params: { name: "read_container", arguments: { container: doc } },
-    })) as {
-      result?: { structuredContent?: { blocks?: { text: string }[] } };
-    };
-    expect(
-      (read.result?.structuredContent?.blocks ?? []).map((b) => b.text),
-    ).toEqual(["grace's first engine block", "and the second"]);
-
-    const history = (await mcp(booted.port, {
-      jsonrpc: "2.0",
-      id: 3,
-      method: "tools/call",
-      params: { name: "container_history", arguments: { container: doc } },
-    })) as { result?: { structuredContent?: { count?: number } } };
-    expect(history.result?.structuredContent?.count ?? 0).toBeGreaterThan(0);
+  it("boots to ready and serves no /mcp", async () => {
+    const res = await fetch(`http://127.0.0.1:${String(booted.port)}/mcp`, {
+      method: "POST",
+      body: "{}",
+    });
+    expect(res.status).toBe(404);
   }, 60_000);
 
   it("keeps the fs surface serving beside the engine", async () => {

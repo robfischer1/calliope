@@ -13,7 +13,6 @@ import {
   ANCHORS_ROLE,
   ChaosClientError,
   FixtureChaosDial,
-  decodeRpcBody,
   ensureNotesRoot,
   opAdd,
   opCreate,
@@ -87,56 +86,6 @@ describe("op constructors", () => {
     expect(scopeHash("café ☃")).toBe(
       createHash("sha256").update(Buffer.from("café ☃", "utf8")).digest("hex"),
     );
-  });
-});
-
-describe("decodeRpcBody — SSE field rules, to the byte", () => {
-  const V = "verb";
-
-  it("data lines of one event join with a newline, never run together", () => {
-    // joined with "" these would be the number 12
-    expect(() =>
-      decodeRpcBody("data: 1\ndata: 2\n\n", "text/event-stream", V),
-    ).toThrow(SyntaxError);
-    expect(() =>
-      decodeRpcBody("data: 1\ndata: 2", "text/event-stream", V),
-    ).toThrow(SyntaxError);
-  });
-
-  it("a line of only carriage returns ends the event", () => {
-    const sse = 'data: {"a":1}\n\r\r\ndata: {"b":2}\n\n';
-    expect(decodeRpcBody(sse, "text/event-stream", V)).toEqual({ b: 2 });
-  });
-
-  it("carriage returns are stripped at the line end only", () => {
-    expect(() =>
-      decodeRpcBody('data: "a\rb"\n\n', "text/event-stream", V),
-    ).toThrow(SyntaxError);
-  });
-
-  it("a data: value with no leading space keeps its inner spaces", () => {
-    expect(decodeRpcBody('data:"x y"\n\n', "text/event-stream", V)).toBe("x y");
-  });
-
-  it("a data: value that starts with a non-space survives the strip", () => {
-    expect(decodeRpcBody('data:{"a":1}\n\n', "text/event-stream", V)).toEqual({
-      a: 1,
-    });
-  });
-
-  it("the no-data error quotes only the first 200 characters", () => {
-    const text = `event: ${"x".repeat(300)}\n\n`;
-    let caught: unknown;
-    try {
-      decodeRpcBody(text, "text/event-stream", V);
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(ChaosClientError);
-    expect((caught as ChaosClientError).message).toBe(
-      `chaos wire call "verb": event-stream body carried no data: field: ${JSON.stringify(text.slice(0, 200))}`,
-    );
-    expect((caught as ChaosClientError).code).toBe("wire_error");
   });
 });
 

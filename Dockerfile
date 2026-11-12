@@ -26,11 +26,8 @@ COPY --chown=1000:1000 release/server.js ./server.js
 # /mcp, no loopback port. Flux sets the same port; the default lets the smoke boot.
 ENV NODE_ENV=production STELLAR_REST_PLAINTEXT_PORT=8207
 # THE BOOT SMOKE (foundry-tools build:smoke): the build lane starts this image
-# alone, on the in-memory fixture backend (no Postgres, no broker, no SPIRE),
-# and it must answer GET /live on the REST door after 8s. The identity core
-# loads at boot (serveCalliope), so a bundle that cannot carry its wasm is a red
-# pull here rather than a crashloop in the cluster (stellar-core-ts 0.17.0,
-# 2026-10-04).
+# alone, on the in-memory fixture backend (no Postgres, no broker), and it must
+# answer GET /live on the REST door after 8s.
 LABEL org.notusmi.smoke="port=8207 path=/live wait=8 env=CALLIOPE_MCP_BACKEND=fixture"
 USER 1000:1000
 EXPOSE 8207

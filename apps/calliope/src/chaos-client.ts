@@ -3,7 +3,7 @@
  *
  * The prose tenant's east-west dials onto the constellation's graph plane:
  *
- *  - **themis** (`CALLIOPE_THEMIS_URL`, default `http://themis:8203/mcp`) —
+ *  - **themis** (`CALLIOPE_THEMIS_REST_URL`, default `http://themis:8203`) —
  *    the gated write. `admit(ops, scope)` runs permit → capture; a refused
  *    batch surfaces its violations verbatim. The op grammar mirrors athena's
  *    `court.py` (the proven litigant): `{op:"createNode", kind, label}` ·
@@ -11,7 +11,7 @@
  *    intra-batch refs exist on the wire** — a mint-then-link is two `admit`
  *    calls; the minted tokens cross back in `minted[]`.
  *
- *  - **chaos** (`CALLIOPE_CHAOS_URL`, default `http://chaos:8209/mcp`) — the
+ *  - **chaos** (`CALLIOPE_CHAOS_REST_URL`, default `http://chaos:8209`) — the
  *    identity reads. `findByName(kind, label)` is the documented F2 reuse
  *    lookup (`createNode` never dedups; a caller wanting reuse-not-create
  *    looks the name up first); `resolveNodes(tokens)` is the existence oracle
@@ -19,8 +19,7 @@
  *
  * This is deliberately NOT an extension of `HadesCapture` (the human-plane
  * body write via Charon) nor of `LiveUraniaCapture` (the raw body-capture) —
- * identity mints ride the GATE. The transport is the same single-POST
- * `tools/call` JSON-RPC those transports use.
+ * identity mints ride the GATE. Both dials are plain REST (`POST /v1/<verb>`).
  */
 
 import { createHash } from "node:crypto";
@@ -31,33 +30,23 @@ import {
   renderEastern,
 } from "./instant.js";
 
-import {
-  X509Source,
-  authorizeStar,
-  tlsFetchOptions,
-  type TlsFetchOptions,
-} from "@forge/stellar-core-ts";
-import { RestClient, RouteError, ToolError } from "@forge/stellar-core-ts/rest";
+import { RestClient, ToolError } from "@forge/stellar-core-ts/rest";
 import { asDateTime } from "./instant.js";
-import { type ChaosRest, chaosRestFromEnv } from "./chaos-rest.js";
+import { ChaosRest } from "./chaos-rest.js";
 import {
   classifyRefusal,
   mintedOf,
   toDirectCaptureOps,
 } from "./direct-capture.js";
 
-// themis's REST door (openapi-http :8203). Its mTLS door :8201 and the plaintext
-// MCP door :8200 are closed (rest-mesh P7), so the old https://themis:8201
-// default could only fail. Prod sets CALLIOPE_THEMIS_REST_URL and `admit` rides
-// REST; this default only names where an unconfigured dial would look.
+// themis's REST door (openapi-http :8203): where `admit` goes unless
+// CALLIOPE_THEMIS_REST_URL names another base.
 export const DEFAULT_THEMIS_URL = "http://themis:8203";
-// chaos's REST door (openapi-http :8209). Its mTLS door :8207 is closed
-// (rest-mesh P7), so the old https://chaos:8207 default could only fail. Prod
-// sets CALLIOPE_CHAOS_REST_URL and every chaos verb rides REST
-// (CHAOS_MCP_ONLY is empty); this default is what a build without it names.
+// chaos's REST door (openapi-http :8209): where every chaos verb goes unless
+// CALLIOPE_CHAOS_REST_URL names another base.
 const DEFAULT_CHAOS_URL = "http://chaos:8209";
 const TIMEOUT_MS = 30_000;
-/** The author calliope's direct captures carry (its own mTLS/Cilium identity). */
+/** The author calliope's direct captures carry . */
 const DIRECT_AUTHOR = "calliope";
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -378,75 +367,6 @@ export function opRemove(
 }
 
 /**
- * Decode one JSON-RPC response body, in EITHER framing the spec allows.
- *
- * Streamable-HTTP lets a server answer a `tools/call` as plain
- * `application/json` OR as a `text/event-stream` carrying the same JSON-RPC
- * object in a `data:` field, and the client does not get to choose: the
- * protocol REQUIRES the request to advertise both, so a conformant server may
- * legitimately pick either. Bare `resp.json()` therefore only ever worked by
- * luck — the luck being that the Python chaos door always chose JSON.
- *
- * MEASURED 2026-08-14: chaos flipped to the Go door, which answers
- * `text/event-stream`. Bun's `Response.json()` on that body throws
- * `Failed to parse JSON` (the `event: ` prefix at char 0), so every calliope
- * read that traverses chaos died — `read_documents`, `read_plan`,
- * `list_blocks`, `list_by_tag` — while the PG-only reads stayed up, which is
- * what made it look like a store fault rather than a transport one. Narrowing
- * the Accept header was tried first and is NOT available: the door answers
- * `400 Accept must contain both 'application/json' and 'text/event-stream'`.
- * Reading both framings is the only conformant fix, and it belongs here.
- *
- * The Python fleet fixed this in `chaos.client` (shipped as chaos 0.26.3) and
- * athena/urania/mnemosyne were swept with it. Calliope consumes no shared
- * client, so it was missed; this is that same fix, ported verbatim in rule.
- *
- * SSE field rules are followed rather than approximated: an event may carry
- * several `data:` lines which join with newlines, and events are separated by
- * blank lines. The LAST complete event is the response — a server is permitted
- * to emit progress notifications ahead of the result, and taking the first
- * would hand the caller a notification shaped like an answer.
- */
-export function decodeRpcBody(
-  text: string,
-  contentType: string,
-  verb: string,
-): unknown {
-  if (!contentType.toLowerCase().includes("text/event-stream")) {
-    return JSON.parse(text);
-  }
-
-  const events: string[] = [];
-  let current: string[] = [];
-  for (const line of text.split("\n")) {
-    const stripped = line.replace(/\r+$/, "");
-    if (!stripped) {
-      if (current.length > 0) {
-        events.push(current.join("\n"));
-        current = [];
-      }
-      continue;
-    }
-    if (stripped.startsWith("data:")) {
-      current.push(stripped.slice(5).replace(/^[ \t]+/, ""));
-    }
-  }
-  if (current.length > 0) events.push(current.join("\n"));
-
-  // pop() rather than [length - 1]: it narrows to `string | undefined` on its
-  // own, so the emptiness check below is the type guard too — no assertion,
-  // which the lint config forbids in both spellings.
-  const last = events.pop();
-  if (last === undefined) {
-    throw new ChaosClientError(
-      `chaos wire call ${JSON.stringify(verb)}: event-stream body carried ` +
-        `no data: field: ${JSON.stringify(text.slice(0, 200))}`,
-    );
-  }
-  return JSON.parse(last);
-}
-
-/**
  * Shape a `tools/call` result from its TEXT blocks, for a server that sends no
  * `structuredContent` at all.
  *
@@ -490,174 +410,25 @@ export function shapeFromTextBlocks(content: unknown): unknown {
   return texts.map((t) => JSON.parse(t) as unknown);
 }
 
-/**
- * The `{code, detail}` body of an isError result: the text block (JSON, the
- * live door's only carrier) first, then structuredContent. Null when neither
- * holds a code — the caller keeps the raw wire error.
- */
-export function refusalOf(
-  content: unknown,
-  structured: unknown,
-): { code: string; detail: string } | null {
-  const fromObject = (v: unknown): { code: string; detail: string } | null => {
-    if (typeof v !== "object" || v === null) return null;
-    const { code, detail } = v as { code?: unknown; detail?: unknown };
-    return typeof code === "string" ? { code, detail: asStr(detail) } : null;
-  };
-  if (Array.isArray(content)) {
-    for (const block of content as { type?: unknown; text?: unknown }[]) {
-      if (block.type !== "text" || typeof block.text !== "string") continue;
-      try {
-        const hit = fromObject(JSON.parse(block.text));
-        if (hit !== null) return hit;
-      } catch {
-        // not JSON (a bare message): keep looking
-      }
-    }
-  }
-  return fromObject(structured);
-}
-
-/** POST one `tools/call` and unwrap FastMCP's `{result}` envelope. */
-async function rpc(
-  endpoint: string,
-  id: number,
-  verb: string,
-  args: Record<string, unknown>,
-  tls?: TlsFetchOptions,
-): Promise<unknown> {
-  const payload = JSON.stringify({
-    jsonrpc: "2.0",
-    id,
-    method: "tools/call",
-    params: { name: verb, arguments: args },
-  });
-  const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, TIMEOUT_MS);
-  let body: {
-    error?: unknown;
-    result?: {
-      isError?: boolean;
-      content?: unknown;
-      structuredContent?: unknown;
-    };
-  };
-  try {
-    const resp = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-      },
-      body: payload,
-      signal: controller.signal,
-      // bun reads `tls` off the fetch init. Spread rather than passed
-      // unconditionally: a plaintext endpoint must stay a plain fetch, which is
-      // what keeps the CHAOS_URL rollback a one-value change.
-      ...(tls ? { tls } : {}),
-    });
-    body = decodeRpcBody(
-      await resp.text(),
-      resp.headers.get("content-type") ?? "",
-      verb,
-    ) as typeof body;
-  } finally {
-    clearTimeout(timer);
-  }
-  if (body.error !== undefined) {
-    throw new ChaosClientError(`${verb}: ${JSON.stringify(body.error)}`);
-  }
-  const result = body.result;
-  if (result?.isError === true) {
-    // The fleet refusal form is `{code, detail}`; a failed `expect` is the
-    // registered `conflict`, which a caller must tell from a wire fault.
-    // MEASURED against the live door: mcpserve.ErrResult carries the body
-    // in a TEXT block only (structuredContent is skipped on isError), so
-    // the text block is the real source and structuredContent the fallback.
-    const refusal = refusalOf(result.content, result.structuredContent);
-    if (refusal?.code === "conflict") {
-      throw new ChaosClientError(
-        `${verb}: conflict: ${refusal.detail}`,
-        "conflict",
-      );
-    }
-    throw new ChaosClientError(`${verb}: ${JSON.stringify(result.content)}`);
-  }
-  if (result?.structuredContent === undefined) {
-    return shapeFromTextBlocks(result?.content);
-  }
-  const structured = result.structuredContent;
-  if (
-    structured !== null &&
-    typeof structured === "object" &&
-    Object.keys(structured).length === 1 &&
-    "result" in structured
-  ) {
-    return structured.result;
-  }
-  return structured;
-}
-
-/**
- * The star a dial presents calliope's SVID to, or undefined for a plaintext
- * dial. The SCHEME decides: an `http://` URL (the documented rollback) must
- * stay a plain fetch rather than present a certificate to a door that
- * terminates no TLS.
- */
-export function meshPeer(endpoint: string, star: string): string | undefined {
-  return endpoint.startsWith("https:") ? star : undefined;
-}
-
 /** The live dials — themis for writes, chaos for identity reads. */
 export class LiveChaosDial implements ChaosDial {
-  private readonly themis: string;
+  /** themis's REST door: `admit` is `POST /v1/admit`. */
+  private readonly themisRest: RestClient;
   /**
-   * themis's plaintext openapi-http door (rest-mesh P4), when
-   * CALLIOPE_THEMIS_REST_URL names it: `admit` goes there as REST, where
-   * Cilium admits calliope-sa on POST /v1/admit stamped "calliope" (flux
-   * grants-themis). Unset, admit stays MCP on `themis`, so unsetting it is the
-   * rollback. A call restwire cannot carry (RouteError: nothing was sent)
-   * still goes over MCP. Read from the env only when no themisUrl was passed,
-   * as chaosRest is, so a dial built for another themis never inherits it.
+   * chaos's REST door (chaos-rest.ts). Its base is `opts.chaosUrl`, else
+   * CALLIOPE_CHAOS_REST_URL, else {@link DEFAULT_CHAOS_URL}. A dial built for
+   * another chaos (the sidecar's local engine) passes its own and never
+   * inherits the cluster's.
    */
-  private readonly themisRest?: RestClient;
-  private readonly chaos: string;
-  /**
-   * chaos's openapi-http dial (chaos-rest.ts), or undefined: every chaos call
-   * rides /mcp. Read from CALLIOPE_CHAOS_REST_URL only when no chaosUrl was
-   * passed, so a dial built for another chaos (the sidecar's local engine)
-   * never inherits the cluster's flip.
-   */
-  private readonly chaosRest: ChaosRest | undefined;
+  private readonly chaosRest: ChaosRest;
   /**
    * CALLIOPE_DIRECT_CAPTURE=on (or `directCapture: true`): `admit` writes by
    * ONE chaos `capture` as calliope, over {@link chaosRest}, and never calls
-   * themis. Off by default; unsetting it is the rollback. Read from the env
-   * only when neither themisUrl nor chaosUrl was passed (as chaosRest and the
-   * themis REST base are), so a dial built for another engine never inherits
-   * the cluster's flip. Reading it calls nothing: the flag only chooses a
-   * branch inside `admit`.
+   * themis. Off by default. Read from the env only when neither themisUrl nor
+   * chaosUrl was passed, so a dial built for another engine never inherits the
+   * cluster's flip.
    */
   private readonly directCapture: boolean;
-  private id = 0;
-  /**
-   * The workload identity, held for the process's whole life.
-   *
-   * ⚑ HELD, NEVER RE-FETCHED PER CALL — the entire point of the library it
-   * comes from. The retired stellar-boot wrote svid.0.pem ONCE at boot and
-   * nothing rotated it, while the SVID TTL is 24h, so a credential read off disk
-   * is a one-day fuse. `X509Source` subscribes to the agent's streaming feed and
-   * swaps the credential underneath us; `tlsFetchOptions` reads `.current()`
-   * per request, so a rotation is picked up with no restart and no caller
-   * doing anything.
-   *
-   * Lazy and once: the constructor cannot await, and a source per request
-   * would open a Workload API stream per request.
-   */
-  private identity?: Promise<X509Source>;
-
   constructor(opts?: {
     themisUrl?: string;
     chaosUrl?: string;
@@ -665,52 +436,47 @@ export class LiveChaosDial implements ChaosDial {
     themisRestUrl?: string;
     directCapture?: boolean;
   }) {
-    const themisBase = (
-      opts?.themisUrl ??
-      process.env.CALLIOPE_THEMIS_URL ??
-      DEFAULT_THEMIS_URL
-    ).replace(/\/+$/, "");
-    const chaosBase = (
-      opts?.chaosUrl ??
-      process.env.CALLIOPE_CHAOS_URL ??
-      process.env.CHAOS_URL ??
-      DEFAULT_CHAOS_URL
-    ).replace(/\/+$/, "");
-    this.themis = themisBase.endsWith("/mcp")
-      ? themisBase
-      : `${themisBase}/mcp`;
-    this.chaos = chaosBase.endsWith("/mcp") ? chaosBase : `${chaosBase}/mcp`;
+    const base = (url: string | undefined, fallback: string): string => {
+      const v = (url ?? "").trim().replace(/\/+$/, "");
+      return v === "" ? fallback : v;
+    };
     this.chaosRest =
       opts?.chaosRest ??
-      (opts?.chaosUrl === undefined ? chaosRestFromEnv(TIMEOUT_MS) : undefined);
+      new ChaosRest(
+        base(
+          opts?.chaosUrl ??
+            (opts?.themisUrl === undefined
+              ? process.env.CALLIOPE_CHAOS_REST_URL
+              : undefined),
+          DEFAULT_CHAOS_URL,
+        ),
+        TIMEOUT_MS,
+      );
     this.directCapture =
       opts?.directCapture ??
       (opts?.themisUrl === undefined &&
         opts?.chaosUrl === undefined &&
         process.env.CALLIOPE_DIRECT_CAPTURE === "on");
-    const restBase = (
-      opts?.themisRestUrl ??
-      (opts?.themisUrl === undefined
-        ? process.env.CALLIOPE_THEMIS_REST_URL
-        : undefined) ??
-      ""
-    )
-      .trim()
-      .replace(/\/+$/, "");
-    if (restBase !== "") this.themisRest = new RestClient({ base: restBase });
+    this.themisRest = new RestClient({
+      base: base(
+        opts?.themisRestUrl ??
+          opts?.themisUrl ??
+          (opts?.chaosUrl === undefined
+            ? process.env.CALLIOPE_THEMIS_REST_URL
+            : undefined),
+        DEFAULT_THEMIS_URL,
+      ),
+    });
   }
 
   /**
    * One themis `admit` over its REST door, boxed so a null answer is still an
-   * answer; undefined when the dial has none or restwire could not carry the
-   * call (nothing was sent, so MCP may: never after a send). The
-   * star's refusal keeps the MCP path's error shape: a `conflict` is the
+   * answer. The star's refusal keeps its error shape: a `conflict` is the
    * registered conflict, anything else a wire error.
    */
-  private async admitRest(
-    args: Record<string, unknown>,
-  ): Promise<{ raw: unknown } | undefined> {
-    if (this.themisRest === undefined) return undefined;
+  private async admitRest(args: Record<string, unknown>): Promise<{
+    raw: unknown;
+  }> {
     try {
       const reply = await this.themisRest.call("admit", args, {
         signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -731,7 +497,6 @@ export class LiveChaosDial implements ChaosDial {
       }
       return { raw: s };
     } catch (e) {
-      if (e instanceof RouteError) return undefined;
       if (e instanceof ToolError) {
         if (e.code === "conflict") {
           throw new ChaosClientError(
@@ -746,40 +511,15 @@ export class LiveChaosDial implements ChaosDial {
   }
 
   /**
-   * One chaos `tools/call`, over the mesh door when the dial is https.
-   *
-   * Every chaos read goes through here so the TLS decision is made in ONE
-   * place. A call site that dialled `rpc` directly would silently go
-   * unauthenticated and still succeed — chaos serves both doors — and the only
-   * visible difference would be a `caller_class` on chaos's side.
+   * One chaos call on its openapi-http face: a `{result}` envelope unwrapped,
+   * text blocks parsed when no structured body rode, a `conflict` refusal
+   * typed.
    */
   private async chaosRpc(
     verb: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    if (this.chaosRest?.serves(verb) === true) {
-      return this.chaosRestCall(this.chaosRest, verb, args);
-    }
-    return rpc(
-      this.chaos,
-      this.id,
-      verb,
-      args,
-      await this.tls(this.chaos, "chaos"),
-    );
-  }
-
-  /**
-   * One chaos call on its openapi-http face, shaped exactly as {@link rpc}
-   * shapes a `tools/call` result: a `{result}` envelope unwrapped, text blocks
-   * parsed when no structuredContent rode, a `conflict` refusal typed.
-   */
-  private async chaosRestCall(
-    rest: ChaosRest,
-    verb: string,
-    args: Record<string, unknown>,
-  ): Promise<unknown> {
-    const answer = await rest.call(verb, args);
+    const answer = await this.chaosRest.call(verb, args);
     if (!answer.ok) {
       const { code, detail, text } = answer.refusal;
       if (code === "conflict") {
@@ -802,46 +542,18 @@ export class LiveChaosDial implements ChaosDial {
     return structured;
   }
 
-  /**
-   * TLS material for a call to star at endpoint, or undefined when the dial is
-   * plaintext (meshPeer). `authorizeStar(peer)` pins WHO may answer: a peer
-   * presenting any other SPIFFE id fails the handshake — the mesh reads the
-   * SAN rather than trusting the hostname.
-   */
-  private async tls(
-    endpoint: string,
-    star: string,
-  ): Promise<TlsFetchOptions | undefined> {
-    const peer = meshPeer(endpoint, star);
-    if (peer === undefined) return undefined;
-    this.identity ??= X509Source.create();
-    return tlsFetchOptions(await this.identity, authorizeStar(peer));
-  }
-
   async admit(
     ops: ChaosOp[],
     scope: string,
     expect?: ChaosExpect[],
   ): Promise<AdmitResult> {
-    this.id += 1;
     if (this.directCapture) return this.admitDirect(ops, scope, expect);
     // `expect` rides only when stated: an empty list is a plain admit.
     const args: Record<string, unknown> =
       expect !== undefined && expect.length > 0
         ? { ops, scope, expect }
         : { ops, scope };
-    const viaRest = await this.admitRest(args);
-    const raw = (
-      viaRest !== undefined
-        ? viaRest.raw
-        : await rpc(
-            this.themis,
-            this.id,
-            "admit",
-            args,
-            await this.tls(this.themis, "themis"),
-          )
-    ) as {
+    const raw = (await this.admitRest(args)).raw as {
       admitted?: boolean;
       ok?: boolean;
       minted?: unknown[];
@@ -875,13 +587,6 @@ export class LiveChaosDial implements ChaosDial {
     expect?: ChaosExpect[],
   ): Promise<AdmitResult> {
     const rest = this.chaosRest;
-    if (rest === undefined) {
-      throw new ChaosClientError(
-        "capture: CALLIOPE_DIRECT_CAPTURE needs chaos's REST door " +
-          "(CALLIOPE_CHAOS_REST_URL); chaos's /mcp is closed to calliope",
-        "wire_error",
-      );
-    }
     const args: Record<string, unknown> = {
       ops: toDirectCaptureOps(ops, scope),
       author: DIRECT_AUTHOR,
@@ -933,7 +638,6 @@ export class LiveChaosDial implements ChaosDial {
   }
 
   async findByName(kind: string, label: string): Promise<string[]> {
-    this.id += 1;
     const raw = await this.chaosRpc("find_by_name", {
       kind,
       label,
@@ -946,7 +650,6 @@ export class LiveChaosDial implements ChaosDial {
   }
 
   async resolveNodes(tokens: string[]): Promise<Record<string, string>> {
-    this.id += 1;
     const raw = await this.chaosRpc("resolve_nodes", {
       hashes: tokens,
     });
@@ -962,7 +665,6 @@ export class LiveChaosDial implements ChaosDial {
   }
 
   async resolveNodeRefs(tokens: string[]): Promise<Record<string, NodeRefRow>> {
-    this.id += 1;
     const raw = await this.chaosRpc("resolve_node_refs", { tokens });
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return {};
@@ -975,7 +677,6 @@ export class LiveChaosDial implements ChaosDial {
   }
 
   async resolveRefsEcho(refs: string[]): Promise<RefsEcho> {
-    this.id += 1;
     const raw = await this.chaosRpc("resolve_node_refs", {
       tokens: refs,
       missing_ok: true,
@@ -1009,7 +710,6 @@ export class LiveChaosDial implements ChaosDial {
     predicate: string,
     value: string,
   ): Promise<string[]> {
-    this.id += 1;
     const raw = await this.chaosRpc("find_by_value", {
       graph: scope,
       predicate,
@@ -1023,7 +723,6 @@ export class LiveChaosDial implements ChaosDial {
   }
 
   async edges(token: string): Promise<NodeEdge[]> {
-    this.id += 1;
     const raw = (await this.chaosRpc("materialize_edges", {
       node: token,
     })) as {
@@ -1050,7 +749,6 @@ export class LiveChaosDial implements ChaosDial {
   }
 
   async placedEdges(token: string): Promise<PlacedEdge[]> {
-    this.id += 1;
     const raw = (await this.chaosRpc("materialize_edges", {
       node: token,
       full: true,
@@ -1077,7 +775,6 @@ export class LiveChaosDial implements ChaosDial {
   }
 
   async referrers(token: string): Promise<PlacedEdge[]> {
-    this.id += 1;
     const raw = await this.chaosRpc("quads_to", {
       objects: [token],
       full: true,
@@ -1100,7 +797,6 @@ export class LiveChaosDial implements ChaosDial {
   }
 
   async registerGraph(name: string): Promise<void> {
-    this.id += 1;
     await this.chaosRpc("register_graph", {
       graph: name,
       name,
@@ -1114,7 +810,6 @@ export class LiveChaosDial implements ChaosDial {
     predicateNames: string[] | null,
     graph?: string,
   ): Promise<QuadRow[]> {
-    this.id += 1;
     const raw = await this.chaosRpc("quads_from", {
       subjects,
       as_of_tx: asOfTx,
@@ -1139,7 +834,6 @@ export class LiveChaosDial implements ChaosDial {
 
   async resolveScalars(hashes: string[]): Promise<Record<string, string>> {
     if (hashes.length === 0) return {};
-    this.id += 1;
     const raw = (await this.chaosRpc("resolve_scalars", {
       hashes,
     })) as Record<string, unknown> | null;
@@ -1155,7 +849,6 @@ export class LiveChaosDial implements ChaosDial {
     follow: string[],
     graph?: string,
   ): Promise<HistoryEntry[]> {
-    this.id += 1;
     const raw = (await this.chaosRpc("history", {
       subjects,
       follow,
@@ -1177,7 +870,6 @@ export class LiveChaosDial implements ChaosDial {
   }
 
   async heldBlobs(graph?: string): Promise<string[]> {
-    this.id += 1;
     const raw = (await this.chaosRpc("held_blobs", {
       graph: graph ?? null,
     })) as { held?: unknown[] } | null;

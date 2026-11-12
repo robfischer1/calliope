@@ -57,13 +57,9 @@
  *
  * # This is ONE of two guards, and deliberately the weaker one
  *
- * It stops the HTTP leg. It does NOT stop `LiveChaosDial.tls()` reaching
- * `X509Source.create()` on the real Workload API socket, which happens for any
- * `https:` chaos or themis URL before a byte is fetched. The per-file guard — pinning
- * `CALLIOPE_CHAOS_URL`/`CALLIOPE_THEMIS_URL` to a dead `http://` address — is
- * what closes that, and it closes the HTTP leg too. Neither is defeated by a
- * source mutant, which is the property #23 asked for; they are not symmetric,
- * and saying so is better than implying a coverage this file does not have.
+ * The per-file guard — pinning `CALLIOPE_CHAOS_URL`/`CALLIOPE_THEMIS_URL` to a
+ * dead `http://` address — closes the HTTP leg too. Neither is defeated by a
+ * source mutant, which is the property #23 asked for.
  */
 import { afterEach, beforeEach } from "vitest";
 

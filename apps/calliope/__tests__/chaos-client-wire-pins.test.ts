@@ -6,35 +6,16 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ChaosClientError, LiveChaosDial } from "../src/chaos-client.js";
+import { installChaosDoor } from "./helpers/chaos-door.js";
 
 const realFetch = globalThis.fetch;
-let calls: string[] = [];
+let calls: unknown[] = [];
 
 function install(structured: unknown): void {
-  calls = [];
-  globalThis.fetch = ((input: string, init?: RequestInit) => {
-    calls.push(typeof init?.body === "string" ? init.body : "");
-    void input;
-    return Promise.resolve(
-      new Response(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          result: { structuredContent: structured },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
-    );
-  }) as unknown as typeof fetch;
+  calls = installChaosDoor(() => structured).calls;
 }
 
-const ENV_KEYS = [
-  "CALLIOPE_THEMIS_URL",
-  "CALLIOPE_CHAOS_URL",
-  "CHAOS_URL",
-  "CALLIOPE_CHAOS_REST_URL",
-  "CALLIOPE_THEMIS_REST_URL",
-];
+const ENV_KEYS = ["CALLIOPE_CHAOS_REST_URL", "CALLIOPE_THEMIS_REST_URL"];
 const saved: Record<string, string> = {};
 
 beforeEach(() => {
@@ -56,8 +37,8 @@ afterEach(() => {
 
 const dial = (): LiveChaosDial =>
   new LiveChaosDial({
-    themisUrl: "http://themis:8200",
-    chaosUrl: "http://chaos:8206",
+    themisUrl: "http://themis:8203",
+    chaosUrl: "http://chaos:8209",
   });
 
 describe("resolveScalars", () => {

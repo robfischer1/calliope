@@ -6,7 +6,7 @@
  * graph→datom translation) so a body written here is byte-compatible with one
  * written by clotho's store:
  *
- *  - Wire: a `tools/call` JSON-RPC POST to `${URANIA_URL}/mcp`; `capture` takes
+ *  - Wire: REST (`POST /v1/<verb>` on chaos's REST door); `capture` takes
  *    hex-encoded `s/p/o/g` ops plus `{op:"intern", value}` for scalars;
  *    `materialize` returns `{id, attrs:[{p, value, is_node}]}`.
  *  - Hashing (a fixed protocol constant, computed locally — no per-hash round
@@ -30,6 +30,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
+import { RestClient, ToolError } from "@forge/stellar-core-ts/rest";
 import type {
   AuthoredBy,
   UraniaCapture,
@@ -40,7 +41,7 @@ import { HAS_PART, ORDER_KEY, TEXT } from "../urania-client.js";
 
 const HAS_TYPE = "hasType";
 const UNIT = "\x1f"; // urania.store._UNIT — canonical-term field delimiter
-const DEFAULT_URL = "http://chaos:8206";
+const DEFAULT_URL = "http://chaos:8209";
 const TIMEOUT_MS = 30_000;
 
 /** SHA-256 name-hash of a node/predicate IRI (urania contract), as hex. */
@@ -86,7 +87,7 @@ interface UraniaEdge {
   is_node?: boolean;
 }
 
-/** Error from a urania `tools/call` (JSON-RPC error or `isError` result). */
+/** Error from a urania REST call (a star refusal). */
 export class UraniaError extends Error {}
 
 /**
@@ -94,8 +95,7 @@ export class UraniaError extends Error {}
  * translation on top of it. Injected into {@link UraniaBodyClient}.
  */
 export class LiveUraniaCapture implements UraniaCapture {
-  private readonly endpoint: string;
-  private id = 0;
+  private readonly client: RestClient;
 
   constructor(url?: string) {
     const base = (
@@ -104,55 +104,31 @@ export class LiveUraniaCapture implements UraniaCapture {
       process.env.URANIA_URL ??
       DEFAULT_URL
     ).replace(/\/+$/, "");
-    this.endpoint = `${base}/mcp`;
+    this.client = new RestClient({ base });
   }
 
-  /** POST a `tools/call`; unwrap FastMCP's `{result}` envelope. */
+  /** One REST call; unwrap the `{result}` envelope. */
   private async rpc(
     verb: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    this.id += 1;
-    const payload = JSON.stringify({
-      jsonrpc: "2.0",
-      id: this.id,
-      method: "tools/call",
-      params: { name: verb, arguments: args },
-    });
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-    }, TIMEOUT_MS);
-    let body: {
-      error?: unknown;
-      result?: {
-        isError?: boolean;
-        content?: unknown;
-        structuredContent?: unknown;
-      };
-    };
+    let reply;
     try {
-      const resp = await fetch(this.endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-        },
-        body: payload,
-        signal: controller.signal,
+      reply = await this.client.call(verb, args, {
+        signal: AbortSignal.timeout(TIMEOUT_MS),
       });
-      body = (await resp.json()) as typeof body;
-    } finally {
-      clearTimeout(timer);
+    } catch (e) {
+      if (e instanceof ToolError) {
+        throw new UraniaError(`${verb}: ${e.text}`);
+      }
+      throw e;
     }
-    if (body.error !== undefined) {
-      throw new UraniaError(`${verb}: ${JSON.stringify(body.error)}`);
+    let structured: unknown = reply.structured;
+    if (structured === undefined || structured === null) {
+      const [first] = reply.texts;
+      structured =
+        first === undefined ? undefined : (JSON.parse(first) as unknown);
     }
-    const result = body.result;
-    if (result?.isError === true) {
-      throw new UraniaError(`${verb}: ${JSON.stringify(result.content)}`);
-    }
-    const structured = result?.structuredContent;
     if (
       structured !== null &&
       typeof structured === "object" &&

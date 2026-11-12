@@ -46,13 +46,8 @@ const SCOPE = "notes";
 // those run in the cluster — and the sweep's first act is a find_by_value over
 // the live notes graph (infra#9758, the class; stellar-core-ts#23, the fix).
 //
-// `http://`, not `https://`, is load-bearing: LiveChaosDial.tls() reaches
-// X509Source.create() on the real Workload API socket for ANY https chaos URL,
-// before a byte is fetched, and the repo-wide fetch guard in
-// __tests__/setup/offline.ts cannot see that. A plaintext scheme makes tls()
-// return undefined, so this guard closes the socket leg AND the HTTP leg; the
-// setup file is the independent backstop for the second of those. No single
-// mutant defeats both.
+// The repo-wide fetch guard in __tests__/setup/offline.ts is the independent
+// backstop. No single mutant defeats both.
 const DEAD_URL = "http://127.0.0.1:1";
 vi.stubEnv("CALLIOPE_CHAOS_URL", DEAD_URL);
 vi.stubEnv("CHAOS_URL", DEAD_URL);

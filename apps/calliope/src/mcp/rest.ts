@@ -1,34 +1,20 @@
 /**
  * The REST face of calliope: its verbs as OpenAPI 3.1 under `/openapi.json`
- * and `/v1/...`, on the REST door, the star's ONLY listener (REST mesh P7,
- * wonka68-rm39: `soleListener`, no `/mcp`).
- *
- * The server REST dials in process is built by `createServer` with the witness
- * and the PEP armed (the door), so every REST call is witnessed and held to the
- * PEP. A server with no door is refused (`mountWitnessed`), as is a missing or
- * unbindable `STELLAR_REST_PLAINTEXT_PORT`: the star never serves half a door.
+ * and `/v1/...`, served plain on `STELLAR_REST_PLAINTEXT_PORT`, the star's
+ * only listener. A missing or unbindable port refuses the mount.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withSpan } from "@forge/stellar-core-ts";
-import { mountWitnessed } from "@forge/stellar-core-ts/rest";
+import { mountRest } from "@forge/stellar-core-ts/rest";
 import type { RestHandler, RestMount } from "@forge/stellar-core-ts/rest";
-import { actGate } from "../act-gate.js";
-import type { ActGateOptions } from "../act-gate.js";
-import { SOURCE_STAR } from "./consciousness-emit.js";
-import type { Witness } from "./witness.js";
 
 /** What {@link mountRestFace} needs of the process. */
 export interface RestFaceOptions {
   /** Builds a server for REST alone: a server serves one transport at a time. */
   readonly build: () => McpServer;
-  readonly witness: Witness;
   /** Reads the environment. Default: `process.env`. */
   readonly getenv?: ((name: string) => string | undefined) | undefined;
-  /** The act-assertion gate (act-gate.ts); absent mounts the door without it. */
-  readonly act?: ActGateOptions | undefined;
-  /** Wraps OUTSIDE the gate (tests stamp a peer here; production passes none). */
-  readonly outer?: ((next: RestHandler) => RestHandler) | undefined;
 }
 
 /**
@@ -44,15 +30,9 @@ export function spanned(next: RestHandler): RestHandler {
 /** Mount the REST door; rejects (never half-mounts) when the mount is refused. */
 export async function mountRestFace(o: RestFaceOptions): Promise<RestMount> {
   const getenv = o.getenv ?? ((k: string) => process.env[k]);
-  return mountWitnessed(o.build, {
-    star: SOURCE_STAR,
-    log: o.witness.log,
+  return mountRest(o.build, {
     getenv,
     soleListener: true,
-    wrap: (next) => {
-      const gated = o.act === undefined ? next : actGate(o.act)(next);
-      const inner = spanned(gated);
-      return o.outer === undefined ? inner : o.outer(inner);
-    },
+    wrap: spanned,
   });
 }

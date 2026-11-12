@@ -12,8 +12,7 @@
  *
  * Backend: `pg` when `DATABASE_URL` is set (the sovereign store, the production
  * default), else the chaos substrate over `CHAOS_URL`, or the in-memory fixture
- * via `CALLIOPE_MCP_BACKEND=fixture`. On boot, also starts the op-contract
- * heartbeat publisher ({@link startHeartbeat}, from stellar-core-ts).
+ * via `CALLIOPE_MCP_BACKEND=fixture`.
  */
 
 import { argv } from "node:process";
@@ -31,73 +30,18 @@ import { createServer } from "./server.js";
 import type { ServerOptions } from "./server.js";
 import type { ChaosFacet } from "../chaos-client.js";
 import type { TagStore } from "../tag-store.js";
+import { startTelemetry, telemetryConfigFromEnv } from "@forge/stellar-core-ts";
+import type { RequestLog } from "@forge/stellar-core-ts";
 import {
-  startHeartbeat,
-  startTelemetry,
-  telemetryConfigFromEnv,
-} from "@forge/stellar-core-ts";
-import type { HeartbeatOptions, RequestLog } from "@forge/stellar-core-ts";
-import {
-  SOURCE_STAR,
-  consciousnessMetrics,
   makeConsciousnessPublisher,
   type NotePublisher,
 } from "./consciousness-emit.js";
-import { convergeMetrics } from "../converge-witness.js";
 import { FocusRegister, startFocusConsumer } from "../focus-register.js";
 import { makeErosProvider } from "../eros-provider.js";
-import { reservedHeaders } from "@forge/stellar-core-ts/identitycore";
 import { makeWitness } from "./witness.js";
 import type { Witness } from "./witness.js";
-import {
-  loadPep,
-  pepConfigFromEnv,
-  startPepMetrics,
-} from "@forge/stellar-core-ts/pep";
-import type { Pep } from "@forge/stellar-core-ts/pep";
-import type { RestHandler, RestMount } from "@forge/stellar-core-ts/rest";
+import type { RestMount } from "@forge/stellar-core-ts/rest";
 import { mountRestFace } from "./rest.js";
-import { MemoryJtiStore, actConfigFromEnv } from "../act-assertion.js";
-import type { FetchLike } from "../act-assertion.js";
-
-/**
- * How this star beats: its name, and what it can say about itself each beat.
- *
- * The PUBLISHER is the core's since `@forge/stellar-core-ts` 0.12.0 — calliope
- * had hand-rolled the whole thing (`src/mcp/heartbeat.ts`, deleted), and its
- * own module doc called it "the bun-side mirror of the Python stars'
- * `stellar_core.AsyncHeartbeatPublisher`". The loop, the 30s cadence, the
- * process-scoped `boot_id`, the `STELLAR_REVISION` read, the broker and the
- * graceful degradation all live there now. What is left here is the only half
- * that was ever this star's: who it is, and how it is doing.
- *
- * `SOURCE_STAR` rather than a second `"calliope"` literal — it is this star's
- * `star.toml` name, which the consciousness producer already stamps on every
- * event. A heartbeat beating under one name while the consciousness plane
- * carried another would be attributed to two stars, and nothing downstream
- * could tell.
- *
- * `ready: true` unconditionally, which is exactly what this star has always
- * published: the HTTP listener is up by the time the beat starts, and there is
- * no probe behind it that could answer otherwise. A real readiness latch — the
- * store's health, the broker's — is the deferred half of the heartbeat
- * contract, in this star and in the core.
- *
- * Split out of `main()` and exported because `main()` is the bin entry and no
- * test drives it: stated inline there, every one of these decisions would be
- * stated untested.
- */
-export function heartbeatOptions(): HeartbeatOptions {
-  return {
-    star: SOURCE_STAR,
-    // Read PER BEAT, so a counter that moves between beats is reported as it
-    // stands rather than as it was at boot.
-    standing: () => ({
-      ready: true,
-      metrics: { ...consciousnessMetrics(), ...convergeMetrics() },
-    }),
-  };
-}
 
 /** The collaborators a server is built from (the MCP door's and REST's alike). */
 export interface ServerDeps {
@@ -108,7 +52,6 @@ export interface ServerDeps {
   containers?: ContainerFacet | undefined;
   consciousness?: NotePublisher | undefined;
   witness?: RequestLog | undefined;
-  pep?: Pep | undefined;
 }
 
 /** The {@link createServer} options for `deps`: one place, so MCP and REST serve one surface. */
@@ -131,7 +74,6 @@ export function serverOptions(deps: ServerDeps): ServerOptions {
       ? { consciousness: deps.consciousness }
       : {}),
     witness: deps.witness,
-    pep: deps.pep,
   };
 }
 
@@ -142,11 +84,8 @@ export interface ServeOptions extends Omit<ServerDeps, "witness"> {
   readonly client?: BodyClient | undefined;
   /** The witness: its log records every call, and it is closed with the door. */
   readonly witness: Witness;
-  /** Reads the environment (the REST port, the trust mode). Default: `process.env`. */
+  /** Reads the environment (the REST port). Default: `process.env`. */
   readonly getenv?: ((name: string) => string | undefined) | undefined;
-  /** Test seams: the JWKS fetch, and a wrap outside the act gate. */
-  readonly actFetch?: FetchLike | undefined;
-  readonly restOuter?: ((next: RestHandler) => RestHandler) | undefined;
 }
 
 /**
@@ -155,15 +94,8 @@ export interface ServeOptions extends Omit<ServerDeps, "witness"> {
  * loopback listener: every caller reaches calliope on the REST door, and the
  * door answers `/live`, `/ready` and `/metrics` itself. Rejects (nothing
  * served) when the port is unset or cannot be bound, or the server has no door.
- *
- * THE IDENTITY CORE LOADS FIRST, before anything is built. Lazily, a core that
- * cannot load (stellar-core-ts 0.17.0 read its wasm off disk, beside a one-file
- * bundle that does not carry it) took the process down on whichever call typed
- * a peer first, seconds into a pod that had already said "serving". Now boot
- * fails before the star serves, where the build lane's boot smoke sees it.
  */
 export async function serveCalliope(o: ServeOptions): Promise<RestMount> {
-  reservedHeaders();
   // One backend for the server's lifetime; a caller that needs async init (the
   // pg backend) builds and inits the client itself and passes it in. With no
   // client, the FULL backend of `kind`, so the fixture path serves every verb.
@@ -183,28 +115,11 @@ export async function serveCalliope(o: ServeOptions): Promise<RestMount> {
   // Every server carries a register (an empty one answers { focus: null }).
   const focus = o.focus ?? new FocusRegister();
   const body = client;
-  // The act-assertion gate: config from the environment the door reads; the
-  // jti is spent in the sovereign store when there is one (survives restarts
-  // and a rolling update's overlap), in memory otherwise.
-  const env = o.getenv ?? ((k: string) => process.env[k]);
-  const act = {
-    jti: deps.revisions ?? new MemoryJtiStore(),
-    config: actConfigFromEnv({
-      CALLIOPE_ACT_JWKS_URL: env("CALLIOPE_ACT_JWKS_URL"),
-      STELLAR_KAIROS_JWKS_URL: env("STELLAR_KAIROS_JWKS_URL"),
-      CALLIOPE_ACT_ISSUER: env("CALLIOPE_ACT_ISSUER"),
-      CALLIOPE_ACT_TRUST_DOMAIN: env("CALLIOPE_ACT_TRUST_DOMAIN"),
-    }),
-    ...(o.actFetch !== undefined ? { fetch: o.actFetch } : {}),
-  };
   let rest: RestMount;
   try {
     rest = await mountRestFace({
       build: () => createServer(body, serverOptions({ ...deps, focus })),
-      witness: o.witness,
       getenv: o.getenv,
-      act,
-      outer: o.restOuter,
     });
   } catch (err) {
     await o.witness.close();
@@ -230,17 +145,6 @@ async function main(): Promise<void> {
   const telemetryShutdown = await startTelemetry(telemetryConfigFromEnv());
 
   const kind = backendKind();
-  // The endpoint PEP (Constellation Mesh F7): witness by default, enforce on
-  // STELLAR_PEP_MODE=enforce. FAIL-CLOSED BOOT: a missing or unparseable
-  // composed sidecar throws here, before the backend is touched or the door binds, and main's catch
-  // exits non-zero. Nothing is listening yet, so nothing is served unguarded.
-  // stellar_pep_decisions_total rides the OTLP metrics pipeline (a no-op with
-  // no OTEL destination), and STELLAR_PDP_URL arms the policy-plane consult.
-  const pepMetrics = startPepMetrics(SOURCE_STAR);
-  const pep = loadPep({
-    ...pepConfigFromEnv(SOURCE_STAR),
-    onDecision: pepMetrics.record,
-  });
   const backend = await prepareBackend(kind);
   await initBackend(backend);
   // Stream of Consciousness pass 4: ONE producer for the process (the
@@ -266,25 +170,18 @@ async function main(): Promise<void> {
     containers: backend.containers,
     consciousness,
     witness,
-    pep,
   });
   // stderr only — keep stdout clean (parity with the stdio bin's convention).
   process.stderr.write(
     `calliope serving (backend=${kind}) door=${String(rest.plaintextAddress()?.port)}\n`,
   );
 
-  // Publish liveness to the telemetry bus (stellar-core-ts `startHeartbeat`,
-  // the op-contract heartbeat) now that we serve.
-  const heartbeat = startHeartbeat(heartbeatOptions());
-
   const shutdown = (): void => {
-    void heartbeat.stop();
     void focusConsumer.stop();
     // Flush what the batch processor is holding; a SIGTERM'd pod otherwise
     // drops its last window of spans, which is exactly the window that
     // explains why it was terminated.
     void telemetryShutdown();
-    void pepMetrics.shutdown();
     void rest.close().finally(() => {
       process.exit(0);
     });

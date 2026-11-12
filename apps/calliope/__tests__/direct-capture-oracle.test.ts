@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   ChaosClientError,
-  LiveChaosDial,
   opAdd,
   opCreate,
   opRemove,
@@ -228,18 +227,5 @@ describe("migrate-tree carrier fallback under direct capture", () => {
         NODE,
       );
     }).not.toThrow();
-  });
-});
-
-describe("flag on without chaos REST", () => {
-  it("throws a clear config error instead of falling back to themis", async () => {
-    const dial = new LiveChaosDial({
-      themisUrl: "http://themis:8200",
-      chaosUrl: "http://chaos:8209",
-      directCapture: true,
-    });
-    await expect(dial.admit([opCreate("N", "n")], "m")).rejects.toThrow(
-      /CALLIOPE_CHAOS_REST_URL/,
-    );
   });
 });

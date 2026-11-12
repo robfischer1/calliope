@@ -824,7 +824,7 @@ describe("delete_note's published surface", () => {
     await edge(r.dial, other, "x", { toLiteral: "y" });
     expect(await text({ ids: [other] })).toEqual([
       "batch_refused: 1 of 1 id(s) refused; nothing was written " +
-        `(not_a_note: ${other} carries no hasType=Note|DigitalDocument edge)`,
+        `(not_a_note: ${other} carries no hasType=Note|DigitalDocument|Governance edge)`,
     ]);
   });
 });
