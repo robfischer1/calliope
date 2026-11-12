@@ -177,20 +177,6 @@ beforeEach(() => {
         ),
       );
     }
-    if (url.endsWith("/mcp")) {
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            result: {
-              structuredContent: { admitted: true, minted: [], tx: 1 },
-            },
-          }),
-          { status: 200, headers: h },
-        ),
-      );
-    }
     return Promise.resolve(
       new Response(JSON.stringify({ admitted: true, minted: ["m"], tx: 1 }), {
         status: 200,
@@ -251,20 +237,6 @@ describe("flag off — exactly today's behaviour (contract 1)", () => {
     },
   );
 
-  it("without a REST base, admit stays MCP and chaos is never called", async () => {
-    const door = chaosDoor(ok());
-    const dial = new LiveChaosDial(
-      opts({
-        themisUrl: "http://themis:8200",
-        chaosUrl: "http://chaos:8209",
-        chaosRest: door.rest,
-      }),
-    );
-    await dial.admit([opCreate("Note", "n")], "notes");
-    expect(themis.map((t) => t.url)).toEqual(["http://themis:8200/mcp"]);
-    expect(door.seen).toHaveLength(0);
-  });
-
   it.each(["off", "true", "1", "yes", "", "ON"])(
     "env CALLIOPE_DIRECT_CAPTURE=%j does not enable (only the word `on` does)",
     async (v) => {
@@ -300,7 +272,7 @@ describe("flag on — one chaos capture per admit (contract 2)", () => {
     );
     await dial.admit([opCreate("Note", "n")], "notes");
     expect(door.seen).toHaveLength(0);
-    expect(themis.map((t) => t.url)).toEqual(["http://themis:8200/mcp"]);
+    expect(themis.map((t) => t.url)).toEqual(["http://themis:8200/v1/admit"]);
   });
 
   it("posts exactly one /v1/capture {ops, author:'calliope'} and never touches themis", async () => {

@@ -61,7 +61,7 @@ export class UraniaIndexClient implements IndexPusher {
       );
     } catch (e) {
       if (e instanceof ToolError) {
-        throw new Error(`index_document: ${e.text}`);
+        throw new Error(`index_document: ${e.text}`, { cause: e });
       }
       throw e;
     }
