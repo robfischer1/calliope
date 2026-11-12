@@ -6,10 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FixtureBlobStore } from "../src/blob-store.js";
-import {
-  ChaosClientError,
-  LiveChaosDial,
-} from "../src/chaos-client.js";
+import { ChaosClientError, LiveChaosDial } from "../src/chaos-client.js";
 import { writeContainer } from "../src/container-write.js";
 
 const realFetch = globalThis.fetch;

@@ -126,7 +126,8 @@ export class LiveUraniaCapture implements UraniaCapture {
     let structured: unknown = reply.structured;
     if (structured === undefined || structured === null) {
       const [first] = reply.texts;
-      structured = first === undefined ? undefined : (JSON.parse(first) as unknown);
+      structured =
+        first === undefined ? undefined : (JSON.parse(first) as unknown);
     }
     if (
       structured !== null &&
