@@ -31,12 +31,6 @@ import {
   renderEastern,
 } from "./instant.js";
 
-import {
-  X509Source,
-  authorizeStar,
-  tlsFetchOptions,
-  type TlsFetchOptions,
-} from "@forge/stellar-core-ts";
 import { RestClient, RouteError, ToolError } from "@forge/stellar-core-ts/rest";
 import { asDateTime } from "./instant.js";
 import { type ChaosRest, chaosRestFromEnv } from "./chaos-rest.js";
@@ -57,7 +51,7 @@ export const DEFAULT_THEMIS_URL = "http://themis:8203";
 // (CHAOS_MCP_ONLY is empty); this default is what a build without it names.
 const DEFAULT_CHAOS_URL = "http://chaos:8209";
 const TIMEOUT_MS = 30_000;
-/** The author calliope's direct captures carry (its own mTLS/Cilium identity). */
+/** The author calliope's direct captures carry . */
 const DIRECT_AUTHOR = "calliope";
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -524,7 +518,6 @@ async function rpc(
   id: number,
   verb: string,
   args: Record<string, unknown>,
-  tls?: TlsFetchOptions,
 ): Promise<unknown> {
   const payload = JSON.stringify({
     jsonrpc: "2.0",
@@ -553,10 +546,6 @@ async function rpc(
       },
       body: payload,
       signal: controller.signal,
-      // bun reads `tls` off the fetch init. Spread rather than passed
-      // unconditionally: a plaintext endpoint must stay a plain fetch, which is
-      // what keeps the CHAOS_URL rollback a one-value change.
-      ...(tls ? { tls } : {}),
     });
     body = decodeRpcBody(
       await resp.text(),
@@ -600,16 +589,6 @@ async function rpc(
   return structured;
 }
 
-/**
- * The star a dial presents calliope's SVID to, or undefined for a plaintext
- * dial. The SCHEME decides: an `http://` URL (the documented rollback) must
- * stay a plain fetch rather than present a certificate to a door that
- * terminates no TLS.
- */
-export function meshPeer(endpoint: string, star: string): string | undefined {
-  return endpoint.startsWith("https:") ? star : undefined;
-}
-
 /** The live dials — themis for writes, chaos for identity reads. */
 export class LiveChaosDial implements ChaosDial {
   private readonly themis: string;
@@ -642,22 +621,6 @@ export class LiveChaosDial implements ChaosDial {
    */
   private readonly directCapture: boolean;
   private id = 0;
-  /**
-   * The workload identity, held for the process's whole life.
-   *
-   * ⚑ HELD, NEVER RE-FETCHED PER CALL — the entire point of the library it
-   * comes from. The retired stellar-boot wrote svid.0.pem ONCE at boot and
-   * nothing rotated it, while the SVID TTL is 24h, so a credential read off disk
-   * is a one-day fuse. `X509Source` subscribes to the agent's streaming feed and
-   * swaps the credential underneath us; `tlsFetchOptions` reads `.current()`
-   * per request, so a rotation is picked up with no restart and no caller
-   * doing anything.
-   *
-   * Lazy and once: the constructor cannot await, and a source per request
-   * would open a Workload API stream per request.
-   */
-  private identity?: Promise<X509Source>;
-
   constructor(opts?: {
     themisUrl?: string;
     chaosUrl?: string;
@@ -745,14 +708,7 @@ export class LiveChaosDial implements ChaosDial {
     }
   }
 
-  /**
-   * One chaos `tools/call`, over the mesh door when the dial is https.
-   *
-   * Every chaos read goes through here so the TLS decision is made in ONE
-   * place. A call site that dialled `rpc` directly would silently go
-   * unauthenticated and still succeed — chaos serves both doors — and the only
-   * visible difference would be a `caller_class` on chaos's side.
-   */
+  /** One chaos call: REST when the verb is served there, else a plain `tools/call`. */
   private async chaosRpc(
     verb: string,
     args: Record<string, unknown>,
@@ -760,13 +716,7 @@ export class LiveChaosDial implements ChaosDial {
     if (this.chaosRest?.serves(verb) === true) {
       return this.chaosRestCall(this.chaosRest, verb, args);
     }
-    return rpc(
-      this.chaos,
-      this.id,
-      verb,
-      args,
-      await this.tls(this.chaos, "chaos"),
-    );
+    return rpc(this.chaos, this.id, verb, args);
   }
 
   /**
@@ -802,22 +752,6 @@ export class LiveChaosDial implements ChaosDial {
     return structured;
   }
 
-  /**
-   * TLS material for a call to star at endpoint, or undefined when the dial is
-   * plaintext (meshPeer). `authorizeStar(peer)` pins WHO may answer: a peer
-   * presenting any other SPIFFE id fails the handshake — the mesh reads the
-   * SAN rather than trusting the hostname.
-   */
-  private async tls(
-    endpoint: string,
-    star: string,
-  ): Promise<TlsFetchOptions | undefined> {
-    const peer = meshPeer(endpoint, star);
-    if (peer === undefined) return undefined;
-    this.identity ??= X509Source.create();
-    return tlsFetchOptions(await this.identity, authorizeStar(peer));
-  }
-
   async admit(
     ops: ChaosOp[],
     scope: string,
@@ -834,13 +768,7 @@ export class LiveChaosDial implements ChaosDial {
     const raw = (
       viaRest !== undefined
         ? viaRest.raw
-        : await rpc(
-            this.themis,
-            this.id,
-            "admit",
-            args,
-            await this.tls(this.themis, "themis"),
-          )
+        : await rpc(this.themis, this.id, "admit", args)
     ) as {
       admitted?: boolean;
       ok?: boolean;

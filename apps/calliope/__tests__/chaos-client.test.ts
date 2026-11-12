@@ -9,7 +9,6 @@ import {
   NOTE_ROOT_LABEL,
   ensureNotesRoot,
   isNodeToken,
-  meshPeer,
   opAdd,
   opCreate,
 } from "../src/chaos-client.js";
@@ -175,16 +174,7 @@ describe("shapeFromTextBlocks — a door that sends no structuredContent", () =>
   });
 });
 
-describe("meshPeer — the scheme decides whether a dial presents the SVID", () => {
-  it("an https dial names the star its SVID is pinned to", () => {
-    expect(meshPeer("https://themis:8201/mcp", "themis")).toBe("themis");
-    expect(meshPeer("https://chaos:8207/mcp", "chaos")).toBe("chaos");
-  });
-
-  it("an http dial is plain — no certificate to a door without TLS", () => {
-    expect(meshPeer("http://themis:8200/mcp", "themis")).toBeUndefined();
-  });
-
+describe("default dials", () => {
   it("themis is dialled at its REST door by default", () => {
     expect(DEFAULT_THEMIS_URL).toBe("http://themis:8203");
   });

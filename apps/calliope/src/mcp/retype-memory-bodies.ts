@@ -262,9 +262,8 @@ export interface CliDeps extends RetypeDeps {
 }
 
 /**
- * Run main and exit with its outcome. The exit is explicit because the
- * live dial's X509Source holds a Workload API stream open, which would keep
- * the event loop (and the kubectl exec) alive after main settles.
+ * Run main and exit with its outcome. The exit is explicit so open handles
+ * cannot keep the event loop (and the kubectl exec) alive after main settles.
  */
 export async function cli(
   argv: readonly string[] = process.argv,

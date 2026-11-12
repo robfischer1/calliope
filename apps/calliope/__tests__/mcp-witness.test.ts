@@ -6,10 +6,8 @@ import { recordingWitness, serveDoor, toolRecords } from "./rest-door.js";
 
 /**
  * The witness, end to end: a verb called on the SERVED door (the REST door,
- * calliope's only listener since REST mesh P7 rm39) leaves exactly one tool
- * record beside the HTTP door's `rest.<verb>` record, and the spec leaves none.
- * Peer attribution on the REST door is the SDK's (stellar-core-ts
- * rest.attributed / rest.soleequivalence tests).
+ * calliope's only listener) leaves exactly one tool record, and the spec
+ * leaves none.
  */
 
 const closers: (() => Promise<void>)[] = [];
@@ -28,7 +26,7 @@ async function served(): Promise<{
 }
 
 describe("the served door leaves one tool record per call", () => {
-  it("a read-only call leaves exactly one tool record: unidentified, path unknown", async () => {
+  it("a read-only call leaves exactly one tool record", async () => {
     const { base, got } = await served();
     expect((await fetch(`${base}/v1/list_tags`)).status).toBe(200);
     const recs = toolRecords(got);
@@ -36,13 +34,9 @@ describe("the served door leaves one tool record per call", () => {
     expect(recs[0]).toMatchObject({
       star: "calliope",
       verb: "list_tags",
-      caller_class: "unidentified",
-      path: "unknown",
       outcome: "ok",
       transport: "rest",
     });
-    expect(Object.keys(recs[0] ?? {})).not.toContain("caller_identity");
-    expect(got.map((r) => r.verb)).toContain("rest.list_tags");
   });
 
   it("the spec leaves none; two calls leave two", async () => {
@@ -54,14 +48,12 @@ describe("the served door leaves one tool record per call", () => {
     expect(toolRecords(got).map((r) => r.verb)).toEqual(["list_tags", "look"]);
   });
 
-  it("an unknown verb is never dispatched: one HTTP record, unknown_verb", async () => {
+  it("an unknown verb is never dispatched: no record", async () => {
     const { base, got } = await served();
     const res = await fetch(`${base}/v1/no_such_verb`, { method: "POST" });
     expect(res.status).toBe(404);
     expect(toolRecords(got)).toHaveLength(0);
-    expect(got).toMatchObject([
-      { verb: "rest.unknown", outcome: "unknown_verb" },
-    ]);
+    expect(got).toHaveLength(0);
   });
 
   it("the door is the only listener: no /mcp, and the probes answer", async () => {
@@ -120,11 +112,7 @@ describe("makeWitness", () => {
     const spy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     try {
       const w = makeWitness({});
-      w.log.record("calliope_x", {
-        callerClass: "star",
-        callerIdentity: "spiffe://notusmi.com/star/hades",
-        path: "gateway",
-      });
+      w.log.record("calliope_x", { path: "gateway" });
       const lines = spy.mock.calls.map((c) => String(c[0]));
       expect(
         lines.filter((l) => l.includes("no broker configured")),

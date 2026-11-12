@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, describe, expect, it } from "vitest";
 import type { RestRequest } from "@forge/stellar-core-ts/rest";
 import { makeBackend } from "../src/mcp/backend.js";
@@ -8,9 +8,8 @@ import { createServer } from "../src/mcp/server.js";
 import { recordingWitness } from "./rest-door.js";
 
 /**
- * The REST face: the star's only listener (REST mesh P7, rm39). Refused when
- * the server has no door or the REST port is unset; otherwise the same verbs,
- * witnessed.
+ * The REST face: the star's only listener. Refused when the REST port is
+ * unset; otherwise the same verbs.
  */
 
 const closers: (() => Promise<void>)[] = [];
@@ -32,33 +31,15 @@ const doored = (): (() => McpServer) => {
 };
 
 describe("mountRestFace refusal paths", () => {
-  it("refuses the mount when the server has no door", async () => {
-    const { witness } = recordingWitness();
-    await expect(
-      mountRestFace({
-        build: () => {
-          const bare = new McpServer({ name: "x", version: "0" });
-          bare.registerTool("ping", { description: "ping" }, () => ({
-            content: [{ type: "text", text: "pong" }],
-          }));
-          return bare;
-        },
-        witness,
-        getenv: port0,
-      }),
-    ).rejects.toThrow(/mounting REST: .*no door/);
-  });
-
   it("refuses the mount with no REST port: the star never boots doorless", async () => {
-    const { witness } = recordingWitness();
     await expect(
-      mountRestFace({ build: doored(), witness, getenv: () => undefined }),
+      mountRestFace({ build: doored(), getenv: () => undefined }),
     ).rejects.toThrow(/STELLAR_REST_PLAINTEXT_PORT/);
   });
 });
 
 describe("the REST door", () => {
-  it("serves the spec, refuses an unknown verb, and witnesses a real call", async () => {
+  it("serves the spec, refuses an unknown verb, and serves a real call", async () => {
     const { witness, got } = recordingWitness();
     const backend = makeBackend("fixture");
     const rest = await mountRestFace({
@@ -72,7 +53,6 @@ describe("the REST door", () => {
             tags: backend.tags,
           }),
         ),
-      witness,
       getenv: port0,
     });
     closers.push(() => rest.close());
@@ -93,13 +73,11 @@ describe("the REST door", () => {
     expect(unknown.status).toBeGreaterThanOrEqual(400);
     expect(unknown.status).toBeLessThan(500);
 
-    // A real verb is called and recorded by the witness: REST is not a back door.
+    // A real verb is called and recorded by the witness.
     const before = got.length;
     const call = await fetch(`${base}/v1/list_tags`);
     expect(call.status).toBe(200);
-    const verbs = got.slice(before).map((r) => r.verb);
-    expect(verbs).toContain("list_tags");
-    expect(verbs).toContain("rest.list_tags");
+    expect(got.slice(before).map((r) => r.verb)).toContain("list_tags");
 
     // No MCP route beside it.
     expect((await fetch(`${base}/mcp`, { method: "POST" })).status).toBe(404);
