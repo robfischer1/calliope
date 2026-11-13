@@ -288,8 +288,8 @@ describe("endpoints — base URLs", () => {
     await new LiveChaosDial().admit([], "s");
     await new LiveChaosDial().findByName("k", "l");
     expect(calls.map((c) => c.url)).toEqual([
-      "http://themis:8203/v1/admit",
-      "http://chaos:8209/v1/find_by_name",
+      "http://themis/v1/admit",
+      "http://chaos/v1/find_by_name",
       "http://themis-r:8203/v1/admit",
       "http://chaos-r:8209/v1/find_by_name",
     ]);
@@ -317,7 +317,7 @@ describe("endpoints — base URLs", () => {
   it("a blank REST base is no REST base", async () => {
     install(() => envelope({ admitted: true }));
     await new LiveChaosDial({ themisRestUrl: "   " }).admit([], "s");
-    expect(calls.map((c) => c.url)).toEqual(["http://themis:8203/v1/admit"]);
+    expect(calls.map((c) => c.url)).toEqual(["http://themis/v1/admit"]);
   });
 
   it("every trailing slash of a REST base is dropped", async () => {
