@@ -11,7 +11,11 @@
  * the container tree the verb reads stays coherent.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import type { RestMount } from "@forge/stellar-core-ts/rest";
+import {
+  RestClient,
+  SpecCache,
+  type RestMount,
+} from "@forge/stellar-core-ts/rest";
 import { FixtureBlobStore } from "../src/blob-store.js";
 import {
   FixtureChaosDial,
@@ -136,23 +140,30 @@ async function rig() {
   return { base, door, container: minted.minted[0] ?? "" };
 }
 
+/**
+ * One write_container through RestClient, so the request is spelled from the
+ * served document as any caller's is; `headers` rides it via the header hook
+ * (nothing is stamped on this side's async context). 200 when it answered.
+ */
 async function write(
   base: string,
   container: string,
   text: string,
   headers: Record<string, string>,
 ): Promise<number> {
-  const res = await fetch(`${base}/v1/write_container`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify({
-      container,
-      ops: [{ op: "add", text, position: "5" }],
-      tenant: "notes",
-    }),
+  const client = new RestClient({
+    base,
+    specCache: new SpecCache(),
+    headers: (h) => {
+      for (const [k, v] of Object.entries(headers)) h.set(k, v);
+    },
   });
-  await res.text();
-  return res.status;
+  await client.call("write_container", {
+    container,
+    ops: [{ op: "add", text, position: "5" }],
+    tenant: "notes",
+  });
+  return 200;
 }
 
 describe("write_container forwards the request's staircase to chaos", () => {
