@@ -41,7 +41,7 @@ import { HAS_PART, ORDER_KEY, TEXT } from "../urania-client.js";
 
 const HAS_TYPE = "hasType";
 const UNIT = "\x1f"; // urania.store._UNIT — canonical-term field delimiter
-const DEFAULT_URL = "http://chaos:8209";
+const DEFAULT_URL = "http://chaos";
 const TIMEOUT_MS = 30_000;
 
 /** SHA-256 name-hash of a node/predicate IRI (urania contract), as hex. */

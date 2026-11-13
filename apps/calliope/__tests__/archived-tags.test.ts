@@ -41,8 +41,8 @@ const SCOPE = "notes";
 //
 // LiveChaosDial's constructor reads process.env, NOT the `env` object main()
 // was handed, so the `{ DATABASE_URL: "postgres://unused" }` below cannot
-// reach it. Unset, it falls back to `https://chaos:8207` and
-// `http://themis:8200`, which RESOLVE in the gate and mutation lanes because
+// reach it. Unset, it falls back to `http://chaos` and
+// `http://themis`, which RESOLVE in the gate and mutation lanes because
 // those run in the cluster — and the sweep's first act is a find_by_value over
 // the live notes graph (infra#9758, the class; stellar-core-ts#23, the fix).
 //
