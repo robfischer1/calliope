@@ -115,6 +115,6 @@ describe("shapeFromTextBlocks — a door that sends no structuredContent", () =>
 
 describe("default dials", () => {
   it("themis is dialled at its REST door by default", () => {
-    expect(DEFAULT_THEMIS_URL).toBe("http://themis:8203");
+    expect(DEFAULT_THEMIS_URL).toBe("http://themis");
   });
 });

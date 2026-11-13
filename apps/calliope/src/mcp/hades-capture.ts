@@ -50,7 +50,7 @@ import type {
 } from "../urania-client.js";
 import { HAS_PART, ORDER_KEY, TEXT } from "../urania-client.js";
 
-const DEFAULT_CHARON_URL = "http://charon:8300";
+const DEFAULT_CHARON_URL = "http://charon";
 const TIMEOUT_MS = 30_000;
 
 /** The shape of the POST body sent to Charon /api/body. */

@@ -3,7 +3,7 @@
  *
  * The prose tenant's east-west dials onto the constellation's graph plane:
  *
- *  - **themis** (`CALLIOPE_THEMIS_REST_URL`, default `http://themis:8203`) —
+ *  - **themis** (`CALLIOPE_THEMIS_REST_URL`, default `http://themis`) —
  *    the gated write. `admit(ops, scope)` runs permit → capture; a refused
  *    batch surfaces its violations verbatim. The op grammar mirrors athena's
  *    `court.py` (the proven litigant): `{op:"createNode", kind, label}` ·
@@ -11,7 +11,7 @@
  *    intra-batch refs exist on the wire** — a mint-then-link is two `admit`
  *    calls; the minted tokens cross back in `minted[]`.
  *
- *  - **chaos** (`CALLIOPE_CHAOS_REST_URL`, default `http://chaos:8209`) — the
+ *  - **chaos** (`CALLIOPE_CHAOS_REST_URL`, default `http://chaos`) — the
  *    identity reads. `findByName(kind, label)` is the documented F2 reuse
  *    lookup (`createNode` never dedups; a caller wanting reuse-not-create
  *    looks the name up first); `resolveNodes(tokens)` is the existence oracle
@@ -39,12 +39,12 @@ import {
   toDirectCaptureOps,
 } from "./direct-capture.js";
 
-// themis's REST door (openapi-http :8203): where `admit` goes unless
+// themis's REST door (port 80): where `admit` goes unless
 // CALLIOPE_THEMIS_REST_URL names another base.
-export const DEFAULT_THEMIS_URL = "http://themis:8203";
-// chaos's REST door (openapi-http :8209): where every chaos verb goes unless
+export const DEFAULT_THEMIS_URL = "http://themis";
+// chaos's REST door (port 80): where every chaos verb goes unless
 // CALLIOPE_CHAOS_REST_URL names another base.
-const DEFAULT_CHAOS_URL = "http://chaos:8209";
+const DEFAULT_CHAOS_URL = "http://chaos";
 const TIMEOUT_MS = 30_000;
 /** The author calliope's direct captures carry . */
 const DIRECT_AUTHOR = "calliope";

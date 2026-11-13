@@ -70,7 +70,7 @@ describe("hadesEnabled / charonUrl", () => {
   });
 
   it("charonUrl falls back to default when CHARON_URL is absent", () => {
-    expect(charonUrl({})).toBe("http://charon:8300");
+    expect(charonUrl({})).toBe("http://charon");
   });
 });
 

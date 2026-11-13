@@ -2,7 +2,7 @@
  * The pg backend's search arm (Findability F4) — Eros as a shape, routed,
  * never rebuilt: `search(query, scope)` on a store-backed server calls
  * eros's `search` verb over its openapi-http face (POST /v1/search on the
- * plaintext REST door, `CALLIOPE_EROS_URL` e.g. `http://eros:8203`; the mesh
+ * plaintext REST door, `CALLIOPE_EROS_URL` e.g. `http://eros`; the mesh
  * proxy stamps `X-Forge-Peer: calliope` and grants-eros admits /v1/<verb>
  * only — eros's /mcp is not reachable in the mesh) with a source filter
  * pinning the dissolved-notes source, and maps the answer into the ruled
