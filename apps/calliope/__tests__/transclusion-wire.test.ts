@@ -97,7 +97,7 @@ async function rig() {
    *  way for the placement, so the container reads as the placement alone. */
   const place = async (container: string, origin: string) => {
     const [born] = await blocks(container);
-    if (born !== undefined && born.text === "") {
+    if (born?.text === "") {
       const gone = await write(container, [
         {
           op: "remove",

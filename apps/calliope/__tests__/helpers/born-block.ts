@@ -28,7 +28,7 @@ export async function fillOps(
         { blocks: { slot: string; blobId: string; text: string }[] } | undefined
     )?.blocks ?? [];
   const born = blocks.length === 1 ? blocks[0] : undefined;
-  if (born !== undefined && born.text === "") {
+  if (born?.text === "") {
     return [{ op: "update", slot: born.slot, oldBlobId: born.blobId, text }];
   }
   return [{ op: "add", text, position }];
