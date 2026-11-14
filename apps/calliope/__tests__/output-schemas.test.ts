@@ -7,7 +7,7 @@
  * schema that drifts from an answer fails here, not on the gateway.
  */
 import { readdirSync, readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -41,8 +41,10 @@ const VERBS = [
   "revision_deltas",
   "search",
   "set_properties",
+  "tag_seed_read",
   "unpin",
   "write_container",
+  "writing_deltas_ingest",
 ] as const;
 
 const SCHEMA_DIR = new URL("../src/mcp/output-schema/", import.meta.url);
@@ -111,6 +113,7 @@ async function rig(): Promise<Client> {
     tags: new FixtureTagStore(),
     revisions,
     focus,
+    telemetry: { send: () => Promise.resolve() },
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const mcp = new Client({ name: "test", version: "0" });
@@ -221,6 +224,22 @@ describe("F17 batch 2a — calliope's output schemas", () => {
     await run("file_revisions", {});
     await run("revision_deltas", { revision_id: 1 });
     await run("blob_census", {});
+
+    vi.stubEnv("AGLAIA_TAG_SEED", "schema=red:star");
+    await run("tag_seed_read", {});
+    vi.unstubAllEnvs();
+    const ingested = await run("writing_deltas_ingest", {
+      events: [
+        {
+          v: 1,
+          type: "doc-change",
+          ts: "2026-10-07T00:00:00Z",
+          nodeId: "n1",
+          eventId: "e1",
+        },
+      ],
+    });
+    expect(ingested.accepted).toBe(1);
 
     const looked = await run("look", {});
     expect(looked.pins).toHaveLength(1);

@@ -40,6 +40,8 @@ import {
 } from "./tools.js";
 import { dissolveContainer } from "../notes-sink.js";
 import { registerDeleteVerbs } from "./delete-verbs.js";
+import { registerAglaiaVerbs } from "./aglaia-verbs.js";
+import type { TelemetryProducerLike } from "../aglaia-ingest.js";
 import { suppressedNotes, visible } from "../note-suppress.js";
 import {
   frontmatterOf,
@@ -192,6 +194,10 @@ export interface ServerOptions {
    *  leaves one request record. Installed on the dispatcher before any tool
    *  registers, so a verb added later is covered by construction. */
   witness?: RequestLog | undefined;
+  /** aglaia's telemetry producer (Charon parity row 19). When present, the
+   *  server registers `writing_deltas_ingest`; `tag_seed_read` registers on
+   *  every server. One producer per process, never per request. */
+  telemetry?: TelemetryProducerLike | undefined;
 }
 
 /** Build a configured MCP server bound to `client`, ready to `connect()`. */
@@ -2088,6 +2094,8 @@ export function createServer(
       },
     );
   }
+
+  registerAglaiaVerbs(server, options?.telemetry);
 
   return server;
 }
