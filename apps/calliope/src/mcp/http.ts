@@ -42,6 +42,8 @@ import { makeWitness } from "./witness.js";
 import type { Witness } from "./witness.js";
 import type { RestMount } from "@forge/stellar-core-ts/rest";
 import { mountRestFace } from "./rest.js";
+import { createTelemetryProducer } from "../aglaia-ingest.js";
+import type { TelemetryProducerLike } from "../aglaia-ingest.js";
 import { MemoryJtiStore, actConfigFromEnv } from "../act-assertion.js";
 import type { FetchLike } from "../act-assertion.js";
 
@@ -54,6 +56,7 @@ export interface ServerDeps {
   containers?: ContainerFacet | undefined;
   consciousness?: NotePublisher | undefined;
   witness?: RequestLog | undefined;
+  telemetry?: TelemetryProducerLike | undefined;
 }
 
 /** The {@link createServer} options for `deps`: one place, so MCP and REST serve one surface. */
@@ -76,6 +79,7 @@ export function serverOptions(deps: ServerDeps): ServerOptions {
       ? { consciousness: deps.consciousness }
       : {}),
     witness: deps.witness,
+    ...(deps.telemetry !== undefined ? { telemetry: deps.telemetry } : {}),
   };
 }
 
@@ -189,6 +193,8 @@ async function main(): Promise<void> {
     containers: backend.containers,
     consciousness,
     witness,
+    // Charon parity row 19: ONE producer for the process, lazily dialled.
+    telemetry: createTelemetryProducer(),
   });
   // stderr only — keep stdout clean (parity with the stdio bin's convention).
   process.stderr.write(

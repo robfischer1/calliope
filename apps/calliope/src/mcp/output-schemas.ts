@@ -29,8 +29,10 @@ import restore_note from "./output-schema/restore_note.schema.json" with { type:
 import revision_deltas from "./output-schema/revision_deltas.schema.json" with { type: "json" };
 import search from "./output-schema/search.schema.json" with { type: "json" };
 import set_properties from "./output-schema/set_properties.schema.json" with { type: "json" };
+import tag_seed_read from "./output-schema/tag_seed_read.schema.json" with { type: "json" };
 import unpin from "./output-schema/unpin.schema.json" with { type: "json" };
 import write_container from "./output-schema/write_container.schema.json" with { type: "json" };
+import writing_deltas_ingest from "./output-schema/writing_deltas_ingest.schema.json" with { type: "json" };
 
 const DOCUMENTS = {
   blob_census,
@@ -52,8 +54,10 @@ const DOCUMENTS = {
   revision_deltas,
   search,
   set_properties,
+  tag_seed_read,
   unpin,
   write_container,
+  writing_deltas_ingest,
 } as const;
 
 /** A verb with a published output schema, by the name calliope registers it under. */

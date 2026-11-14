@@ -73,6 +73,7 @@ async function world() {
     tags,
     revisions,
     focus,
+    telemetry: { send: () => Promise.resolve() },
   });
   return { server, note, body };
 }
@@ -268,6 +269,20 @@ const CASES: Record<string, Case> = {
     vocab: { tenant: TENANTS },
   },
   blob_census: { valid: {}, alternates: [{ execute: true }] },
+  tag_seed_read: { valid: {} },
+  writing_deltas_ingest: {
+    valid: {
+      events: [
+        {
+          v: 1,
+          type: "doc-change",
+          ts: "2026-10-07T00:00:00Z",
+          nodeId: "n1",
+          eventId: "e1",
+        },
+      ],
+    },
+  },
 };
 
 describe("dispatch 283 — calliope's typed input schemas", () => {

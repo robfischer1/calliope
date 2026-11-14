@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_tag_seed_read/v1",
+  "title": "calliope_tag_seed_read — the answer",
+  "description": "aglaia's tag-style seed. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml.",
+  "type": "object",
+  "properties": {
+    "tag_styles": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "tag_styles"
+  ]
+}

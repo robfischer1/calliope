@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_writing_deltas_ingest/v1",
+  "title": "calliope_writing_deltas_ingest — the answer",
+  "description": "The batch the broker took, one message per event. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml.",
+  "type": "object",
+  "properties": {
+    "accepted": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "topic": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "accepted",
+    "topic"
+  ]
+}
