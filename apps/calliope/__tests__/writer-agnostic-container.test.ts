@@ -22,6 +22,7 @@ import { FixtureChaosDial } from "../src/chaos-client.js";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { createServer } from "../src/mcp/server.js";
 import { FixtureTagStore } from "../src/tag-store.js";
+import { fillOps } from "./helpers/born-block.js";
 
 async function rig(): Promise<Client> {
   const dial = new FixtureChaosDial();
@@ -58,7 +59,7 @@ describe("a non-note writer's container (pass 4 F3)", () => {
       name: "write_container",
       arguments: {
         container: node_id,
-        ops: [{ op: "add", text: MEMORY_BODY, position: "5" }],
+        ops: await fillOps(mcp, node_id, MEMORY_BODY, "5"),
       },
     });
     expect(written.isError).toBeFalsy();
@@ -119,7 +120,7 @@ describe("a non-note writer's container (pass 4 F3)", () => {
       name: "write_container",
       arguments: {
         container: a.node_id,
-        ops: [{ op: "add", text: "v1", position: "5" }],
+        ops: await fillOps(mcp, a.node_id, "v1", "5"),
       },
     });
     const before = (

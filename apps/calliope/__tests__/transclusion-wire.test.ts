@@ -80,14 +80,34 @@ async function rig() {
         blocks: Block[];
       }
     ).blocks;
-  /** A note with one block; answers [note, slot]. */
+  /** A note holding one block of `text`; answers [note, slot]. A new note is
+   *  born with one empty block, so this writes INTO it (as real writers do)
+   *  and the origin's slot is the born block's. */
   const withBlock = async (title: string, text: string) => {
     const n = await note(title);
-    const w = await write(n, [{ op: "add", text, position: "a0" }]);
-    const minted = (w.ok as { minted: Record<string, string> }).minted;
-    return [n, minted["0"] ?? ""] as const;
+    const [born] = await blocks(n);
+    if (born === undefined) throw new Error("a new note has its born block");
+    const w = await write(n, [
+      { op: "update", slot: born.slot, oldBlobId: born.blobId, text },
+    ]);
+    expect(w.error).toBeUndefined();
+    return [n, born.slot] as const;
   };
+  /** Place `origin` in `container`'s only block: the born empty block makes
+   *  way for the placement, so the container reads as the placement alone. */
   const place = async (container: string, origin: string) => {
+    const [born] = await blocks(container);
+    if (born !== undefined && born.text === "") {
+      const gone = await write(container, [
+        {
+          op: "remove",
+          slot: born.slot,
+          position: born.position,
+          blobId: born.blobId,
+        },
+      ]);
+      expect(gone.error).toBeUndefined();
+    }
     const w = await write(container, [
       { op: "add", ref: origin, position: "b0" },
     ]);

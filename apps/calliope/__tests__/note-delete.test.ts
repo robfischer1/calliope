@@ -28,6 +28,7 @@ import {
   isDeleteNotesError,
 } from "../src/note-delete.js";
 import { FixtureTagStore } from "../src/tag-store.js";
+import { fillOps } from "./helpers/born-block.js";
 
 const SCOPE = "notes";
 
@@ -66,10 +67,12 @@ async function note(
   return (res.structuredContent as { node_id: string }).node_id;
 }
 
+/** Puts `text` in the note: into its born empty block while it has one (as
+ *  real writers do), else as a further block. */
 async function addBlock(mcp: Client, container: string, text: string) {
   const res = await mcp.callTool({
     name: "write_container",
-    arguments: { container, ops: [{ op: "add", text, position: "a0" }] },
+    arguments: { container, ops: await fillOps(mcp, container, text) },
   });
   expect(res.isError).toBeFalsy();
 }
@@ -295,9 +298,12 @@ describe("delete_note — the verb", () => {
     expect(out.notes[0]?.blocks).toBe(0);
     expect(out.notes[0]?.shared_blocks).toBe(1);
     expect(out.notes[0]?.blobs).toEqual([]);
-    expect(await blocks(r.mcp, b)).toEqual([
-      expect.objectContaining({ slot: s.slot, text: "shared slot" }),
-    ]);
+    // B keeps its own born empty block beside the slot A shared into it.
+    expect(await blocks(r.mcp, b)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ slot: s.slot, text: "shared slot" }),
+      ]),
+    );
   });
 
   it("a batch deletes several notes, a parent with its child included", async () => {
@@ -652,7 +658,9 @@ describe("delete_note — the edges of each rule", () => {
 
   it("reports blob ids in numeric order", async () => {
     const r = await rig();
-    for (let i = 0; i < 8; i += 1) await r.blobs.mint(`burn ${String(i)}`);
+    // 7 burned blobs, then the shared empty born blob (8) minted by the
+    // first create_note, so the texts below land on 9 and 10.
+    for (let i = 0; i < 7; i += 1) await r.blobs.mint(`burn ${String(i)}`);
     const other = await note(r.mcp, "Other");
     await addBlock(r.mcp, other, "nine"); // blob 9
     const a = await note(r.mcp, "A");

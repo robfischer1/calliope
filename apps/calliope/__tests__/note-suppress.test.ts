@@ -37,6 +37,7 @@ import {
 import type { SearchProvider } from "../src/search-types.js";
 import { FixtureTagStore } from "../src/tag-store.js";
 import type { BodyPointer } from "../src/types.js";
+import { fillOps } from "./helpers/born-block.js";
 
 const SCOPE = "notes";
 
@@ -217,7 +218,7 @@ describe("delete_note (default: suppress) hides a note from every listing", () =
     const a = await note(r.mcp, "A");
     const wrote = await call(r.mcp, "write_container", {
       container: a,
-      ops: [{ op: "add", text: "kept prose", position: "a0" }],
+      ops: await fillOps(r.mcp, a, "kept prose"),
     });
     expect(wrote.isError).toBe(false);
     await suppress(r.mcp, [a]);
@@ -385,8 +386,9 @@ describe("purge still retracts", () => {
       dry_run: false,
     });
     expect(res.isError).toBe(false);
+    // The 1 block is the note's born empty block (create_note mints one).
     expect(res.text).toBe(
-      "purged 1 note(s), 0 not found, 0 block(s), 1 tag row(s).",
+      "purged 1 note(s), 0 not found, 1 block(s), 1 tag row(s).",
     );
     expect(await r.dial.edges(a)).toEqual([]);
     const back = await restore(r.mcp, [a]);

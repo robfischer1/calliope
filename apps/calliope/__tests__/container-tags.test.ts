@@ -19,6 +19,7 @@ import { FixtureChaosDial, opAdd, opCreate } from "../src/chaos-client.js";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { createServer } from "../src/mcp/server.js";
 import { FixtureTagStore } from "../src/tag-store.js";
+import { fillOps } from "./helpers/born-block.js";
 
 class DroppedTableClient extends FixtureBodyClient {
   override readBody(): Promise<never> {
@@ -77,7 +78,7 @@ async function add(
     name: "write_container",
     arguments: {
       container,
-      ops: [{ op: "add", text, position: "a0" }],
+      ops: await fillOps(mcp, container, text),
       ...(tenant !== undefined ? { tenant } : {}),
     },
   });
@@ -296,7 +297,6 @@ describe("write_container runs the inline-tag reconcile", () => {
   it("a failure that is not the gate's propagates as a tool error, unshaped", async () => {
     const dial = new FixtureChaosDial();
     const blobs = new FixtureBlobStore();
-    blobs.mint = () => Promise.reject(new Error("blob store down"));
     const server = createServer(new DroppedTableClient(), {
       chaos: { dial, scope: "notes" },
       containers: { blobs, dial },
@@ -306,6 +306,8 @@ describe("write_container runs the inline-tag reconcile", () => {
     const mcp = new Client({ name: "test", version: "0" });
     await Promise.all([server.connect(st), mcp.connect(ct)]);
     const n = await note(mcp, "Blobless");
+    // create_note births its block through the store: break it after.
+    blobs.mint = () => Promise.reject(new Error("blob store down"));
     const res = await mcp.callTool({
       name: "write_container",
       arguments: {

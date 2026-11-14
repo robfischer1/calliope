@@ -18,6 +18,7 @@ import type {
 } from "../src/mcp/consciousness-emit.js";
 import { createServer } from "../src/mcp/server.js";
 import { FixtureTagStore } from "../src/tag-store.js";
+import { fillOps } from "./helpers/born-block.js";
 
 class RecordingPublisher implements NotePublisher {
   published: NoteProjection[] = [];
@@ -167,12 +168,13 @@ describe("the write verbs publish the note (pass 4)", () => {
     });
     expect(minted.isError).toBeFalsy();
     const node = (minted.structuredContent as { node_id: string }).node_id;
-    expect(publisher.published).toHaveLength(0); // an empty container: nothing to index
+    expect(publisher.published).toHaveLength(0); // one empty block: nothing to index
+    // mnemosyne updates the lone born block (block 0); it never adds a second.
     const written = await mcp.callTool({
       name: "write_container",
       arguments: {
         container: node,
-        ops: [{ op: "add", text: "the memory's prose", position: "a0" }],
+        ops: await fillOps(mcp, node, "the memory's prose"),
       },
     });
     expect(written.isError).toBeFalsy();
