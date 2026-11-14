@@ -394,10 +394,11 @@ describe("act gate: the waypoint's verified assertion claims", () => {
       extra: claims("calliope_write_container", args, "2".repeat(32)),
     });
     expect(act.status).toBe(403);
-    const partial: Record<string, string> = {
-      ...claims("calliope_create_note", args, "3".repeat(32)),
-    };
-    delete partial[HEADER_ASSERTION_AZP];
+    const partial = Object.fromEntries(
+      Object.entries(
+        claims("calliope_create_note", args, "3".repeat(32)),
+      ).filter(([k]) => k !== HEADER_ASSERTION_AZP),
+    );
     const missing = await call("create_note", args, {
       token: false,
       extra: partial,
