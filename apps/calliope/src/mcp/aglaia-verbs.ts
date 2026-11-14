@@ -53,7 +53,11 @@ export function registerAglaiaVerbs(
     "tag_seed_read",
     {
       outputSchema: outputSchemaOf("tag_seed_read"),
-      annotations: { readOnlyHint: true, idempotentHint: true },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
       title: "aglaia's tag-style seed",
       description:
         "The tag_styles list (tag=hue:icon) a browser merges under the " +

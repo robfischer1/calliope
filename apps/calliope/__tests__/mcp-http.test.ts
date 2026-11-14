@@ -71,6 +71,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       "revision_deltas", // stays [Rob, F12] — frozen archive, read-only
       "search", // Findability F2 — licensed by its Exposes row `search(query, scope)`
       "set_properties", // a note's frontmatter as graph edges
+      "tag_seed_read", // Charon parity row 20 — aglaia's tag-style seed
       "unpin",
       "write_container", // F4 — the ONE write path since the F12 cut
     ]);
@@ -95,6 +96,7 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       copy_reference: [true, false, true],
       look: [true, false, true],
       search: [true, false, true], // Findability F2 — read-only, idempotent
+      tag_seed_read: [true, false, true], // Charon parity row 20 — env read
 
       unpin: [false, true, true],
       // idempotent writes (no-op convergence tested in their own suites)
