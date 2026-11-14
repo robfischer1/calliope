@@ -5,6 +5,13 @@ import { argsDigest } from "../src/args-digest.js";
 import { ACT_ASSERTION_HEADER } from "../src/act-assertion.js";
 import type { FetchLike } from "../src/act-assertion.js";
 import { xfccService } from "../src/caller-author.js";
+import {
+  HEADER_ASSERTION_ACT,
+  HEADER_ASSERTION_ARGS,
+  HEADER_ASSERTION_AZP,
+  HEADER_ASSERTION_JTI,
+  assertionArgsSha256,
+} from "../src/waypoint-assertion.js";
 import { recordingWitness, serveDoor } from "./rest-door.js";
 import { TD, mint, okFetch } from "./act-fixtures.js";
 
@@ -318,5 +325,116 @@ describe("xfccService", () => {
     ]) {
       expect(xfccService(bag(v))).toBe("");
     }
+  });
+});
+
+describe("act gate: the waypoint's verified assertion claims", () => {
+  const CHARON_XFCC = "URI=spiffe://cluster.local/ns/prime/sa/charon-sa";
+  const JTI = "00112233445566778899aabbccddeeff";
+  const claims = (
+    act: string,
+    args: Record<string, unknown>,
+    jti = JTI,
+  ): Record<string, string> => ({
+    "x-forwarded-client-cert": CHARON_XFCC,
+    [HEADER_ASSERTION_ACT]: act,
+    [HEADER_ASSERTION_JTI]: jti,
+    [HEADER_ASSERTION_ARGS]: assertionArgsSha256(act, args),
+    [HEADER_ASSERTION_AZP]: `spiffe://${TD}/human/robfischer1`,
+  });
+
+  it("digests the tool over its canonical arguments, as Kairos binds an approval", () => {
+    expect(assertionArgsSha256("calliope_create_note", { title: "W" })).toBe(
+      "0fd22484a77e818aa26544528ab6300cd35df275f7f5512b5c0d36e14c043537",
+    );
+  });
+
+  it("runs a write whose claims match, as the human they name", async () => {
+    const { call, rows } = await door();
+    const args = { title: "W" };
+    const r = await call("create_note", args, {
+      token: false,
+      extra: claims("calliope_create_note", args),
+    });
+    expect(r.status, r.text).toBe(200);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.authored_by).toBe("human/robfischer1");
+      expect(row.via).toBe("spiffe://cluster.local/ns/prime/sa/charon-sa");
+      expect(row.jti).toBe(JTI);
+    }
+  });
+
+  it("refuses a spent jti, other arguments, another act and a missing claim", async () => {
+    const { call, rows } = await door();
+    const args = { title: "S" };
+    const good = claims("calliope_create_note", args);
+    expect(
+      (await call("create_note", args, { token: false, extra: good })).status,
+    ).toBe(200);
+    const n = rows.length;
+    const replay = await call("create_note", args, {
+      token: false,
+      extra: good,
+    });
+    expect(replay.status).toBe(401);
+    expect(replay.text).toContain("act_assertion_replayed");
+    const other = await call(
+      "create_note",
+      { title: "S2" },
+      {
+        token: false,
+        extra: claims("calliope_create_note", args, "1".repeat(32)),
+      },
+    );
+    expect(other.status).toBe(401);
+    expect(other.text).toContain("args do not match");
+    const act = await call("create_note", args, {
+      token: false,
+      extra: claims("calliope_write_container", args, "2".repeat(32)),
+    });
+    expect(act.status).toBe(403);
+    const partial: Record<string, string> = {
+      ...claims("calliope_create_note", args, "3".repeat(32)),
+    };
+    delete partial[HEADER_ASSERTION_AZP];
+    const missing = await call("create_note", args, {
+      token: false,
+      extra: partial,
+    });
+    expect(missing.status).toBe(401);
+    expect(rows).toHaveLength(n);
+  });
+
+  it("refuses claims beside a legacy assertion header, and on a read verb", async () => {
+    const { call, rows } = await door();
+    const args = { title: "L" };
+    const both = await call("create_note", args, {
+      extra: claims("calliope_create_note", args, "4".repeat(32)),
+    });
+    expect(both.status).toBe(401);
+    const read = await call(
+      "list_tags",
+      {},
+      {
+        token: false,
+        extra: claims("calliope_list_tags", {}, "5".repeat(32)),
+      },
+    );
+    expect(read.status).toBe(403);
+    expect(rows).toHaveLength(0);
+  });
+
+  it("injects dry_run:false for the /live path before the digest", async () => {
+    const { call } = await door();
+    const made = await call("create_note", { title: "D" }, { token: false });
+    const id = hex(made.text, "node_id");
+    expect(id).not.toBe("");
+    const args = { ids: [id], dry_run: false };
+    const r = await call("delete_note", args, {
+      token: false,
+      extra: claims("calliope_delete_note", args, "6".repeat(32)),
+    });
+    expect(r.status, r.text).toBe(200);
   });
 });
