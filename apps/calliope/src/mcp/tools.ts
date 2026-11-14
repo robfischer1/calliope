@@ -35,6 +35,8 @@ import {
   opRemove,
 } from "../chaos-client.js";
 import { literalTarget } from "../instant.js";
+import type { ProseStore } from "../blob-store.js";
+import { slotBirthOps } from "../tree.js";
 import {
   computeTagDelta,
   extractInlineTags,
@@ -314,6 +316,10 @@ export function isCreateNoteError(
 /** The kind + type label a minted note carries. */
 export const NOTE_KIND = "Note";
 
+/** Where a new note's one block sits, and its batch-local mint label. */
+export const BORN_BLOCK_POSITION = "a0";
+const BORN_BLOCK_LABEL = "b:a0";
+
 /**
  * create_note(title, parent?, tags?, type?) -> { node_id, created } — the
  * C8 mint.
@@ -328,8 +334,13 @@ export const NOTE_KIND = "Note";
  * node by its batch-local label) on the notes scope. A parentless note parents to the ensured "Notes" root —
  * orphan-safety
  * regardless of caller. `tags` is validated and otherwise inert (C9 wires the
- * `hasTag` write). No section rows mint — the body is the node's (empty)
- * section set, readable immediately; first write attaches sections.
+ * `hasTag` write).
+ *
+ * A note is a container of one block by default (Rob's ruling; splitting and
+ * merging blocks is a deliberate act). Given `blobs`, the mint batch births
+ * that block too, empty, at position `a0`: the note and its block land in one
+ * transaction, so no note is ever readable with nowhere to type. A reused
+ * note is never given a block here; its writers own its body.
  */
 export async function createNote(
   dial: ChaosDial,
@@ -346,6 +357,7 @@ export async function createNote(
     attrs?: Iterable<readonly [string, string]>;
   },
   tagStore?: TagStore,
+  blobs?: Pick<ProseStore, "mint">,
 ): Promise<CreateNoteResult | CreateNoteError> {
   const title = input.title.trim();
   // The hasType edge only: the node's kind stays Note, because `(Note,
@@ -466,11 +478,29 @@ export async function createNote(
   const attrOps = [...(input.attrs ?? [])].map(([p, v]) =>
     opAdd(title, p, literalTarget(p, v)),
   );
+  const block =
+    blobs === undefined
+      ? []
+      : slotBirthOps(
+          title,
+          BORN_BLOCK_LABEL,
+          BORN_BLOCK_POSITION,
+          await blobs.mint(""),
+        );
   const mint = await dial.admit(
-    [opCreate(NOTE_KIND, title), ...edgeBatch(title, parent), ...attrOps],
+    [
+      opCreate(NOTE_KIND, title),
+      ...edgeBatch(title, parent),
+      ...attrOps,
+      ...block,
+    ],
     scope,
   );
-  const token = mint.minted.length === 1 ? mint.minted[0] : undefined;
+  // The note is the batch's first createNode, so its token is minted first.
+  const token =
+    mint.minted.length === (blobs === undefined ? 1 : 2)
+      ? mint.minted[0]
+      : undefined;
   if (!mint.admitted || token === undefined) {
     return {
       code: "admit_refused",
