@@ -24,6 +24,7 @@ import { writeContainer } from "../src/container-write.js";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { createServer } from "../src/mcp/server.js";
 import { FixtureTagStore } from "../src/tag-store.js";
+import { fillOps } from "./helpers/born-block.js";
 
 const S1 = "1".repeat(64);
 const S2 = "2".repeat(64);
@@ -293,7 +294,7 @@ async function rig() {
     name: "write_container",
     arguments: {
       container: node,
-      ops: [{ op: "add", text: "uses #project and #b here", position: "a0" }],
+      ops: await fillOps(mcp, node, "uses #project and #b here"),
     },
   });
   return { mcp, dial, tags, node };

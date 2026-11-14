@@ -19,6 +19,7 @@ import { FixtureRevisionStore } from "../src/revision-store.js";
 import { createServer } from "../src/mcp/server.js";
 import { compileOutputSchema } from "../src/mcp/output-schemas.js";
 import { FixtureTagStore } from "../src/tag-store.js";
+import { fillOps } from "./helpers/born-block.js";
 
 /** The 20 verbs the gateway served without a schema, as calliope names them. */
 const VERBS = [
@@ -178,7 +179,7 @@ describe("F17 batch 2a — calliope's output schemas", () => {
 
     const wrote = await run("write_container", {
       container: id,
-      ops: [{ op: "add", text: "alpha #beta", position: "a0" }],
+      ops: await fillOps(mcp, id, "alpha #beta"),
     });
     expect(wrote.noop).toBe(false);
     const [block] = (await run("read_container", { container: id })).blocks as {

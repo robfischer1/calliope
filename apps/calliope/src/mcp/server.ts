@@ -1222,6 +1222,7 @@ export function createServer(
             type,
           },
           options.tags,
+          options.containers?.blobs,
         );
         if (isCreateNoteError(result)) return refusalResult(result);
         return {
