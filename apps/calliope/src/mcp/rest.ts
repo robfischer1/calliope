@@ -8,6 +8,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withSpan } from "@forge/stellar-core-ts";
 import { mountRest } from "@forge/stellar-core-ts/rest";
 import type { RestHandler, RestMount } from "@forge/stellar-core-ts/rest";
+import { actGate } from "../act-gate.js";
+import type { ActGateOptions } from "../act-gate.js";
 
 /** What {@link mountRestFace} needs of the process. */
 export interface RestFaceOptions {
@@ -15,6 +17,9 @@ export interface RestFaceOptions {
   readonly build: () => McpServer;
   /** Reads the environment. Default: `process.env`. */
   readonly getenv?: ((name: string) => string | undefined) | undefined;
+  /** The authorship gate (act-gate.ts): charon's act assertion, else the
+   *  waypoint-verified human caller. Absent mounts the door without it. */
+  readonly act?: ActGateOptions | undefined;
 }
 
 /**
@@ -33,6 +38,6 @@ export async function mountRestFace(o: RestFaceOptions): Promise<RestMount> {
   return mountRest(o.build, {
     getenv,
     soleListener: true,
-    wrap: spanned,
+    wrap: (next) => spanned(o.act === undefined ? next : actGate(o.act)(next)),
   });
 }

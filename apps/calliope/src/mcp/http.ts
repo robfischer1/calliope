@@ -44,6 +44,8 @@ import type { RestMount } from "@forge/stellar-core-ts/rest";
 import { mountRestFace } from "./rest.js";
 import { createTelemetryProducer } from "../aglaia-ingest.js";
 import type { TelemetryProducerLike } from "../aglaia-ingest.js";
+import { MemoryJtiStore, actConfigFromEnv } from "../act-assertion.js";
+import type { FetchLike } from "../act-assertion.js";
 
 /** The collaborators a server is built from (the MCP door's and REST's alike). */
 export interface ServerDeps {
@@ -88,8 +90,10 @@ export interface ServeOptions extends Omit<ServerDeps, "witness"> {
   readonly client?: BodyClient | undefined;
   /** The witness: its log records every call, and it is closed with the door. */
   readonly witness: Witness;
-  /** Reads the environment (the REST port). Default: `process.env`. */
+  /** Reads the environment (the REST port, the act config). Default: `process.env`. */
   readonly getenv?: ((name: string) => string | undefined) | undefined;
+  /** Test seam: the JWKS fetch. */
+  readonly actFetch?: FetchLike | undefined;
 }
 
 /**
@@ -119,11 +123,26 @@ export async function serveCalliope(o: ServeOptions): Promise<RestMount> {
   // Every server carries a register (an empty one answers { focus: null }).
   const focus = o.focus ?? new FocusRegister();
   const body = client;
+  // The authorship gate: config from the environment the door reads; the jti
+  // is spent in the sovereign store when there is one (survives restarts and a
+  // rolling update's overlap), in memory otherwise.
+  const env = o.getenv ?? ((k: string) => process.env[k]);
+  const act = {
+    jti: deps.revisions ?? new MemoryJtiStore(),
+    config: actConfigFromEnv({
+      CALLIOPE_ACT_JWKS_URL: env("CALLIOPE_ACT_JWKS_URL"),
+      STELLAR_KAIROS_JWKS_URL: env("STELLAR_KAIROS_JWKS_URL"),
+      CALLIOPE_ACT_ISSUER: env("CALLIOPE_ACT_ISSUER"),
+      CALLIOPE_ACT_TRUST_DOMAIN: env("CALLIOPE_ACT_TRUST_DOMAIN"),
+    }),
+    ...(o.actFetch !== undefined ? { fetch: o.actFetch } : {}),
+  };
   let rest: RestMount;
   try {
     rest = await mountRestFace({
       build: () => createServer(body, serverOptions({ ...deps, focus })),
       getenv: o.getenv,
+      act,
     });
   } catch (err) {
     await o.witness.close();
