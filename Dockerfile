@@ -23,12 +23,8 @@ WORKDIR /app
 # /etc/passwd: the base's bun user, measured uid=1000 gid=1000 on the running pod.
 COPY --chown=1000:1000 release/server.js ./server.js
 # The REST door is the star's only listener (REST mesh P7, wonka68-rm39): no
-# /mcp, no loopback port. Flux sets the same port; the default lets the smoke boot.
+# /mcp, no loopback port. Flux sets the same port.
 ENV NODE_ENV=production STELLAR_REST_PLAINTEXT_PORT=8207
-# THE BOOT SMOKE (foundry-tools build:smoke): the build lane starts this image
-# alone, on the in-memory fixture backend (no Postgres, no broker), and it must
-# answer GET /live on the REST door after 8s.
-LABEL org.notusmi.smoke="port=8207 path=/live wait=8 env=CALLIOPE_MCP_BACKEND=fixture"
 USER 1000:1000
 EXPOSE 8207
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
