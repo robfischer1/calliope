@@ -45,6 +45,7 @@ import {
 import type { ContainerFacet } from "../container-write.js";
 import { FixtureTagStore, PgTagStore, type TagStore } from "../tag-store.js";
 import { FixtureRevisionStore, PgRevisionStore } from "../revision-store.js";
+import { attributing } from "../attributing-dial.js";
 import { FixtureBodyClient } from "../fixture-client.js";
 import { UraniaBodyClient } from "../urania-client.js";
 import { PgBodyClient } from "../pg-client.js";
@@ -240,7 +241,7 @@ export function makeBackend(
     // the fleet actually runs.
     const client = new FixtureBodyClient();
     const revisions = new FixtureRevisionStore();
-    const dial = new FixtureChaosDial();
+    const dial = attributing(new FixtureChaosDial(), revisions);
     const scope = notesScope(env);
     const tags = new FixtureTagStore();
     return {
@@ -262,7 +263,7 @@ export function makeBackend(
     const pool = pgPool(env, login);
     const client = withIndexPush(new PgBodyClient(pool), env);
     const revisions = new PgRevisionStore(pool);
-    const dial = new LiveChaosDial();
+    const dial = attributing(new LiveChaosDial(), revisions);
     const scope = notesScope(env);
     const tags = new PgTagStore(pool);
     return {
