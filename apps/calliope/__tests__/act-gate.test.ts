@@ -207,8 +207,9 @@ describe("act gate: the six write verbs, attributed", () => {
     const { call, rows } = await door({});
     const r = await call("create_note", { title: "N" });
     expect(r.status, r.text).toBe(200);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.authored_by).toBe("human/robfischer1");
+    // create_note lands several transactions; each is attributed.
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.authored_by).toBe("human/robfischer1");
   });
 
   it("refuses every assertion when Kairos's keyset is unreachable; no-header calls still work", async () => {
@@ -242,13 +243,15 @@ describe("caller author: the waypoint-verified human, with no act assertion", ()
       { token: false, extra: waypoint(ROB) },
     );
     expect(r.status, r.text).toBe(200);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      authored_by: "human/robfischer1",
-      via: "spiffe://notusmi.com/ns/prime/sa/hades",
-      verb: "create_note",
-      jti: "txn:t-1",
-    });
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        authored_by: "human/robfischer1",
+        via: "spiffe://notusmi.com/ns/prime/sa/hades",
+        verb: "create_note",
+        jti: "txn:t-1",
+      });
+    }
   });
 
   it("names no one without the waypoint's XFCC", async () => {
@@ -288,9 +291,11 @@ describe("caller author: the waypoint-verified human, with no act assertion", ()
       { extra: waypoint("spiffe://notusmi.com/human/someoneelse") },
     );
     expect(r.status, r.text).toBe(200);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.authored_by).toBe("human/robfischer1");
-    expect(rows[0]?.via).toBe("star/charon");
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.authored_by).toBe("human/robfischer1");
+      expect(row.via).toBe("star/charon");
+    }
   });
 });
 
