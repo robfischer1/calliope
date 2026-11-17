@@ -12,7 +12,7 @@
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
-import { canonicalAssertion } from "@forge/stellar-core-ts/pep";
+import { canonicalAssertion } from "@forge/stellar-core-ts/canonical";
 import { HANDLE_RE } from "./act-assertion.js";
 import type { HeaderBag } from "./caller-author.js";
 
