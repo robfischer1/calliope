@@ -172,6 +172,7 @@ async function waypointAuthor(
   }
   return {
     authoredBy: `human/${handle}`,
+    subject: `spiffe://${trustDomain}/human/${handle}`,
     via: xfccService(req.headers),
     jti: claims.jti,
     verb,

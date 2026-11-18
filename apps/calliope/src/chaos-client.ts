@@ -31,6 +31,7 @@ import {
 } from "./instant.js";
 
 import { RestClient, ToolError } from "@forge/stellar-core-ts/rest";
+import { actAuthor } from "./act-assertion.js";
 import { asDateTime } from "./instant.js";
 import { ChaosRest } from "./chaos-rest.js";
 import {
@@ -587,10 +588,15 @@ export class LiveChaosDial implements ChaosDial {
     expect?: ChaosExpect[],
   ): Promise<AdmitResult> {
     const rest = this.chaosRest;
+    // The verified human this request writes for (act-gate put it on the
+    // async context); chaos records it beside calliope's own author. Absent on
+    // an unattributed request or a background job: nothing rides.
+    const onBehalfOf = actAuthor()?.subject ?? "";
     const args: Record<string, unknown> = {
       ops: toDirectCaptureOps(ops, scope),
       author: DIRECT_AUTHOR,
       ...(expect !== undefined && expect.length > 0 ? { expect } : {}),
+      ...(onBehalfOf !== "" ? { on_behalf_of: onBehalfOf } : {}),
     };
     const answer = await rest.call("capture", args);
     if (!answer.ok) {

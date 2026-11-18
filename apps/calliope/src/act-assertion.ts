@@ -289,6 +289,11 @@ export class MemoryJtiStore implements JtiStore {
 export interface ActAuthor {
   /** `human/<handle>`: the full form, as recorded. */
   readonly authoredBy: string;
+  /**
+   * The verified human's SPIFFE id, `spiffe://<td>/human/<handle>`: what a
+   * chaos capture made for this request records as `on_behalf_of`.
+   */
+  readonly subject: string;
   /** `star/charon`. */
   readonly via: string;
   readonly jti: string;
@@ -463,6 +468,7 @@ export async function verifyActAssertion(i: VerifyInput): Promise<ActAuthor> {
   }
   return {
     authoredBy: `human/${handle}`,
+    subject: sub,
     via: VIA_CHARON,
     jti,
     verb: i.verb.slice("/v1/".length).split("/")[0] ?? "",

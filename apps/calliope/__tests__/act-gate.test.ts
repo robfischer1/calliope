@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { makeBackend } from "../src/mcp/backend.js";
 import type { WriteAuthorship } from "../src/revision-store.js";
 import { argsDigest } from "../src/args-digest.js";
-import { ACT_ASSERTION_HEADER } from "../src/act-assertion.js";
+import { ACT_ASSERTION_HEADER, actAuthor } from "../src/act-assertion.js";
 import type { FetchLike } from "../src/act-assertion.js";
 import { xfccService } from "../src/caller-author.js";
 import {
@@ -62,6 +62,16 @@ async function door(
     rows.push(r);
     return orig(r);
   };
+  // The subject each chaos admit runs under: what a direct capture forwards
+  // as on_behalf_of (direct-capture.test.ts pins that hop).
+  const subjects: string[] = [];
+  const dial = backend.chaos?.dial;
+  if (dial === undefined) throw new Error("fixture backend has no chaos dial");
+  const admit = dial.admit.bind(dial);
+  dial.admit = (...a: Parameters<typeof admit>) => {
+    subjects.push(actAuthor()?.subject ?? "");
+    return admit(...a);
+  };
   const { witness } = recordingWitness();
   const { rest, base } = await serveDoor(
     {
@@ -100,7 +110,7 @@ async function door(
   };
   const read = async (container: string): Promise<string> =>
     (await fetch(`${base}/v1/read_container?container=${container}`)).text();
-  return { call, read, rows };
+  return { call, read, rows, subjects };
 }
 
 const hex = (t: string, key: string): string =>
@@ -303,6 +313,64 @@ describe("caller author: the waypoint-verified human, with no act assertion", ()
       expect(row.authored_by).toBe("human/robfischer1");
       expect(row.via).toBe("star/charon");
     }
+  });
+});
+
+describe("on_behalf_of subject: every verified path reaches the chaos admit", () => {
+  const SUBJECT = `spiffe://${TD}/human/robfischer1`;
+
+  it("a Kairos act assertion: the token's sub", async () => {
+    const { call, subjects } = await door();
+    const r = await call("create_note", { title: "T" });
+    expect(r.status, r.text).toBe(200);
+    expect(subjects.length).toBeGreaterThan(0);
+    for (const s of subjects) expect(s).toBe(SUBJECT);
+  });
+
+  it("the waypoint's x-kairos-sub: the human it names", async () => {
+    const { call, subjects } = await door();
+    const r = await call(
+      "create_note",
+      { title: "W" },
+      { token: false, extra: waypoint(ROB) },
+    );
+    expect(r.status, r.text).toBe(200);
+    expect(subjects.length).toBeGreaterThan(0);
+    for (const s of subjects) expect(s).toBe(ROB);
+  });
+
+  it("the waypoint's assertion claims: the azp human", async () => {
+    const { call, subjects } = await door();
+    const args = { title: "C" };
+    const r = await call("create_note", args, {
+      token: false,
+      extra: {
+        "x-forwarded-client-cert":
+          "URI=spiffe://cluster.local/ns/prime/sa/charon-sa",
+        [HEADER_ASSERTION_ACT]: "calliope_create_note",
+        [HEADER_ASSERTION_JTI]: "ffeeddccbbaa99887766554433221100",
+        [HEADER_ASSERTION_ARGS]: assertionArgsSha256(
+          "calliope_create_note",
+          args,
+        ),
+        [HEADER_ASSERTION_AZP]: SUBJECT,
+      },
+    });
+    expect(r.status, r.text).toBe(200);
+    expect(subjects.length).toBeGreaterThan(0);
+    for (const s of subjects) expect(s).toBe(SUBJECT);
+  });
+
+  it("an unverified x-kairos-sub (no waypoint XFCC) names no one", async () => {
+    const { call, subjects } = await door();
+    const r = await call(
+      "create_note",
+      { title: "U" },
+      { token: false, extra: { "x-kairos-sub": ROB } },
+    );
+    expect(r.status, r.text).toBe(200);
+    expect(subjects.length).toBeGreaterThan(0);
+    for (const s of subjects) expect(s).toBe("");
   });
 });
 

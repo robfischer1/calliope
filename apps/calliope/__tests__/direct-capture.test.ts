@@ -24,6 +24,7 @@ import {
   type ChaosExpect,
   type ChaosOp,
 } from "../src/chaos-client.js";
+import { withActAuthor } from "../src/act-assertion.js";
 import { ChaosRest } from "../src/chaos-rest.js";
 import { LocalChaosDial } from "../src/local-admit.js";
 
@@ -301,6 +302,30 @@ describe("flag on — one chaos capture per admit (contract 2)", () => {
       violations: [],
       tx: 9,
     });
+  });
+
+  it("on_behalf_of carries the verified author's subject, and only then", async () => {
+    const door = chaosDoor(ok());
+    const dial = dialOn(door);
+    const rob = "spiffe://notusmi.com/human/robfischer1";
+    await withActAuthor(
+      {
+        authoredBy: "human/robfischer1",
+        subject: rob,
+        via: "star/charon",
+        jti: "j",
+        verb: "write_container",
+      },
+      () => dial.admit([opCreate("Note", "n")], "notes"),
+    );
+    await dial.admit([opCreate("Note", "n")], "notes");
+    expect(door.seen).toHaveLength(2);
+    expect(door.seen[0]?.body).toEqual({
+      ops: [{ op: "createNode", label: "n", kind: "Note" }],
+      author: "calliope",
+      on_behalf_of: rob,
+    });
+    expect(door.seen[1]?.body).not.toHaveProperty("on_behalf_of");
   });
 
   it("scope is required: an empty scope throws and sends nothing", async () => {

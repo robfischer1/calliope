@@ -79,6 +79,7 @@ export function callerAuthor(
   const txn = single(h, HEADER_TXN);
   return {
     authoredBy: `human/${handle}`,
+    subject: sub,
     via,
     jti: txn === "" ? "" : `txn:${txn}`,
     verb,
