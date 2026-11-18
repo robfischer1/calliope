@@ -370,7 +370,7 @@ describe("on_behalf_of subject: every verified path reaches the chaos admit", ()
       subjects.length = 0;
       const r = await call(
         "create_note",
-        { title: "S" },
+        { title: `S ${sub}` },
         { token: false, extra: waypoint(sub) },
       );
       expect(r.status, r.text).toBe(200);
