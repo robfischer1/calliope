@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { makeBackend } from "../src/mcp/backend.js";
 import type { WriteAuthorship } from "../src/revision-store.js";
 import { argsDigest } from "../src/args-digest.js";
-import { ACT_ASSERTION_HEADER, actAuthor } from "../src/act-assertion.js";
+import { ACT_ASSERTION_HEADER, onBehalfOf } from "../src/act-assertion.js";
 import type { FetchLike } from "../src/act-assertion.js";
-import { xfccService } from "../src/caller-author.js";
+import { callerSubject, xfccService } from "../src/caller-author.js";
 import {
   HEADER_ASSERTION_ACT,
   HEADER_ASSERTION_ARGS,
@@ -69,7 +69,7 @@ async function door(
   if (dial === undefined) throw new Error("fixture backend has no chaos dial");
   const admit = dial.admit.bind(dial);
   dial.admit = (...a: Parameters<typeof admit>) => {
-    subjects.push(actAuthor()?.subject ?? "");
+    subjects.push(onBehalfOf());
     return admit(...a);
   };
   const { witness } = recordingWitness();
@@ -361,6 +361,44 @@ describe("on_behalf_of subject: every verified path reaches the chaos admit", ()
     for (const s of subjects) expect(s).toBe(SUBJECT);
   });
 
+  it("a waypoint-verified session or star: its own subject, and no authorship row", async () => {
+    const { call, rows, subjects } = await door();
+    for (const sub of [
+      "spiffe://notusmi.com/session/0b5c8f0e-1111-4222-8333-444455556666",
+      "spiffe://notusmi.com/star/charon",
+    ]) {
+      subjects.length = 0;
+      const r = await call(
+        "create_note",
+        { title: "S" },
+        { token: false, extra: waypoint(sub) },
+      );
+      expect(r.status, r.text).toBe(200);
+      expect(subjects.length).toBeGreaterThan(0);
+      for (const s of subjects) expect(s).toBe(sub);
+    }
+    expect(rows).toHaveLength(0);
+  });
+
+  it("another trust domain or a malformed subject names no one", async () => {
+    const { call, subjects } = await door();
+    for (const sub of [
+      "spiffe://evil.example/human/robfischer1",
+      "spiffe://notusmi.com/",
+      "spiffe://notusmi.com/session//x",
+      "spiffe://notusmi.com/session/a b",
+    ]) {
+      const r = await call(
+        "create_note",
+        { title: "E" },
+        { token: false, extra: waypoint(sub) },
+      );
+      expect(r.status, r.text).toBe(200);
+    }
+    expect(subjects.length).toBeGreaterThan(0);
+    for (const s of subjects) expect(s).toBe("");
+  });
+
   it("an unverified x-kairos-sub (no waypoint XFCC) names no one", async () => {
     const { call, subjects } = await door();
     const r = await call(
@@ -371,6 +409,37 @@ describe("on_behalf_of subject: every verified path reaches the chaos admit", ()
     expect(r.status, r.text).toBe(200);
     expect(subjects.length).toBeGreaterThan(0);
     for (const s of subjects) expect(s).toBe("");
+  });
+});
+
+describe("callerSubject", () => {
+  const bag = (h: Record<string, string[]>) => ({
+    getAll: (n: string) => h[n.toLowerCase()] ?? [],
+  });
+  const S = "spiffe://notusmi.com/session/abc";
+  it("answers the one verified subject of this trust domain", () => {
+    expect(
+      callerSubject(
+        bag({ "x-kairos-sub": [S], "x-forwarded-client-cert": [HADES_XFCC] }),
+        "notusmi.com",
+      ),
+    ).toBe(S);
+  });
+  it("refuses no XFCC, two subjects, an empty trust domain and an overlong id", () => {
+    const x = { "x-forwarded-client-cert": [HADES_XFCC] };
+    expect(callerSubject(bag({ "x-kairos-sub": [S] }), "notusmi.com")).toBe(
+      undefined,
+    );
+    expect(
+      callerSubject(bag({ ...x, "x-kairos-sub": [S, S] }), "notusmi.com"),
+    ).toBe(undefined);
+    expect(callerSubject(bag({ ...x, "x-kairos-sub": [S] }), "")).toBe(
+      undefined,
+    );
+    const long = `spiffe://notusmi.com/session/${"a".repeat(240)}`;
+    expect(
+      callerSubject(bag({ ...x, "x-kairos-sub": [long] }), "notusmi.com"),
+    ).toBe(undefined);
   });
 });
 

@@ -24,7 +24,7 @@ import {
   type ChaosExpect,
   type ChaosOp,
 } from "../src/chaos-client.js";
-import { withActAuthor } from "../src/act-assertion.js";
+import { withActAuthor, withCallerSubject } from "../src/act-assertion.js";
 import { ChaosRest } from "../src/chaos-rest.js";
 import { LocalChaosDial } from "../src/local-admit.js";
 
@@ -326,6 +326,17 @@ describe("flag on — one chaos capture per admit (contract 2)", () => {
       on_behalf_of: rob,
     });
     expect(door.seen[1]?.body).not.toHaveProperty("on_behalf_of");
+  });
+
+  it("on_behalf_of carries a verified session when no human author rides", async () => {
+    const door = chaosDoor(ok());
+    const dial = dialOn(door);
+    const session =
+      "spiffe://notusmi.com/session/0b5c8f0e-1111-4222-8333-444455556666";
+    await withCallerSubject(session, () =>
+      dial.admit([opCreate("Note", "n")], "notes"),
+    );
+    expect(door.seen[0]?.body?.on_behalf_of).toBe(session);
   });
 
   it("scope is required: an empty scope throws and sends nothing", async () => {

@@ -58,6 +58,27 @@ export function xfccService(h: HeaderBag): string {
   return uri.startsWith(SPIFFE) && uri.length > SPIFFE.length ? uri : "";
 }
 
+/** A SPIFFE path: segments of the id's safe characters, nothing else. */
+const SUBJECT_PATH_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
+/** chaos's on_behalf_of bound (verbs/on_behalf_of.go maxOnBehalfOf). */
+const MAX_SUBJECT = 256;
+
+/**
+ * The subject the waypoint vouches for, any kind (`spiffe://<td>/...`), or
+ * undefined: no waypoint (XFCC), no single `x-kairos-sub`, another trust
+ * domain, or a subject chaos would not record.
+ */
+export function callerSubject(
+  h: HeaderBag,
+  trustDomain: string,
+): string | undefined {
+  if (trustDomain === "" || xfccService(h) === "") return undefined;
+  const sub = single(h, HEADER_SUBJECT);
+  const prefix = `${SPIFFE}${trustDomain}/`;
+  if (!sub.startsWith(prefix) || sub.length > MAX_SUBJECT) return undefined;
+  return SUBJECT_PATH_RE.test(sub.slice(prefix.length)) ? sub : undefined;
+}
+
 /**
  * The human author the waypoint vouches for, or undefined: no single
  * `x-kairos-sub`, no waypoint (XFCC), or a subject that is not
