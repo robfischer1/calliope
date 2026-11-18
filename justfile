@@ -22,10 +22,6 @@ star := file_name(justfile_directory())
 # the spec-kit override template; the hooks under hooks/ call them.
 import 'stages.just'
 
-# The Dev surface's private `_dev` recipe (dev.just, laid by foundry-stocks).
-# typecheck, test, build and fmt run on the cluster through it, not here.
-import? 'dev.just'
-
 # List available recipes
 default:
     @just --list
@@ -35,35 +31,6 @@ default:
 [doc('Restore node_modules from the lockfile, exactly as CI does')]
 install:
     bun install --frozen-lockfile
-
-# Format + lint — the commit stage, on the engine: the same call the commit hook
-# makes (`just check`, stages.just). NOTHING LINTS LOCALLY ANY MORE (CA F18;
-# Rob, 2026-09-19: "I don't want any of this running locally anymore"): no
-# pre-commit, no lint-staged, no eslint or prettier on the laptop — the fleet's
-# ruleset is foundry-tools', the engine caches every toolchain, and a red here
-# is the same red the door would give. It sees every file in the tree, staged
-# or not, because the engine is handed the tree and not git's index.
-lint: check
-
-[doc('Typecheck all packages')]
-[positional-arguments]
-typecheck *ARGS:
-    @{{just_executable()}} --justfile {{justfile()}} --set ca_module {{quote(ca_module)}} _dev typecheck "$@"
-
-[doc('Run the test suite')]
-[positional-arguments]
-test *ARGS:
-    @{{just_executable()}} --justfile {{justfile()}} --set ca_module {{quote(ca_module)}} _dev test "$@"
-
-[doc('Build all packages')]
-[positional-arguments]
-build *ARGS:
-    @{{just_executable()}} --justfile {{justfile()}} --set ca_module {{quote(ca_module)}} _dev build "$@"
-
-# Rewrite files in place (gate runs the check-only half)
-[positional-arguments]
-fmt *ARGS:
-    @{{just_executable()}} --justfile {{justfile()}} --set ca_module {{quote(ca_module)}} _dev fmt "$@"
 
 # Known-vulnerability scan.
 # CI gates at high; some advisories are deferred by policy — see the workflow.
