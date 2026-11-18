@@ -49,6 +49,7 @@ describe("verifyActAssertion", () => {
   it("accepts a valid assertion and names human/<handle> via star/charon", async () => {
     expect(await run(mint(DIGEST))).toMatchObject({
       authoredBy: "human/robfischer1",
+      subject: `spiffe://${TD}/human/robfischer1`,
       via: "star/charon",
       verb: "write_container",
     });
