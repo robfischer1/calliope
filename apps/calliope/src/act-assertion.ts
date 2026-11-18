@@ -313,6 +313,25 @@ export function actAuthor(): ActAuthor | undefined {
   return authors.getStore();
 }
 
+/**
+ * A waypoint-verified caller that is not a human (a session, a star): no
+ * authorship row, but chaos still records who the write was for.
+ */
+const callerSubjects = new AsyncLocalStorage<string>();
+
+/** Run `fn` with a verified non-human caller on its async context. Only the gate calls this. */
+export function withCallerSubject<T>(subject: string, fn: () => T): T {
+  return callerSubjects.run(subject, fn);
+}
+
+/**
+ * Who a chaos write made now is for: the verified human author's SPIFFE id,
+ * else the verified caller's, else "" (unattributed: nothing rides).
+ */
+export function onBehalfOf(): string {
+  return authors.getStore()?.subject ?? callerSubjects.getStore() ?? "";
+}
+
 // ── verification ────────────────────────────────────────────────────────────
 
 const B64URL = /^[A-Za-z0-9_-]+$/;

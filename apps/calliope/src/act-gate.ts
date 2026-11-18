@@ -5,7 +5,8 @@
  * {@link withActAuthor}. Behaviour:
  *  - no `x-charon-act-assertion` header: a write verb whose waypoint-verified
  *    caller is a human (caller-author.ts) runs with that human on its async
- *    context; any other request passes untouched;
+ *    context, one that is a session or star with that subject (chaos's
+ *    on_behalf_of only); any other request passes untouched;
  *  - the header present (even empty, even repeated): the request is refused
  *    unless the assertion verifies for THIS request (POST of one
  *    of the six write verbs with no query, digest of the received body), and
@@ -30,6 +31,7 @@ import {
   actConfigFromEnv,
   verifyActAssertion,
   withActAuthor,
+  withCallerSubject,
 } from "./act-assertion.js";
 import type {
   ActAuthor,
@@ -38,7 +40,7 @@ import type {
   JtiStore,
 } from "./act-assertion.js";
 import { argsDigest, DigestError, parseRaw } from "./args-digest.js";
-import { callerAuthor, xfccService } from "./caller-author.js";
+import { callerAuthor, callerSubject, xfccService } from "./caller-author.js";
 import {
   TOOL_PREFIX,
   assertionArgsSha256,
@@ -234,12 +236,19 @@ export function actGate(o: ActGateOptions): (next: RestHandler) => RestHandler {
       const write =
         (req.method === "POST" || req.method === "DELETE") &&
         WRITE_VERB_PATHS.has(req.target);
-      const author = write
-        ? callerAuthor(req.headers, config.trustDomain, verbOf(req.target))
-        : undefined;
-      return author === undefined
+      if (!write) return next(req);
+      const author = callerAuthor(
+        req.headers,
+        config.trustDomain,
+        verbOf(req.target),
+      );
+      if (author !== undefined) return withActAuthor(author, () => next(req));
+      // A session or star the waypoint verified: no authorship row, but its
+      // chaos writes say who they were for.
+      const subject = callerSubject(req.headers, config.trustDomain);
+      return subject === undefined
         ? next(req)
-        : withActAuthor(author, () => next(req));
+        : withCallerSubject(subject, () => next(req));
     }
     try {
       const token = values[0] ?? "";
