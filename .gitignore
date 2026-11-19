@@ -53,7 +53,6 @@ coverage/
 .idea/
 
 # furnace local state — regenerated on each deploy / stoke, never authored.
-# `.furnace/pin.toml` is NOT here: the template pin is real config and stays tracked.
 .furnace/deployed.json
 .furnace/spans.json
 
@@ -87,4 +86,12 @@ CLAUDE.md
 # this for clones that already exist; the template is what makes a newly stamped repo carry
 # it on its own.
 .agent-locks/
+
+# The image release (`bun run release`): ts:release lays it, the build lane
+# stages it for the Dockerfile's COPY release/…; never tracked.
+/release/
+
+# Stryker (ts:mutation): its sandbox and reports, never tracked.
+.stryker-tmp/
+reports/
 # <<< frontend-repo-template <<<
