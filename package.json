@@ -37,6 +37,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.0",
     "eslint": "^10.0.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
     "lint-staged": "^17.0.0",
     "prettier": "^3.4.2",
     "turbo": "^2.3.3",

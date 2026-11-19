@@ -9,8 +9,7 @@
 # files under the runner's C locale and chokes on non-ASCII punctuation.
 #
 # SEED set: the SCOPING (local, curated, taint-mode) is settled; the rule
-# *content* grows as real flows surface across the fleet. Runs INFORMATIONAL in
-# CI until tuned, then the workflow drops `continue-on-error`.
+# *content* grows as real flows surface across the fleet.
 rules:
   - id: forge-ts-taint-ssrf
     mode: taint
@@ -36,6 +35,18 @@ rules:
               - pattern: fetch(...)
               - pattern: axios(...)
               - pattern: axios.$M(...)
+              # got is matched by its import-bound name, never by a bare $CLIENT
+              # receiver (that matches any .get/.post, e.g. a Map or a cache).
+              - patterns:
+                  - pattern-either:
+                      - pattern: got($URL, ...)
+                      - pattern: got.get($URL, ...)
+                      - pattern: got.post($URL, ...)
+                      - pattern: got.put($URL, ...)
+                      - pattern: got.patch($URL, ...)
+                      - pattern: got.delete($URL, ...)
+                      - pattern: got.head($URL, ...)
+                  - focus-metavariable: $URL
 
   - id: forge-ts-taint-code-injection
     mode: taint

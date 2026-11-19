@@ -2,6 +2,7 @@
 // stylistic, type-checked), matching the frontend-repo template.
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
+import jsxA11y from "eslint-plugin-jsx-a11y";
 
 export default tseslint.config(
   {
@@ -17,6 +18,12 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   ...tseslint.configs.stylisticTypeChecked,
+  // Accessibility: every JSX surface is linted against jsx-a11y's recommended
+  // set. Fix violations with real labels, roles and keyboard handlers.
+  {
+    files: ["**/*.{jsx,tsx}"],
+    ...jsxA11y.flatConfigs.recommended,
+  },
   {
     languageOptions: {
       parserOptions: {
