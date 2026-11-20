@@ -11,6 +11,9 @@ import type { RestHandler, RestMount } from "@forge/stellar-core-ts/rest";
 import { actGate } from "../act-gate.js";
 import type { ActGateOptions } from "../act-gate.js";
 
+/** The star's roster key: its X-Star, and its name on a staircase. */
+export const STAR = "calliope";
+
 /** What {@link mountRestFace} needs of the process. */
 export interface RestFaceOptions {
   /** Builds a server for REST alone: a server serves one transport at a time. */
@@ -36,6 +39,11 @@ export function spanned(next: RestHandler): RestHandler {
 export async function mountRestFace(o: RestFaceOptions): Promise<RestMount> {
   const getenv = o.getenv ?? ((k: string) => process.env[k]);
   return mountRest(o.build, {
+    // The roster key, not the MCP server's own name (`calliope-mcp`): Hades
+    // checks X-Star against the star it dialled, and the forwarder step a
+    // staircase gains here names spiffe://notusmi.com/star/<star>, the
+    // star's SVID shape (R22).
+    star: STAR,
     getenv,
     soleListener: true,
     wrap: (next) => spanned(o.act === undefined ? next : actGate(o.act)(next)),
