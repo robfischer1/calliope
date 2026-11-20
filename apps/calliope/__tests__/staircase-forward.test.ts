@@ -184,9 +184,7 @@ describe("write_container forwards the request's staircase to chaos", () => {
         prev: staircaseStepDigest(PRINCIPAL),
         intent: { attempting: "write_container" },
       });
-      expect(String(fw.sub)).toMatch(
-        /^spiffe:\/\/notusmi\.com\/star\/calliope/,
-      );
+      expect(fw.sub).toBe("spiffe://notusmi.com/star/calliope");
       expect(fw).not.toHaveProperty("sig");
     }
   });
