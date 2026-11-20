@@ -1,7 +1,8 @@
 /**
  * The staircase a write arrives with rides calliope's chaos write (nemo38-s4g):
  * a write_container served on the REST door with a `Staircase` header sends
- * the same header, byte for byte, on the chaos `capture` it makes, so chaos
+ * it on the chaos `capture` it makes, the received steps byte for byte with
+ * Calliope's own unsigned forwarder step appended (R22, UAT-004), so chaos
  * stores it on the container node in that transaction. A write that carried
  * none sends none. Nothing leaves the process: the chaos door is a stubbed
  * fetch behind the real ChaosRest / RestClient.
@@ -14,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   RestClient,
   SpecCache,
+  staircaseStepDigest,
   type RestMount,
 } from "@forge/stellar-core-ts/rest";
 import { FixtureBlobStore } from "../src/blob-store.js";
@@ -62,10 +64,8 @@ const CAPTURE_DOC = JSON.stringify({
 });
 
 // Not re-marshalled: the spacing is what the signatures cover.
-const STAIR = Buffer.from(
-  `[ {"role":"principal", "sub":"spiffe://notusmi.com/human/rob"} ]`,
-  "utf8",
-).toString("base64url");
+const PRINCIPAL = `{"role":"principal", "sub":"spiffe://notusmi.com/human/rob"}`;
+const STAIR = Buffer.from(`[ ${PRINCIPAL} ]`, "utf8").toString("base64url");
 
 /** The Staircase header of each capture the chaos door was sent. */
 function chaosDoor(): { rest: ChaosRest; captures: (string | null)[] } {
@@ -167,11 +167,28 @@ async function write(
 }
 
 describe("write_container forwards the request's staircase to chaos", () => {
-  it("the capture carries the Staircase header the write arrived with", async () => {
+  it("the capture carries the staircase the write arrived with, Calliope's forwarder step after it", async () => {
     const { base, door, container } = await rig();
     expect(await write(base, container, "one", { Staircase: STAIR })).toBe(200);
     expect(door.captures.length).toBeGreaterThan(0);
-    for (const s of door.captures) expect(s).toBe(STAIR);
+    for (const s of door.captures) {
+      expect(s).not.toBeNull();
+      const text = Buffer.from(s ?? "", "base64url").toString("utf8");
+      // The received step keeps its bytes (R22: the signatures cover them).
+      expect(text.startsWith(`[${PRINCIPAL},{`)).toBe(true);
+      const steps = JSON.parse(text) as Record<string, unknown>[];
+      expect(steps).toHaveLength(2);
+      const fw = steps[1] ?? {};
+      expect(fw).toMatchObject({
+        role: "forwarder",
+        prev: staircaseStepDigest(PRINCIPAL),
+        intent: { attempting: "write_container" },
+      });
+      expect(String(fw.sub)).toMatch(
+        /^spiffe:\/\/notusmi\.com\/star\/calliope/,
+      );
+      expect(fw).not.toHaveProperty("sig");
+    }
   });
 
   it("a write that carried none sends none", async () => {
