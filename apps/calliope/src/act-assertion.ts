@@ -5,8 +5,7 @@
  * as itself (charon-sa). That proves "charon asked", not who. Charon therefore
  * carries, beside the call, a short-lived Kairos act assertion (ES256, typ
  * `act+jwt`) naming the person whose passkey session approved it, in the
- * `X-Act-Assertion` header, which the prime waypoint verifies (waypoint-assertion.ts).
- * This module keeps the Kairos act-assertion verifier and the async-context authorship: the reference
+ * `X-Act-Assertion` header. This module is the verifier: the reference
  * issuer is kairos `internal/issue/act.go` (ParseActAssertion), the minting side
  * charon `lib/act-assertion.ts`.
  *
