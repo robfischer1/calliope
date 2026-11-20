@@ -1,21 +1,15 @@
 /**
  * The REST door's act-assertion gate: a `wrap` for the adapter (rest.ts).
  *
- * It is the only place the header is read, and the only caller of
- * {@link withActAuthor}. Behaviour:
- *  - no `x-charon-act-assertion` header: a write verb whose waypoint-verified
+ * It is the only caller of {@link withActAuthor}. Behaviour:
+ *  - no waypoint assertion claims: a write verb whose waypoint-verified
  *    caller is a human (caller-author.ts) runs with that human on its async
  *    context, one that is a session or star with that subject (chaos's
  *    on_behalf_of only); any other request passes untouched;
- *  - the header present (even empty, even repeated): the request is refused
- *    unless the assertion verifies for THIS request (POST of one
- *    of the six write verbs with no query, digest of the received body), and
- *    then it runs with the human on its async context.
  *  - the waypoint's `x-kairos-assertion-*` claims present (waypoint-assertion.ts):
  *    the request is refused unless the act is this verb, args_sha256 is the
  *    digest of the received arguments and the jti is unspent; then it runs
- *    with the human the claims name. Beside the legacy header it is refused.
- * Header-name case is the HTTP layer's (RestHeaders is case-insensitive).
+ *    with the human the claims name.
  */
 
 import type {
@@ -24,22 +18,14 @@ import type {
   RestResponse,
 } from "@forge/stellar-core-ts/rest";
 import {
-  ACT_ASSERTION_HEADER,
   ActRefusal,
-  JwksCache,
   WRITE_VERB_PATHS,
   actConfigFromEnv,
-  verifyActAssertion,
   withActAuthor,
   withCallerSubject,
 } from "./act-assertion.js";
-import type {
-  ActAuthor,
-  ActConfig,
-  FetchLike,
-  JtiStore,
-} from "./act-assertion.js";
-import { argsDigest, DigestError, parseRaw } from "./args-digest.js";
+import type { ActAuthor, ActConfig, JtiStore } from "./act-assertion.js";
+import { DigestError } from "./args-digest.js";
 import { callerAuthor, callerSubject, xfccService } from "./caller-author.js";
 import {
   TOOL_PREFIX,
@@ -49,10 +35,8 @@ import {
   waypointAssertion,
 } from "./waypoint-assertion.js";
 import type { WaypointAssertion } from "./waypoint-assertion.js";
-import type { RawObj } from "./args-digest.js";
 
 const MAX_BODY = 8 << 20;
-const TOKEN_RE = /^[A-Za-z0-9_.-]+$/;
 
 function refusal(e: ActRefusal): RestResponse {
   return {
@@ -62,38 +46,15 @@ function refusal(e: ActRefusal): RestResponse {
   };
 }
 
-/**
- * The digest of the arguments the adapter will assemble for `path` from `body`:
- * the body, with the path's own dangerous value (`/live` is dry_run:false)
- * injected as the adapter injects it. A body that contradicts its path would be
- * refused by the adapter; it is refused here too, so the digest is never taken
- * over arguments that will not run.
- */
-function assembledDigest(path: string, body: string): string {
-  const raw = body.trim() === "" ? new Map() : parseRaw(body);
-  if (!(raw instanceof Map))
-    throw new DigestError("arguments are not an object");
-  const args: RawObj = raw as RawObj;
-  if (path.endsWith("/live")) {
-    const have = args.get("dry_run");
-    if (have !== undefined && have !== false) {
-      throw new DigestError("dry_run contradicts the path");
-    }
-    args.set("dry_run", false);
-  }
-  return argsDigest(args);
-}
-
 export interface ActGateOptions {
   readonly jti: JtiStore;
   readonly config?: ActConfig | undefined;
-  readonly fetch?: FetchLike | undefined;
 }
 
 /**
  * The arguments the adapter will assemble for `path` from `body`, as an
  * object: `/live` injects dry_run:false, and a body that contradicts it is
- * refused, as in {@link assembledDigest}.
+ * refused.
  */
 function assembledArgs(path: string, body: string): Record<string, unknown> {
   const parsed: unknown = body.trim() === "" ? {} : JSON.parse(body);
@@ -189,14 +150,11 @@ function verbOf(path: string): string {
 /** The wrap: `(next) => handler` for {@link mountRestFace}. */
 export function actGate(o: ActGateOptions): (next: RestHandler) => RestHandler {
   const config = o.config ?? actConfigFromEnv();
-  const keys =
-    config.jwksUrl === "" ? undefined : new JwksCache(config.jwksUrl, o.fetch);
   return (next) => async (req: RestRequest) => {
-    const values = req.headers.getAll(ACT_ASSERTION_HEADER);
     const claims = waypointAssertion(req.headers);
     if (claims !== undefined) {
       try {
-        if (claims === "incomplete" || values.length !== 0) {
+        if (claims === "incomplete") {
           throw new ActRefusal(401, "act_assertion_invalid", "malformed");
         }
         if (
@@ -232,71 +190,21 @@ export function actGate(o: ActGateOptions): (next: RestHandler) => RestHandler {
         throw e;
       }
     }
-    if (values.length === 0) {
-      const write =
-        (req.method === "POST" || req.method === "DELETE") &&
-        WRITE_VERB_PATHS.has(req.target);
-      if (!write) return next(req);
-      const author = callerAuthor(
-        req.headers,
-        config.trustDomain,
-        verbOf(req.target),
-      );
-      if (author !== undefined) return withActAuthor(author, () => next(req));
-      // A session or star the waypoint verified: no authorship row, but its
-      // chaos writes say who they were for.
-      const subject = callerSubject(req.headers, config.trustDomain);
-      return subject === undefined
-        ? next(req)
-        : withCallerSubject(subject, () => next(req));
-    }
-    try {
-      const token = values[0] ?? "";
-      if (values.length !== 1 || !TOKEN_RE.test(token)) {
-        throw new ActRefusal(401, "act_assertion_invalid", "malformed");
-      }
-      const path = req.target;
-      // A mutation is POST, a destructive one (write_container, delete_note) DELETE.
-      if (
-        (req.method !== "POST" && req.method !== "DELETE") ||
-        !WRITE_VERB_PATHS.has(path)
-      ) {
-        throw new ActRefusal(
-          403,
-          "act_assertion_forbidden",
-          "an act assertion rides only the note write verbs",
-        );
-      }
-      let bytes: Uint8Array;
-      try {
-        bytes = await req.body(MAX_BODY);
-      } catch {
-        throw new ActRefusal(413, "act_assertion_invalid", "unreadable body");
-      }
-      let digest: string;
-      try {
-        digest = assembledDigest(path, new TextDecoder().decode(bytes));
-      } catch (e) {
-        if (!(e instanceof DigestError)) throw e;
-        throw new ActRefusal(401, "act_assertion_invalid", "malformed");
-      }
-      const author = await verifyActAssertion({
-        token,
-        argsSha256: digest,
-        verb: path,
-        config,
-        keys,
-        jti: o.jti,
-      });
-      // The adapter reads the body itself: hand it the bytes verified here.
-      const replay: RestRequest = {
-        ...req,
-        body: () => Promise.resolve(bytes),
-      };
-      return await withActAuthor(author, () => next(replay));
-    } catch (e) {
-      if (e instanceof ActRefusal) return refusal(e);
-      throw e;
-    }
+    const write =
+      (req.method === "POST" || req.method === "DELETE") &&
+      WRITE_VERB_PATHS.has(req.target);
+    if (!write) return next(req);
+    const author = callerAuthor(
+      req.headers,
+      config.trustDomain,
+      verbOf(req.target),
+    );
+    if (author !== undefined) return withActAuthor(author, () => next(req));
+    // A session or star the waypoint verified: no authorship row, but its
+    // chaos writes say who they were for.
+    const subject = callerSubject(req.headers, config.trustDomain);
+    return subject === undefined
+      ? next(req)
+      : withCallerSubject(subject, () => next(req));
   };
 }
