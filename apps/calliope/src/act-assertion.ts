@@ -5,7 +5,7 @@
  * as itself (charon-sa). That proves "charon asked", not who. Charon therefore
  * carries, beside the call, a short-lived Kairos act assertion (ES256, typ
  * `act+jwt`) naming the person whose passkey session approved it, in the
- * `x-charon-act-assertion` header. This module is the verifier: the reference
+ * `X-Act-Assertion` header. This module is the verifier: the reference
  * issuer is kairos `internal/issue/act.go` (ParseActAssertion), the minting side
  * charon `lib/act-assertion.ts`.
  *
@@ -29,8 +29,6 @@ import { createPublicKey, timingSafeEqual, verify } from "node:crypto";
 import type { KeyObject } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 
-/** The request header charon sends the assertion in. */
-export const ACT_ASSERTION_HEADER = "x-charon-act-assertion";
 /** The JWS `typ`. */
 export const ACT_TYP = "act+jwt";
 /** The one act this star verifies. */

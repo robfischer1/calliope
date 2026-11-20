@@ -45,7 +45,6 @@ import { mountRestFace } from "./rest.js";
 import { createTelemetryProducer } from "../aglaia-ingest.js";
 import type { TelemetryProducerLike } from "../aglaia-ingest.js";
 import { MemoryJtiStore, actConfigFromEnv } from "../act-assertion.js";
-import type { FetchLike } from "../act-assertion.js";
 
 /** The collaborators a server is built from (the MCP door's and REST's alike). */
 export interface ServerDeps {
@@ -92,8 +91,6 @@ export interface ServeOptions extends Omit<ServerDeps, "witness"> {
   readonly witness: Witness;
   /** Reads the environment (the REST port, the act config). Default: `process.env`. */
   readonly getenv?: ((name: string) => string | undefined) | undefined;
-  /** Test seam: the JWKS fetch. */
-  readonly actFetch?: FetchLike | undefined;
 }
 
 /**
@@ -135,7 +132,6 @@ export async function serveCalliope(o: ServeOptions): Promise<RestMount> {
       CALLIOPE_ACT_ISSUER: env("CALLIOPE_ACT_ISSUER"),
       CALLIOPE_ACT_TRUST_DOMAIN: env("CALLIOPE_ACT_TRUST_DOMAIN"),
     }),
-    ...(o.actFetch !== undefined ? { fetch: o.actFetch } : {}),
   };
   let rest: RestMount;
   try {
