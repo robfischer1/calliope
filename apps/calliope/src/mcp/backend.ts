@@ -250,4 +250,3 @@ export async function initBackend(backend: Backend): Promise<void> {
     await backend.tags.ensureSchema();
   }
 }
-

@@ -200,8 +200,7 @@ async function closeQuietly(target: Closable | undefined): Promise<void> {
   const closing = target.close();
   try {
     await closing;
-  } catch {
-  }
+  } catch {}
 }
 
 /** How long a failed or ended subscription waits before the next attempt.

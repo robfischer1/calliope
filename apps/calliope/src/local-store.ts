@@ -187,8 +187,7 @@ export class LocalEngineStore implements BodyClient {
       const nodeId = path.relative(this.#root, abs).split(path.sep).join("/");
       try {
         await this.#serialized(abs, () => this.#ingest(nodeId, abs));
-      } catch {
-      }
+      } catch {}
     }
   }
 
@@ -654,8 +653,7 @@ export class LocalEngineStore implements BodyClient {
           [nodeId, targets],
         );
       }
-    } catch {
-    }
+    } catch {}
   }
 
   async #unindex(nodeId: string): Promise<void> {
@@ -664,8 +662,7 @@ export class LocalEngineStore implements BodyClient {
       const pool = await this.#ensureSearch();
       await pool.query(`DELETE FROM local_search WHERE path = $1`, [nodeId]);
       await pool.query(`DELETE FROM local_links WHERE path = $1`, [nodeId]);
-    } catch {
-    }
+    } catch {}
   }
 
   async search(

@@ -80,8 +80,7 @@ describe.skipIf(!RUN)("baby chaos: the local engine end to end", () => {
       try {
         const res = await fetch(`${chaosUrl}/openapi.json`);
         if (res.ok) break;
-      } catch {
-      }
+      } catch {}
       if (i > 60) {
         throw new Error(`chaosstore never came up. stderr: ${stderrTail}`);
       }

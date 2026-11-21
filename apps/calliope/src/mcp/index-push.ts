@@ -128,8 +128,7 @@ export class IndexingBodyClient implements BodyClient {
       const sections = await this.inner.readBody(nodeId);
       const body = sections.map((s) => s.text).join("\n\n");
       await this.index.indexDocument(nodeId, body);
-    } catch {
-    }
+    } catch {}
   }
 }
 

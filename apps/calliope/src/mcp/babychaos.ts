@@ -91,8 +91,7 @@ async function waitForChaos(url: string, tries = 120): Promise<void> {
     try {
       const res = await fetch(`${url}/openapi.json`);
       if (res.ok) return;
-    } catch {
-    }
+    } catch {}
     await new Promise((r) => setTimeout(r, 500));
   }
   throw new Error("babychaos: chaosstore never became ready");
