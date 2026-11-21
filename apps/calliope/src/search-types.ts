@@ -1,12 +1,3 @@
-/**
- * The search seam (Findability F2/F11) — the TYPES only, extracted when F14
- * deleted the fs-search implementation. Any backend implements
- * {@link SearchProvider}: the fleet routes to eros (`eros-provider.ts`),
- * the desktop serves FTS from the local engine (`local-store.ts`). The
- * degradation contract is unchanged: a dark arm is NAMED in the envelope,
- * never thrown (docs/search-architecture.md).
- */
-
 export type SearchArm = "fts" | "semantic" | "eros";
 
 export interface SearchHit {

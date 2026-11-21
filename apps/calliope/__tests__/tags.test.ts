@@ -25,16 +25,11 @@ describe("extractInlineTags — the scan.ts grammar, mirrored", () => {
   });
 
   it("only whitespace or text-start is a valid boundary — not punctuation", () => {
-    // Rob's own inline convention always has a space (or line-start) ahead of
-    // a #tag; anything else (parens, slashes, ...) is text that merely
-    // contains a `#`, not an authored tag.
     expect(extractInlineTags("(#no) parens aren't boundaries")).toEqual([]);
     expect(extractInlineTags("line one\n#yes at line start")).toEqual(["#yes"]);
   });
 
   it("does not sweep in a URL fragment's #-prefixed path segment", () => {
-    // A quoted Gmail permalink's `.../u/0/#inbox/FMfcgz...` used to read as
-    // a tag because `/` qualified as a boundary before the tightening above.
     expect(
       extractInlineTags(
         "From <https://mail.google.com/mail/u/0/#inbox/FMfcgzGrblhftmnGmMDXhFFlnVnRqHxL>",
@@ -46,9 +41,6 @@ describe("extractInlineTags — the scan.ts grammar, mirrored", () => {
     expect(
       extractInlineTags("swatch #fff and accent #deadbeef and #cafe"),
     ).toEqual([]);
-    // #4a90d9 never reaches the hex filter — the grammar already excludes a
-    // digit-led body, so this is really testing the letter-head rule stays
-    // in force.
     expect(extractInlineTags("css var #4a90d9 unchanged")).toEqual([]);
     expect(extractInlineTags("#deadline is not a color")).toEqual([
       "#deadline",
@@ -56,19 +48,15 @@ describe("extractInlineTags — the scan.ts grammar, mirrored", () => {
   });
 
   it("never reads a tag inside an inline code span (Obsidian's rule)", () => {
-    // The three measured mints: a space INSIDE the span met the boundary.
     expect(extractInlineTags("merge on `closes #issue` mapping")).toEqual([]);
     expect(extractInlineTags("the leg holds `JOIN #forge` always")).toEqual([]);
     expect(extractInlineTags("inline `#Alpha #beta` extract")).toEqual([]);
-    // A double-backtick span may hold a single backtick and still close.
     expect(extractInlineTags("``a ` #nope`` then #yes")).toEqual(["#yes"]);
-    // A word right after a span still sits on a boundary.
     expect(extractInlineTags("`x` #after")).toEqual(["#after"]);
   });
 
   it("an unpaired backtick run is literal text, not a span", () => {
     expect(extractInlineTags("a stray ` then #real")).toEqual(["#real"]);
-    // Runs pair by EXACT width: a single cannot close a double.
     expect(extractInlineTags("``open ` #still-code ` x``")).toEqual([]);
     expect(extractInlineTags("``never closed ` #live")).toEqual(["#live"]);
   });
@@ -78,24 +66,17 @@ describe("extractInlineTags — the scan.ts grammar, mirrored", () => {
       "\n",
     );
     expect(extractInlineTags(body)).toEqual(["#after", "#before"]);
-    // Tilde fences, indented up to three spaces.
     expect(extractInlineTags("   ~~~\n #in\n   ~~~\n #out")).toEqual(["#out"]);
   });
 
   it("closes a fence only on the same character, at least as long, bare", () => {
-    // A backtick line does not close a tilde fence.
     expect(extractInlineTags("~~~\n```\n #in\n~~~\n #out")).toEqual(["#out"]);
-    // A shorter run does not close; the longer one does.
     expect(extractInlineTags("````\n```\n #in\n`````\n #out")).toEqual([
       "#out",
     ]);
-    // A closer may not carry trailing text.
     expect(extractInlineTags("```\n``` x\n #in\n```\n #out")).toEqual(["#out"]);
-    // Trailing whitespace after a closer is fine.
     expect(extractInlineTags("```\n #in\n```  \n #out")).toEqual(["#out"]);
-    // Four spaces of indent is not a fence.
     expect(extractInlineTags("    ```\n #live")).toEqual(["#live"]);
-    // An unclosed fence runs to the end.
     expect(extractInlineTags("```\n #in\n #also-in")).toEqual([]);
   });
 
@@ -103,13 +84,9 @@ describe("extractInlineTags — the scan.ts grammar, mirrored", () => {
     expect(maskCode("a `b` c")).toBe("a     c");
     expect(maskCode("x\n```\ncode\n```\ny")).toBe("x\n\n\n\ny");
     expect(maskCode("no code")).toBe("no code");
-    // An unpaired run survives verbatim.
     expect(maskCode("a ` b")).toBe("a ` b");
-    // Text between spans is kept even when it repeats.
     expect(maskCode("a`b`a")).toBe("a   a");
-    // Text after a span never pairs like a run, even with an equal later part.
     expect(maskCode("`x`q`q")).toBe("   q`q");
-    // A span opened by a double run closes only on a double run.
     expect(extractInlineTags("`` #x ` ``")).toEqual([]);
   });
 
@@ -190,7 +167,6 @@ describe("FixtureTagStore", () => {
     expect(normalizeTag("#brainsoup/")).toBe("#brainsoup");
     expect(normalizeTag("brainsoup//")).toBe("#brainsoup");
     expect(normalizeTag("#Brain-Soup")).toBe("#brain-soup");
-    // Hex-color shapes at CSS lengths are junk; others are not.
     for (const junk of ["#a6d189", "#fff", "#cafe", "#deadbeef"]) {
       expect(isJunkTag(junk), junk).toBe(true);
     }
@@ -208,7 +184,6 @@ describe("FixtureTagStore", () => {
       "#alsokeep",
       "#keepme",
     ]);
-    // A standing junk row reconciles OUT on the next inline write.
     const heal = computeTagDelta([{ tag: "#ca9ee6", source: "inline" }], {
       inline: ["#fine"],
     });
@@ -224,7 +199,6 @@ describe("FixtureTagStore", () => {
     ]);
     expect(plan.remove).toEqual(["#a6d189"]);
     expect(plan.merge).toEqual([["#brainsoup/", "#brainsoup"]]);
-    // Idempotence: a clean enumeration plans nothing.
     expect(
       planTagCleanup([
         { tag: "#brain-soup", count: 4 },
@@ -236,7 +210,7 @@ describe("FixtureTagStore", () => {
   it("upsert keeps first provenance; distinct counts carriers", async () => {
     const store = new FixtureTagStore();
     await store.upsert("n1", "#a", "explicit");
-    await store.upsert("n1", "#a", "inline"); // no demote
+    await store.upsert("n1", "#a", "inline");
     await store.upsert("n2", "#a", "inline");
     await store.upsert("n2", "#b", "inline");
     expect(await store.byNode("n1")).toEqual([
@@ -251,7 +225,6 @@ describe("FixtureTagStore", () => {
       { tag: "#a", count: 1 },
       { tag: "#b", count: 1 },
     ]);
-    // An excluded carrier is not counted; a tag only it carries is absent.
     expect(await store.distinct(new Set(["n2"]))).toEqual([
       { tag: "#a", count: 1 },
     ]);

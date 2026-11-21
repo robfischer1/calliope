@@ -1,47 +1,3 @@
-/**
- * delete_note's PURGE mode (`purge=true`) — take a Note off the notes
- * graph, so a bulk import can be reversed. The verb's default is the
- * suppress mode (`note-suppress.ts`), which hides a note and keeps every
- * fact; this file is the retraction, and the protection rule both share.
- * `dissolve_note` only adds a generation and `write_container` can only
- * empty a body; neither removes the note.
- *
- * THE STORE'S RETRACTION MODEL. chaos is an append-only datom log; a
- * deletion is the retraction of every CURRENT fact, and the log keeps
- * the retracted datoms (`read_container(as_of_tx)` and `container_history`
- * still reconstruct the note). The gate calliope writes through (themis
- * `admit`) carries `removeEdge` and no `deleteNode`, so this is the same
- * shape athena's `task_delete` uses: read every current fact, retract
- * each one pinned to the scope it lives in, in one admit batch per note.
- * The dictionary row is not tombstoned, which only chaos `deleteNode`
- * can do.
- *
- * What goes, per note:
- *  - every outbound fact (name, type, parent, tags, provenance,
- *    frontmatter predicates, tree_member, supersededBy, anything else);
- *  - every inbound node fact (another note's property edge onto it, a
- *    supersession pointing at it, a hasMember, …);
- *  - each block slot's own facts (tree_position, tree_content) and any
- *    other edge onto the slot, unless ANOTHER container also holds the
- *    slot, in which case only this note's membership goes;
- *  - the note's tag-mirror rows, so `list_tags` stops counting it.
- *
- * What stays:
- *  - system edges (`ownedBy`, `hasKind`). chaos writes those itself, and
- *    the migration unwind measured that retracting ownedBy loops forever
- *    (7d3425a);
- *  - blobs. Blob lifetime belongs to the census (`blob_census`), and the
- *    census counts a blob as held while the LOG names it, so a deleted
- *    note's blobs and any blob another note shares are never reaped by
- *    this verb or because of it.
- *
- * Refusals are decided for the whole call before anything is written:
- * an id that is not a Note, a protected note (the frozen phdb archive,
- * `isArchived=true`, or a note another star has claimed via ownedBy), or
- * a note with a child outside the call refuses the call. An id with no
- * current semantic facts is `not_found`, which is how a re-delete answers.
- */
-
 import { NODE_TOKEN_RE } from "./types.js";
 import {
   type ChaosDial,
@@ -324,9 +280,6 @@ async function plan(
       continue;
     }
     deletion.blocks += 1;
-    // An ORIGIN placed from outside this call: refused unless the caller
-    // orphans the placements, whose reference is then kept so each reads
-    // dangling and still names what it placed.
     const outside = (await placementsOf(dial, slot)).filter(
       (p) => p.container === undefined || !batch.has(p.container),
     );
@@ -360,8 +313,6 @@ async function plan(
   }
   deletion.blobs = [...blobs].sort((a, b) => Number(a) - Number(b));
 
-  // A fact reached twice (the note's own membership, read from both ends)
-  // is retracted once.
   const ops = new Map<string, ChaosOp>();
   for (const e of retract) {
     for (const target of targetsOf(e)) {
@@ -476,9 +427,6 @@ export async function deleteNotes(
     return { dry_run: true, notes, totals: totalsOf(notes) };
   }
 
-  // One admit per note: a refusal mid-call leaves every earlier note fully
-  // gone and every later one untouched, never a half-deleted note. A fact
-  // two notes share (a parent edge inside the call) is retracted once.
   const done = new Set<string>();
   const landed: NoteDeletion[] = [];
   for (const p of plans) {
@@ -498,7 +446,6 @@ export async function deleteNotes(
     }
     for (const op of p.ops) done.add(JSON.stringify(op));
     if (p.origins.length > 0) {
-      // Post-commit: what actually dangles now, concurrent placements too.
       const found = (await orphanedPlacements(dial, p.origins)).filter(
         (o) => o.container === undefined || !batch.has(o.container),
       );

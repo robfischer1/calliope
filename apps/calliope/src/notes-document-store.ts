@@ -1,20 +1,3 @@
-/**
- * The notes-backed {@link DocumentStore} (F7 — the strangler finishes).
- *
- * The `documents` table's read contract, served from the MERGED store: a
- * "document" is a note (graph identity + provenance attributes + a
- * container body), reconstructed to the `DocumentRow` wire shape on read.
- * Writes are the F6/F9 sink alone — a fresh dissolve lands note-native
- * ONLY, carries no table id (the sequence dies with the table), and its
- * durable handle is `source_path`. Migrated rows keep their old ids
- * resolvable forever through the `document_id` bridge attributes the
- * prelude wrote.
- *
- * Version semantics (the F6 model, stated once): a note's history rides
- * its container's copy-on-write revisions; `bySourcePath` serves the
- * NEWEST state as one row, not one row per version.
- */
-
 import type { BodyClient } from "./types.js";
 import type {
   DocumentRow,
@@ -58,7 +41,7 @@ export class NotesDocumentStore implements DocumentStore {
     const attrs = attrsOf(edges);
     const one = (p: string): string | null => attrs.get(p)?.at(0) ?? null;
     const sourcePath = one("source_path");
-    if (sourcePath === null) return null; // not a dissolved note
+    if (sourcePath === null) return null;
     const body = (await this.client.readBody(nodeId))
       .map((s) => s.text)
       .join("\n\n");
@@ -91,7 +74,7 @@ export class NotesDocumentStore implements DocumentStore {
     );
     return {
       ok: true,
-      table: "documents", // the wire's historical field name; consumers pass it through
+      table: "documents",
       id: null,
       deduped: note.generation === "nooped",
       source_path: input.source_path,
@@ -110,8 +93,6 @@ export class NotesDocumentStore implements DocumentStore {
   }
 
   async bySourcePath(sourcePath: string): Promise<DocumentRow[]> {
-    // Vault rows: the path IS the note's name. Archive rows: the path is a
-    // truthful attribute shared by many composite-named notes.
     const [named] = await this.dial.findByName("Note", sourcePath);
     const nodes =
       named !== undefined
@@ -139,7 +120,7 @@ export class NotesDocumentStore implements DocumentStore {
     for (const node of nodes) {
       const row = await this.#rowOf(node);
       if (row !== null) rows.push(row);
-      if (rows.length >= limit * 2) break; // bound the reconstruction work
+      if (rows.length >= limit * 2) break;
     }
     rows.sort((a, b) => compareTimes(b.created_at, a.created_at));
     const capped = rows.slice(0, limit);

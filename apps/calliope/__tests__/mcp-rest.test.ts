@@ -7,11 +7,6 @@ import { mountRestFace, spanned } from "../src/mcp/rest.js";
 import { createServer } from "../src/mcp/server.js";
 import { recordingWitness } from "./rest-door.js";
 
-/**
- * The REST face: the star's only listener. Refused when the REST port is
- * unset; otherwise the same verbs.
- */
-
 const closers: (() => Promise<void>)[] = [];
 afterEach(async () => {
   while (closers.length > 0) await closers.pop()?.();
@@ -64,7 +59,6 @@ describe("the REST door", () => {
     expect(doc.openapi).toMatch(/^3\.1/);
     expect(Object.keys(doc.paths).length).toBeGreaterThan(0);
 
-    // An unknown verb is a refusal, never a 200 and never a hang.
     const unknown = await fetch(`${base}/v1/no_such_verb`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -73,13 +67,11 @@ describe("the REST door", () => {
     expect(unknown.status).toBeGreaterThanOrEqual(400);
     expect(unknown.status).toBeLessThan(500);
 
-    // A real verb is called and recorded by the witness.
     const before = got.length;
     const call = await fetch(`${base}/v1/list_tags`);
     expect(call.status).toBe(200);
     expect(got.slice(before).map((r) => r.verb)).toContain("list_tags");
 
-    // No MCP route beside it.
     expect((await fetch(`${base}/mcp`, { method: "POST" })).status).toBe(404);
   });
 

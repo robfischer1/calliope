@@ -1,21 +1,3 @@
-/**
- * The revision store (C4) — Calliope's home for git-for-ideas: the vault's
- * file-revision archive (which notes changed, when, how, with AI summaries)
- * and its revision-grain triple deltas (the frontmatter/link evolution
- * record), re-homed from the monolith.
- *
- * The archive is FROZEN history (capture stopped 2026-05-27; the go-forward
- * self-instrumentation is the Aglaia block-op stream). Source ids are
- * preserved verbatim — the deltas key on revision id, and idempotent
- * migration re-runs converge on `ON CONFLICT DO NOTHING`.
- *
- * Blob content NEVER lives here: `git_blob_sha` / `parent_blob_sha` are
- * pointers into the vault's own git repo (the blob store). Deltas arrive
- * DENORMALIZED — the monolith kept (subject, predicate, object) as pks into
- * a 13M-row node dictionary; the migration resolves them to labels so this
- * archive is self-contained.
- */
-
 import type { Pool } from "pg";
 import { MemoryJtiStore } from "./act-assertion.js";
 
@@ -281,7 +263,6 @@ export class PgRevisionStore implements RevisionStore {
   }
 
   async claimJti(jti: string, expUnix: number): Promise<boolean> {
-    // Expired rows go first (past exp + leeway the assertion is dead anyway).
     await this.#pool.query(`DELETE FROM act_jti WHERE exp < $1`, [
       Math.floor(Date.now() / 1000) - 60,
     ]);

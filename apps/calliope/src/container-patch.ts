@@ -1,22 +1,3 @@
-/**
- * The container patch — literal find/replace inside a container's blocks,
- * applied server-side as ONE save.
- *
- * Every master-plan on the notes graph is a single block of 13–156 KB, and
- * `write_container`'s update op carries the block's whole new text. A
- * one-line edit therefore shipped the entire plan through Hades. This verb
- * ships only the edits: the server reads the tree, applies the
- * replacements, and lands the changed blocks through {@link writeContainer}
- * — blob-first, one admit batch, the same tree facts a save writes.
- *
- * The batch is all-or-nothing on its counts. Each replacement names how many
- * times its `find` must occur (summed over the targeted blocks, in the text
- * as the earlier replacements left it); one miss refuses the whole batch
- * before anything is minted or admitted. Matching is literal — no regex,
- * no case folding — and counts non-overlapping occurrences left to right,
- * the same occurrences the replacement rewrites.
- */
-
 import type { Tenant } from "./chaos-client.js";
 import { readContainer } from "./container-read.js";
 import type { ContainerBlock } from "./container-read.js";
@@ -114,8 +95,6 @@ export function planPatch(
   }
   let targets: Target[];
   if (slot === undefined) {
-    // Every block that has prose. A dangling block has no text to match;
-    // the census reports it, the patch steps around it.
     targets = blocks.flatMap(asTarget);
   } else {
     const hit = blocks.find((b) => b.slot === slot);
@@ -173,8 +152,6 @@ export async function patchContainer(
   const { blocks } = await readContainer(facet, input.container);
   const plan = planPatch(blocks, input.slot, input.replacements);
   if ("code" in plan) return plan;
-  // A plan that changed nothing still goes through the save: writeContainer
-  // answers an empty op list as a noop without opening a transaction.
   const ops: ContainerOp[] = plan.changed.map((t) => ({
     op: "update",
     slot: t.slot,

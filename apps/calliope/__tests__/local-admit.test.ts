@@ -1,15 +1,7 @@
-/**
- * The local admit (spec 045 F13) — a PORT of go-court ops.go ToWire, held
- * to it by the SAME pinned constants its own tests use: cross-language
- * parity by constant, never by re-deriving with the code under test.
- */
-
 import { describe, expect, it } from "vitest";
 import { opAdd, opCreate, opRemove, scopeHash } from "../src/chaos-client.js";
 import { contentHash, toCaptureOps } from "../src/local-admit.js";
 
-// Pinned from themis go-court/internal/ops/ops_test.go (themselves pinned
-// from the Python formulas): sha256("done\x1f\x1f") and sha256("moirae").
 const DONE_CONTENT_HASH =
   "2411a110d4381fb605941b4185150c7e4e6fb0cb73bacc8b048f02e623f9884b";
 const MOIRAE_GRAPH_HASH =
@@ -34,15 +26,13 @@ describe("the local admit translation (045 F13)", () => {
       ],
       "moirae",
     );
-    expect(wire).toHaveLength(4); // create + intern + 2 edges
+    expect(wire).toHaveLength(4);
     expect(wire[0]).toEqual({
       op: "createNode",
       label: "the-card",
       kind: "Work",
     });
     expect(wire[1]).toEqual({ op: "intern", value: "done" });
-    // g is sent bare (request side moved to names 2026-08-17): chaos's
-    // capture door derives sha256(name) internally.
     expect(wire[2]).toEqual({
       op: "addEdge",
       s: { $mint: 0 },
@@ -64,7 +54,7 @@ describe("the local admit translation (045 F13)", () => {
       [opAdd("aa".repeat(32), "tree_content", { toBlob: "17" })],
       "notes",
     );
-    expect(wire).toHaveLength(1); // a blob edge interns nothing
+    expect(wire).toHaveLength(1);
     expect(wire[0]).toMatchObject({
       op: "addEdge",
       o: { $blob: "17" },

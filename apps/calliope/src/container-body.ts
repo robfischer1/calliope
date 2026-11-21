@@ -1,18 +1,3 @@
-/**
- * The container-backed note body (047 F12 follow-up — calliope#5290).
- *
- * After the cut, the tree + blob store are the ONLY home a note's prose has:
- * the `sections` table is dropped, so a {@link BodyClient} that still reads
- * it (the pg body client) answers `relation "sections" does not exist` on
- * every fleet call that reaches it. Measured 2026-08-22 on the live star:
- * `materialize_note(container_id)` erred for every id while `read_container`
- * on the same id answered the blocks — the tree held the note, only the
- * read path was wrong. The note verbs (dissolve / export / materialize) and
- * the inline-tag reconcile go through THIS adapter: the same tree read
- * `read_container` serves, the same write `write_container` is. Never a
- * table.
- */
-
 import type { Tenant } from "./chaos-client.js";
 import type { ContainerBlock } from "./container-read.js";
 import { readContainer } from "./container-read.js";
@@ -69,9 +54,6 @@ export function bodyDiffOps(
   if (minted !== null) {
     addKeys = minted;
   } else {
-    // The appended keys would outgrow the cap (or no key fits): re-lay the
-    // kept blocks and the new ones with sequence(), in this same write — one
-    // batch, so no reader sees a half-rebalanced container.
     const keys = sequence(shared + extras.length);
     for (let i = 0; i < shared; i++) {
       const cur = blocks[i];

@@ -1,36 +1,4 @@
 #!/usr/bin/env bun
-/**
- * C3 migration tool — port the monolith's dissolved-document archive
- * (`phdb history.documents`) into Calliope's document store
- * (specs/003-prose-strangle-move).
- *
- * Modes (run from a checkout where BOTH databases are reachable — e.g. `cd
- * apps/calliope && bun install && PHDB_DATABASE_URL=... bun run
- * src/mcp/migrate-documents.ts`; NOT the deployed runtime image, which ships
- * only the bundled `server.js` and no source tree):
- *
- *   bun run src/mcp/migrate-documents.ts           # migrate + parity + export (idempotent)
- *   bun run src/mcp/migrate-documents.ts --probe   # counts + parity only, writes nothing
- *
- * Env:
- *   PHDB_DATABASE_URL      the monolith's PostgreSQL (read-only use)
- *   DATABASE_URL           calliope-db (the destination)
- *   EXPORT_PATH            parity artifact path (default /tmp/calliope-documents-export.json)
- *
- * The run reads every `history.documents` row, maps it onto the star's wire
- * contract (title←title, metadata_json's provenance fields when present),
- * writes with the dedup key `(source_path, raw_hash)` — so a re-run migrates
- * zero — then verifies parity: per-row sha256(body_text) compared between
- * source and destination, plus counts. Any mismatch exits nonzero (the
- * parity gate). The artifact JSON records {counts, migrated, deduped,
- * mismatches: []} beside per-row hashes.
- *
- * The source row's identity anchor: phdb interned paths into `source_files`;
- * the star stores the path inline. The join resolves each row's path via
- * `source_files.path`; a row with no resolvable path falls back to its
- * synthetic message id (`vault-note:<sha>`), preserved verbatim so the
- * artifact stays auditable.
- */
 
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
@@ -123,16 +91,12 @@ async function run(probe: boolean): Promise<void> {
         ...(typeof meta.mtime === "string" ? { mtime: meta.mtime } : {}),
         ...(typeof meta.ctime === "string" ? { ctime: meta.ctime } : {}),
         source_kind: "phdb-migration",
-        // The DEDUP anchor: prefer the source's raw_hash so a re-run (and the
-        // original dissolve identity) converge on the same key.
         raw_hash: row.raw_hash ?? sha256(body),
       });
       if (result.deduped) stats.deduped += 1;
       else stats.migrated += 1;
     }
 
-    // Parity: the destination must hold a row for (source_path, raw_hash)
-    // whose body hashes identically to the source body.
     const destRows = await store.bySourcePath(sourcePath);
     const wantHash = sha256(body);
     const match = destRows.find((d) => d.content_hash === wantHash);
@@ -166,7 +130,7 @@ async function run(probe: boolean): Promise<void> {
   await calliope.end();
 
   if (stats.mismatches.length > 0) {
-    process.exitCode = 1; // the parity gate
+    process.exitCode = 1;
   }
 }
 

@@ -1,19 +1,4 @@
 #!/usr/bin/env bun
-/**
- * F7 — the strangler's last cut: DROP the `documents` table.
- *
- * Refuses without `--execute`, and refuses even then unless the note store
- * has CONVERGED against the table: every table row's id must resolve to a
- * note through the `document_id` bridge attributes. The check is the exact
- * inverse of the migration's write — nothing is inferred.
- *
- * OPERATOR GATE (not checkable from here): the DEPLOYED calliope image must
- * already serve the notes-backed reads (this feature's merge), because the
- * old image reads the table. Check the running STELLAR_REVISION first.
- *
- *   bun run src/mcp/drop-documents.ts             # probe: convergence report
- *   bun run src/mcp/drop-documents.ts --execute   # verify, then DROP
- */
 
 import { pathToFileURL } from "node:url";
 import { Pool } from "pg";

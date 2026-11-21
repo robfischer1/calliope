@@ -1,29 +1,4 @@
 #!/usr/bin/env node
-/**
- * The Grace sidecar entry — the desktop serves the REAL engine (045 F13),
- * and ONLY the engine (046 F14: the fs backend and its companions are
- * deleted; there is no second implementation left to fall back to).
- *
- * The ferry wire (`/body`) rides ONE
- * {@link LocalEngineStore}: sections are the graph's tree, history is the
- * graph as-of a transaction, search is the engine's postgres, and the
- * markdown directory is the WORKING TREE the store projects and ingests.
- *
- * Boot contract (the Rust shell parses it — UNCHANGED since G2):
- *  - argv: `--root <directory>` (required) `--port <n>` (default 0 = ephemeral)
- *  - binds 127.0.0.1 ONLY; nothing listens beyond the machine
- *  - exactly ONE stdout line: `{"event":"listening","port":<N>}` — stdout is
- *    otherwise silent (the stdio-bin convention); logs go to stderr
- *  - exits 0 on SIGTERM/SIGINT and on stdin close (the orphan guard: a parent
- *    that crashed without killing us closes our piped stdin)
- *  - exits 1 on a bad root, a bind failure, or a MISSING ENGINE PAYLOAD —
- *    without the engine there is no store to serve
- *
- * The handshake never waits on the engine: the listener answers first and
- * `/body` requests WAIT (bounded by the boot itself) until the
- * engine is ready. Supervision stays crash-only: an engine child dying
- * after boot exits the sidecar; Grace's respawn ladder brings it back.
- */
 
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -106,7 +81,6 @@ function corsHeaders(req: IncomingMessage): Record<string, string> {
     "Access-Control-Allow-Headers": "content-type",
     Vary: "Origin",
   };
-  // Credentials mode needs the explicit echo above (never `*`) plus this.
   if (typeof origin === "string" && origin !== "") {
     headers["Access-Control-Allow-Credentials"] = "true";
   }
@@ -131,8 +105,6 @@ async function dispatch(
       return readBody(store, nodeId);
     case "write_body":
       return writeBody(store, nodeId, (args.sections ?? []) as SectionInput[]);
-    // F14: block-grain applies went LIVE locally — engine slots carry the
-    // durable identity the fs grain never had.
     case "apply_section_ops":
       return applySectionOps(
         store,
@@ -151,12 +123,8 @@ async function dispatch(
         nodeId,
         typeof args.revision === "string" ? args.revision : "",
       );
-    // 024/F1 — the compound reference, path form: the path IS the node
-    // identity on the desktop. A missing file still gets a reference (the
-    // path is a valid address before its first write); a malformed or
-    // escaping path refuses exactly as every other verb.
     case "copy_reference": {
-      await readBody(store, nodeId); // path validation, same refusals
+      await readBody(store, nodeId);
       const base = nodeId.split("/").pop() ?? nodeId;
       const title = base.replace(/\.(md|markdown)$/i, "");
       return {
@@ -164,13 +132,10 @@ async function dispatch(
         address_form: "path",
       };
     }
-    // Tags stay a computed walk of the working tree (the desktop mints no
-    // hasTag facts; extraction reads file text only — no sections derived).
     case "list_tags":
       return store.listTags();
     case "list_by_tag":
       return store.listByTag(typeof args.tag === "string" ? args.tag : "");
-    // Findability F11 — mentions(id) over the engine's own index.
     case "mentions": {
       const id = typeof args.id === "string" ? args.id : "";
       if (id.trim() === "") {
@@ -178,7 +143,6 @@ async function dispatch(
       }
       return store.mentions(id);
     }
-    // Findability F2 — search on the engine's postgres; dark arms NAMED.
     case "search": {
       const query = typeof args.query === "string" ? args.query : "";
       if (query.trim() === "") {
@@ -266,7 +230,6 @@ function main(): void {
     exit(1);
   }
 
-  // The engine payload is REQUIRED (F14: no fs backend left to serve).
   const payload = resolvePayload(process.env, dirname(execPath));
   if (payload === null) {
     process.stderr.write(
@@ -287,7 +250,7 @@ function main(): void {
     resolveReady = res;
     rejectReady = rej;
   });
-  readyGate.catch(() => undefined); // observed per request; never unhandled
+  readyGate.catch(() => undefined);
 
   void (async () => {
     const engine = await startEngine(payload, root, (what) => {
@@ -312,8 +275,6 @@ function main(): void {
       `calliope-sidecar: engine ready (pg 127.0.0.1:${String(engine.pgPort)}, ` +
         `chaos 127.0.0.1:${String(engine.chaosPort)})\n`,
     );
-    // Catch-up AFTER ready: the working tree seeds/reconciles the store in
-    // the background; reads ingest lazily meanwhile.
     void store.scan();
   })().catch((err: unknown) => {
     state.status = "failed";
@@ -345,9 +306,6 @@ function main(): void {
     const address = server.address();
     const actual =
       address !== null && typeof address === "object" ? address.port : port;
-    // The ONE stdout line — the Rust shell's handshake. writeSync(1): the
-    // compiled bun binary buffers async stdout writes to a redirected file,
-    // which starves the parent's handshake read — flush synchronously.
     writeSync(1, `${JSON.stringify({ event: "listening", port: actual })}\n`);
     process.stderr.write(
       `calliope-sidecar: serving ${root} on http://127.0.0.1:${String(actual)}\n`,
@@ -368,10 +326,6 @@ function main(): void {
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
-  // Orphan guard — OPT-IN (--parent-guard): the spawning parent pipes our
-  // stdin and holds it open; if the parent dies, the pipe closes and we exit.
-  // Never armed by default: a /dev/null stdin EOFs instantly and would kill
-  // a hand-launched sidecar at boot.
   if (parentGuard) {
     process.stdin.resume();
     process.stdin.on("close", shutdown);

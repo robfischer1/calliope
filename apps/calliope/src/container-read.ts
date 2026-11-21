@@ -1,14 +1,3 @@
-/**
- * The container read and history (spec 042, master-plan F5).
- *
- * A container read resolves the tree, then fetches its prose in ONE
- * batched blob lookup. History stops being a feature with its own tables:
- * the graph stamped every save with a transaction, so the listing is the
- * door's `history` verb and any past state is the same tree read as-of an
- * earlier transaction. A tree fact naming an absent blob surfaces as
- * DANGLING — reported, never skipped, never fabricated.
- */
-
 import { createHash } from "node:crypto";
 import type { ProseStore } from "./blob-store.js";
 import {
@@ -94,7 +83,7 @@ async function assemble(
   const ids = slots
     .map((s) => s.blobId)
     .filter((id): id is string => id !== null);
-  const texts = await blobs.getTexts(ids); // ONE round trip [MP: batch]
+  const texts = await blobs.getTexts(ids);
   return slots.map((s) => {
     const text = s.blobId !== null ? (texts.get(s.blobId) ?? null) : null;
     return {
@@ -208,7 +197,6 @@ export async function readContainer(
           opts.asOfTx,
           opts.facts === true,
         );
-  // A placement reads its origin's blob as of the same transaction.
   const slots = await resolvePlacements(facet.dial, raw, opts?.asOfTx ?? null);
   const blocks = await assemble(
     facet.blobs,
@@ -271,8 +259,6 @@ export async function containerHistory(
   }
   return [...byTx.values()].sort((a, b) => a.tx - b.tx);
 }
-
-// ── the batch read (calliope_read_containers) ────────────────────────────────
 
 /** The most containers one batch read takes. */
 export const READ_CONTAINERS_MAX = 500;
@@ -391,8 +377,6 @@ export async function readContainers(
       slots,
     });
   }
-  // Placements resolve through their origins in ONE more quads read for the
-  // whole batch; the revision then moves when an origin is edited.
   const resolved = await resolvePlacements(
     dial,
     shaped.flatMap((c) => c.slots),
@@ -424,7 +408,6 @@ export async function readContainers(
         position: s.position,
         blobId: s.blobId,
         text,
-        // Dangling is a fact of the graph, not of whether text was asked for.
         dangling: s.blobId === null || (opts.texts && text === null),
         ...(s.facts !== undefined ? { facts: s.facts } : {}),
         ...refBlock(s, homes),

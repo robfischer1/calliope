@@ -1,10 +1,3 @@
-/**
- * A8 — the revision reads: fixture-client lineage recording and the
- * read_body_revisions / read_body_at tool handlers (capability guard
- * included). The PG reconstruction has its own docker-gated coverage in
- * pg-client.test.ts; this file pins the wire contract store-free.
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { readBodyAt, readBodyRevisions } from "../src/mcp/tools.js";

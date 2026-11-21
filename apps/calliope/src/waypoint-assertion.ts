@@ -1,16 +1,3 @@
-/**
- * The Kairos act assertion as the waypoint hands it over: claims, not a token.
- *
- * The prime waypoint verifies the assertion carried in `X-Act-Assertion`
- * (flux infrastructure/act-assertion.yaml, kairos-act-calliope: issuer Kairos,
- * audience calliope), removes it, and writes its claims as
- * `x-kairos-assertion-*`; mesh-opa checks the act and the window. Its
- * waypoint-claims-strip deletes a client's copy of every `x-kairos-*` header
- * first. calliope compares what is left: the act is this verb, args_sha256 is
- * the digest of the arguments about to run, and the jti has not been spent.
- * No signature, key or JWKS is read here.
- */
-
 import { createHash, timingSafeEqual } from "node:crypto";
 import { canonicalAssertion } from "@forge/stellar-core-ts/canonical";
 import { HANDLE_RE } from "./act-assertion.js";

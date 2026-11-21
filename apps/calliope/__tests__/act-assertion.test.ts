@@ -179,7 +179,7 @@ describe("verifyActAssertion", () => {
     const cache = new JwksCache("u", f, () => t);
     expect(await cache.keyFor(KID)).toBeDefined();
     fail = true;
-    t += 400_000; // stale: the refetch fails, the key is held
+    t += 400_000;
     expect(await cache.keyFor(KID)).toBeDefined();
     const before = calls;
     for (let i = 0; i < 5; i++) {

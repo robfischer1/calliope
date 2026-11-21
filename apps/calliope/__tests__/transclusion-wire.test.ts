@@ -1,8 +1,3 @@
-/**
- * Transclusion over the MCP surface (Lamarr37-002): the wire codes, the
- * delete_note purge guard, and the fan-out that republishes every container
- * reading an edited origin.
- */
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";

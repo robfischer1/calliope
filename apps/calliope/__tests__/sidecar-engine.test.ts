@@ -1,14 +1,3 @@
-/**
- * The sidecar over the REAL engine (spec 045 F13) — full boot as Grace
- * runs it: the sidecar is a CHILD PROCESS launched with the exact spawn
- * contract (--root, --port 0, --parent-guard, one stdout handshake line),
- * the payload beside it boots initdb + postgres + chaosstore. Plus the crash-only pin: a dead
- * engine child takes the sidecar down for Grace's respawn ladder.
- *
- * Gated on CALLIOPE_BABYCHAOS_DIR (an assembled payload —
- * scripts/fetch-babychaos-payload.ts --platform linux); skips otherwise.
- */
-
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -132,24 +121,16 @@ describe.skipIf(!RUN)("the sidecar over the real engine (045 F13)", () => {
   });
 
   it("crash-only: a dead engine child takes the sidecar down (exit 1)", async () => {
-    // A SECOND sidecar with its own root, so the shared one above survives.
     const root2 = await mkdtemp(join(tmpdir(), "grace-root-"));
     const second = await launch(root2);
     try {
       await waitEngineReady(second.port);
-      // The postgres serving THIS root names its pgdata on the command line.
       const dataDir = join(root2, ".grace", "babychaos", "pgdata");
       const exited = new Promise<number | null>((resolve) => {
         second.proc.on("exit", (code) => {
           resolve(code);
         });
       });
-      // Arg-array spawn, no shell: an `sh -c "pkill -f <path>"` wrapper's
-      // OWN cmdline contains the pattern, so pkill would kill its shell
-      // and the exec reports failure (found the hard way). SIGKILL, not
-      // TERM: a TERM'd postmaster does a SMART shutdown and waits for the
-      // sidecar's own idle pool connections — a hang, not a crash. A real
-      // crash is KILL-shaped.
       const killed = spawnSync("pkill", ["-9", "-f", dataDir]);
       expect(killed.status).toBe(0);
       expect(await exited).toBe(1);
@@ -161,8 +142,6 @@ describe.skipIf(!RUN)("the sidecar over the real engine (045 F13)", () => {
   }, 180_000);
 
   it("reuses the data directory on a second boot (initdb once)", () => {
-    // The shared sidecar's pgdata exists; a restart against the same root
-    // must come up ready WITHOUT re-initializing (PG_VERSION present).
     expect(
       existsSync(join(root, ".grace", "babychaos", "pgdata", "PG_VERSION")),
     ).toBe(true);

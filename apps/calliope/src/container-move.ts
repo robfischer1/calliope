@@ -1,15 +1,3 @@
-/**
- * Move blocks between containers — the slot is the durable identity, so a
- * move re-homes its membership and re-keys its position and touches nothing
- * else: blob, slot token and the slot's facts are unchanged, so history from
- * BOTH containers still reaches the slot's transactions (the door's closure
- * over `tree_member` includes every slot a container ever held).
- *
- * One admit batch, conditional on what was read: the source's member set,
- * the destination's member set and each moved slot's position must still
- * hold, else the whole batch refuses `conflict` and nothing is written.
- */
-
 import {
   ChaosClientError,
   type ChaosDial,
@@ -131,10 +119,8 @@ export async function moveBlocks(
     "destination",
   );
 
-  // Original relative order, by the source's position.
   const picked = source.filter((s) => slots.includes(s.slot));
 
-  // The gap in the destination: (lo, hi) exclusive.
   let lo: string | null;
   let hi: string | null;
   if (where === "end") {
@@ -161,11 +147,6 @@ export async function moveBlocks(
     );
   }
 
-  // n ascending keys inside the gap: each between the previous and hi.
-  // When they would outgrow the key cap (or no key fits), re-lay the whole
-  // destination with sequence() instead: the same batch repositions the
-  // destination's blocks and places the moved ones, so one admit is the
-  // whole rebalance.
   let moved: { slot: string; position: string }[] = [];
   const rebalanced: { slot: string; from: string; to: string }[] = [];
   const run = mintRun(lo, hi, picked.length);

@@ -1,13 +1,3 @@
-/**
- * Time facts through the notes-graph writers: dtype on the wire, the retract
- * hazard (a read answers the rendering, not the stored form), instant
- * equality, instant sort, and the local admit's canonical hashing.
- *
- * The FixtureChaosDial stands in for chaos: an `instant` is held as µs and
- * read back rendered Eastern, and an untyped retract of that rendering does
- * NOT hit it — the very hazard the writers must defeat.
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { FixtureChaosDial, opAdd, opRemove } from "../src/chaos-client.js";
@@ -59,7 +49,6 @@ describe("the notes sink writes provenance times typed", () => {
       "2026-10-17T22:12:00+00:00",
     );
     expect(await valuesOf(dial, res.node_id, "mtime")).toEqual([EASTERN]);
-    // naive -> wallclock: answered verbatim
     expect(await valuesOf(dial, res.node_id, "ctime")).toEqual([
       "2026-10-17T18:11:45",
     ]);
@@ -88,7 +77,6 @@ describe("the notes sink writes provenance times typed", () => {
       ...input,
       mtime: "2026-10-17T18:11:45.188-04:00",
     });
-    // the held rendering equals the wanted instant: no retract, no add
     const attrBatches = dial.admits
       .slice(before)
       .flatMap((a) => a.ops)
@@ -268,7 +256,6 @@ describe("NotesDocumentStore orders by instant", () => {
     const dial = new FixtureChaosDial();
     const store = new NotesDocumentStore(client, dial, SCOPE);
     const when = new Map([
-      // lexically last, chronologically first
       ["Notes/x.md", "2026-10-17T23:00:00+05:00"],
       ["Notes/y.md", "2026-10-17T15:00:00-04:00"],
       ["Notes/z.md", "2026-10-17T12:00:00Z"],
@@ -307,7 +294,6 @@ describe("the local admit hashes the canonical form", () => {
     expect(wire[1]).toMatchObject({
       o: contentHash(MICROS, "instant", ""),
     });
-    // and never the hash of the raw text
     expect(wire[1]).not.toMatchObject({ o: contentHash(Z) });
     expect(wire[1]).not.toMatchObject({ o: contentHash(Z, "instant") });
   });

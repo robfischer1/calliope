@@ -2,11 +2,6 @@
  * write_container({replacements}) — literal find/replace inside a
  * container's blocks, landed server-side as ONE save, all-or-nothing on its
  * counts.
- *
- * Every master-plan on the notes graph is one block of 13–156 KB, and the
- * only edit path carried the whole text. These pin the planner (counts,
- * sequencing, targeting, refusals) and the verb (one transaction, the tx
- * id, a refusal writes nothing, tags reconcile, non-notes tenants skip it).
  */
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -216,7 +211,6 @@ describe("patchContainer", () => {
     const tree = await readContainer(facet, doc);
     expect(res.slots_changed).toEqual(tree.blocks.map((b) => b.slot));
     expect(res.counts).toEqual([{ expected: 3, found: 3 }]);
-    // The default tenant is notes: the batch rode the notes scope.
     expect(dial.admits.at(-1)?.scope).toBe("notes");
     expect(tree.blocks.map((b) => b.text)).toEqual([
       "alpha - [ ] one\nalpha - [ ] two",
@@ -498,8 +492,6 @@ describe("write_container with replacements", () => {
         arguments: args,
       });
       expect(res.isError, JSON.stringify(args)).toBe(true);
-      // Refused at the schema, before the handler (the door words the
-      // parse refusal as bad_args, dispatch 283): the detail is the pattern.
       expect(res.structuredContent, JSON.stringify(args)).toMatchObject({
         code: "bad_args",
         detail: expect.stringContaining("must match pattern") as string,
@@ -529,7 +521,6 @@ describe("write_container with replacements", () => {
         { type: "text", text: `bad_args: ${detail}` },
       ]);
     }
-    // Nothing was written: the one block still reads as seeded.
     const read = await mcp.callTool({
       name: "read_container",
       arguments: { container: node },

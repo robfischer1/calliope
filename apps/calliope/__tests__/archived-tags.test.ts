@@ -1,15 +1,4 @@
-/**
- * Archived notes carry no inline tags.
- *
- * The phdb-migration corpus (2026-07-05) landed 2,479 non-vault documents on
- * the notes scope — C source, spreadsheets, mail — keyed `source_path :: file`
- * and stamped `isArchived=true` as the exclusion predicate. The inline-tag
- * hook then ran the tag grammar over every body, and the picker's chip row
- * filled with `#include`, `#ifdef`, `#div/0`, `#n/a`, `#inbox/<gmail id>`.
- * Two halves here: the hook skips an archived note, and the one-shot sweep
- * takes the standing inline rows off every archived note, explicit rows
- * untouched, probe mode writing nothing.
- */
+/** Archived notes carry no inline tags. */
 import { afterAll, describe, expect, it, vi } from "vitest";
 import {
   FixtureChaosDial,
@@ -30,24 +19,6 @@ import { installOfflineGuard } from "./setup/offline.js";
 
 const SCOPE = "notes";
 
-// GUARD 2 — a chaos and themis that name nothing, for the `main()` cases below.
-//
-// `main` picks its dial with a CONDITION: `deps.dial ?? new LiveChaosDial()`.
-// Passing a FixtureChaosDial therefore leaves this file offline only because of
-// a value it happens to pass, and Stryker's LogicalOperator mutator rewrites
-// that `??` to `&&` — a truthy fixture then makes the expression evaluate to a
-// REAL LiveChaosDial. `src/mcp/*.ts` is in this package's mutate glob, so the
-// mutant is generated whenever cleanup-tags.ts is touched.
-//
-// LiveChaosDial's constructor reads process.env, NOT the `env` object main()
-// was handed, so the `{ DATABASE_URL: "postgres://unused" }` below cannot
-// reach it. Unset, it falls back to `http://chaos` and
-// `http://themis`, which RESOLVE in the gate and mutation lanes because
-// those run in the cluster — and the sweep's first act is a find_by_value over
-// the live notes graph (infra#9758, the class; stellar-core-ts#23, the fix).
-//
-// The repo-wide fetch guard in __tests__/setup/offline.ts is the independent
-// backstop. No single mutant defeats both.
 const DEAD_URL = "http://127.0.0.1:1";
 vi.stubEnv("CALLIOPE_CHAOS_URL", DEAD_URL);
 vi.stubEnv("CHAOS_URL", DEAD_URL);
@@ -56,11 +27,6 @@ afterAll(() => {
   vi.unstubAllEnvs();
 });
 
-// GUARD 1 — no fetch leaves loopback, whatever address a bypassed fake uses.
-// Independent of the pin above: a mutant can rewrite an operator in
-// cleanup-tags.ts, it cannot un-replace globalThis.fetch. See
-// ./setup/offline.ts, including why it is imported here rather than wired into
-// vitest.config.ts's setupFiles, which is where it belongs.
 installOfflineGuard();
 
 async function mintNote(
@@ -70,8 +36,6 @@ async function mintNote(
 ): Promise<string> {
   const ops = [
     opCreate("Note", label),
-    // A non-empty createNode label names its mint for later ops in the
-    // same batch (themis's rule, mirrored by the fixture dial).
     opAdd(label, "hasType", { toLiteral: "Note" }),
     ...(archived ? [opAdd(label, "isArchived", { toLiteral: "true" })] : []),
   ];
@@ -119,7 +83,6 @@ describe("the inline-tag hook skips an archived note", () => {
     expect(
       isArchived([{ predicate: "isArchived", value: "true", isNode: true }]),
     ).toBe(false);
-    // Another predicate's "true" is not this one's.
     expect(
       isArchived([{ predicate: "published", value: "true", isNode: false }]),
     ).toBe(false);
@@ -142,7 +105,6 @@ describe("cleanup-tags --archived (the CLI seam)", () => {
     expect(lines).toEqual([
       `${JSON.stringify({ probe: true, archived: 1, carriers: 1, rows: 1, tags: ["#include"] })}\n`,
     ]);
-    // Probe wrote nothing.
     expect((await store.byNode(a)).map((r) => r.tag)).toEqual(["#include"]);
   });
 
@@ -171,8 +133,6 @@ describe("cleanup-tags --archived (the CLI seam)", () => {
     const a = await mintNote(dial, "F:\\OneDrive :: a.c", true);
     await reconcileNoteTags(dial, SCOPE, store, a, { inline: ["#include"] });
     const lines: string[] = [];
-    // The legacy mode reads note_tags off the pool — a closed port refuses,
-    // and the archived sweep must NOT have run in its place.
     await expect(
       main(
         ["bun", "cleanup-tags.ts", "--probe"],
@@ -217,9 +177,6 @@ describe("sweepArchivedTags", () => {
     const a2 = await mintNote(dial, "F:\\OneDrive :: b.xlsx", true);
     const a3 = await mintNote(dial, "F:\\OneDrive :: clean.txt", true);
     const live = await mintNote(dial, "Journal/2026-08-22.md", false);
-    // The standing rows, as the pre-fix hook left them: inline junk on the
-    // archived notes, an explicit folder tag beside one, and a live note's
-    // own inline tag that must survive.
     await reconcileNoteTags(dial, SCOPE, store, a1, {
       inline: ["#include", "#ifdef"],
       explicit: ["#homelab"],
@@ -268,14 +225,12 @@ describe("sweepArchivedTags", () => {
         .sort();
     expect(await tagsOf(a1)).toEqual(["#homelab"]);
     expect(await tagsOf(a2)).toEqual([]);
-    // The live note is not the sweep's business — junk or not.
     expect((await store.byNode(live)).map((r) => r.tag).sort()).toEqual([
       "#journal",
       "#n/a",
     ]);
     expect(await tagsOf(live)).toEqual(["#journal", "#n/a"]);
 
-    // Idempotent: a second sweep finds no carriers.
     expect(await sweepArchivedTags(dial, SCOPE, store)).toEqual({
       archived: 3,
       carriers: 0,
@@ -295,9 +250,7 @@ describe("cleanup-tags --heal (mirror follows the graph)", () => {
     await reconcileNoteTags(dial, SCOPE, store, lost, {
       inline: ["#we", "#other"],
     });
-    // The retraction a graph verb would make — the mirror never hears of it.
     await dial.admit([opRemove(lost, "hasTag", { toLiteral: "#we" })], SCOPE);
-    // The same literal under another predicate is not the tag edge.
     await dial.admit([opAdd(lost, "hasName", { toLiteral: "#we" })], SCOPE);
 
     const probe = await healMirror(dial, store, ["We"], true);
@@ -348,7 +301,6 @@ describe("cleanup-tags --heal (mirror follows the graph)", () => {
     ]);
     expect(healTags(["--probe", "--heal", "#a"])).toEqual(["#a"]);
     expect(healTags(["--probe"])).toEqual([]);
-    // No --heal at all names nothing, even with bare words present.
     expect(healTags(["#a", "#b"])).toEqual([]);
   });
 });

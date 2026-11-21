@@ -1,31 +1,4 @@
 #!/usr/bin/env bun
-/**
- * C2 migration tool — carve the prose-body facet out of Chaos into the
- * sovereign store (specs/002-facet-carve-sovereign-store).
- *
- * Modes (run from a checkout with reachability to both `chaos` and
- * `calliope-db` — e.g. `cd apps/calliope && bun install && bun run
- * src/mcp/migrate.ts`; NOT the deployed runtime image, which ships only the
- * bundled `server.js` and no source tree):
- *
- *   bun run src/mcp/migrate.ts            # migrate + parity + export (idempotent)
- *   bun run src/mcp/migrate.ts --probe    # drift probe: count body facets left in Chaos
- *   bun run src/mcp/migrate.ts --retract  # post-cutover: retract body facets from Chaos
- *                                       #   (refuses without a prior export file)
- *
- * The default run enumerates every `hasPart`-carrying subject in the `moirae`
- * graph (chaos `graph_edges`), copies each body into pg PRESERVING section ids
- * / text / order keys (provenance `calliope` — the substrate does not record
- * per-section authorship on reads), writes a full JSON export artifact, then
- * verifies per-node parity (sha256 over the ordered (order_key, text) list read
- * back from BOTH stores). Any mismatch exits nonzero — the parity gate.
- *
- * Retraction is the point of no return and is gated: it requires the export
- * artifact from a prior clean run to exist, and re-verifies parity before
- * removing anything. It removes, per body owner, the `hasPart` edges, and per
- * section-typed node (current AND superseded versions), the `text` /
- * `order_key` / `hasType` facts.
- */
 
 import { createHash } from "node:crypto";
 import { writeFileSync, existsSync } from "node:fs";
@@ -63,7 +36,6 @@ function contentHashOfBody(sections: readonly Section[]): string {
 
 /** Dial chaos `graph_edges` for the full moirae enumeration. */
 async function enumerateMoirae(live: LiveUraniaCapture): Promise<EdgeNode[]> {
-  // rpc is private; ride the documented tool surface through a tiny shim.
   const rpc = (
     live as unknown as {
       rpc(verb: string, args: Record<string, unknown>): Promise<unknown>;
@@ -142,7 +114,6 @@ async function retract(
       `--retract refused: export artifact ${EXPORT_PATH} not found — run the migration first.`,
     );
   }
-  // Re-verify parity against the live pg store before removing anything.
   const owners = bodyOwners(nodes);
   for (const nodeId of owners) {
     const source = await chaosClient.readBody(nodeId);
@@ -184,7 +155,6 @@ async function retract(
     }
   }
 
-  // Chunked captures: each capture is one tx; keep batches bounded.
   const CHUNK = 400;
   for (let i = 0; i < ops.length; i += CHUNK) {
     await live.capture(ops.slice(i, i + CHUNK), "calliope");
@@ -240,8 +210,6 @@ async function main(): Promise<void> {
   }
 }
 
-// Run only when invoked as the bin, not when imported by a test — compare the
-// resolved entry path (argv[1]) against this module's URL (ESM "is main").
 const entry = process.argv[1];
 if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
   main().catch((err: unknown) => {

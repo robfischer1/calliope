@@ -1,29 +1,4 @@
-/**
- * The tag path (C9) — extraction + reconcile, Calliope-authoritative.
- *
- * The grammar MIRRORS theia `packages/aglaia/src/decorations/scan.ts` (the
- * render side): `#` at word-start, a letter head, then letters/digits/_/-//.
- * Aglaia renders tags; Calliope is the ONE extractor that writes them —
- * scan.ts stays render-only (the master-plan's sole-authoritative decision).
- *
- * Tag identity is the lowercase-normalized literal (`#journal`) — the
- * `find_by_value` point lookup and the A21 `tag:` lens need one canonical
- * form. Tag-nodes (rename, metadata) are the later evolution, not this pass.
- */
-
-/**
- * scan.ts:62, verbatim — mirrored, not shared (render vs write halves).
- *
- * A tag starts at text-start or after whitespace — never mid-word, and never
- * after any other punctuation. The prior grammar allowed any non-word
- * character ahead of `#`, which let a quoted Gmail permalink's URL fragment
- * (`.../u/0/#inbox/FMfcgzGrblhftmnGmMDXhFFlnVnRqHxL`) get swept in as a tag —
- * the `/` right before `#` qualified as a boundary. Rob's own inline
- * convention always has a space (or line-start) ahead of a `#tag`, so
- * tightening the boundary to whitespace-only is both the fix and the true
- * grammar; frontmatter's `tags:` field is a separate explicit source and
- * never runs through this regex at all.
- */
+/** scan.ts:62, verbatim — mirrored, not shared (render vs write halves). */
 const TAG_RE = /(^|\s)#([A-Za-z][\w/-]*)/g;
 
 /**
@@ -41,12 +16,9 @@ function isHexColor(tag: string): boolean {
 }
 
 /**
- * F11: a hex-color-shaped tag is junk on EVERY write path, not only at
- * inline extraction — the explicit path (`create_note` tags[]) and the
- * reconcile chokepoint call this on the normalized form. The measured
- * store carried nine Catppuccin palette literals (`#a6d189`…) written
- * before the extractor grew its guard; filtering the view would have left
- * them for the next consumer, so the rule lives at the data.
+ * F11: a hex-color-shaped tag is junk on EVERY write path, not only at inline
+ * extraction — the explicit path (`create_note` tags[]) and the reconcile
+ * chokepoint call this on the normalized form.
  */
 export function isJunkTag(normalized: string): boolean {
   const body = normalized.startsWith("#") ? normalized.slice(1) : normalized;
@@ -75,15 +47,7 @@ const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
 /**
  * Blank out the code in a body so the tag grammar never reads it — the rule
  * Obsidian applies: a `#word` inside a fenced block or an inline code span is
- * code, not a tag. MEASURED 2026-10-03: the whitespace boundary above still
- * minted `#issue` (from `` `closes #issue` ``), `#forge` (`` `JOIN #forge` ``)
- * and `#beta` (`` `#Alpha #beta` ``) — the space INSIDE the span qualified.
- *
- * Fences follow CommonMark: the closer is the same character, at least as
- * long as the opener; an unclosed fence runs to the end of the text. Inline
- * spans pair a backtick run with the next run of EXACTLY the same length; an
- * unpaired run is literal text. Masked characters become spaces, so a word
- * after a span still sits on a whitespace boundary.
+ * code, not a tag.
  */
 export function maskCode(text: string): string {
   let fence: string | undefined;
@@ -96,8 +60,6 @@ export function maskCode(text: string): string {
         fence = marker;
         return "";
       }
-      // A run holding the opener is the same character and at least as long
-      // (runs are homogeneous); the closer line carries nothing else.
       if (
         marker !== undefined &&
         marker.includes(fence) &&
@@ -147,17 +109,7 @@ export interface TagDelta {
   toRemove: string[];
 }
 
-/**
- * Compute the reconcile against the standing rows.
- *
- * - `explicit` (the create path): additive — new explicit tags land; nothing
- *   is ever removed by an explicit write (folder tags accumulate; removal is
- *   a deliberate later surface, not a side effect).
- * - `inline` (the body-write path): the inline set replaces the standing
- *   inline-sourced set; explicit-sourced rows are UNTOUCHABLE (deleting a
- *   paragraph must not strip `#journal`).
- * - A tag present as both keeps its standing provenance (explicit wins).
- */
+/** Compute the reconcile against the standing rows. */
 export function computeTagDelta(
   standing: TagRow[],
   next: { inline?: string[]; explicit?: string[] },
@@ -169,7 +121,6 @@ export function computeTagDelta(
   if (next.explicit !== undefined) {
     for (const raw of next.explicit) {
       const tag = normalizeTag(raw);
-      // F11: the chokepoint both paths flow through never admits junk.
       if (isJunkTag(tag)) continue;
       if (!have.has(tag)) {
         toAdd.push({ tag, source: "explicit" });

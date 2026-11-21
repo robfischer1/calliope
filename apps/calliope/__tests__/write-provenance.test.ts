@@ -1,12 +1,3 @@
-/**
- * F2 (025) — validateWriteProvenance: the offset⇒session-principal invariant.
- *
- * A log offset without a session author is a guess about provenance; the
- * guard makes it structurally impossible on every write path (the boundary
- * enforces it for callers; the store re-checks so no internal caller can
- * bypass it).
- */
-
 import { describe, expect, it } from "vitest";
 import { validateWriteProvenance } from "../src/types.js";
 

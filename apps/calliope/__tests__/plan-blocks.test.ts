@@ -1,8 +1,3 @@
-/**
- * C7 block-addressing scheme — the pure parser. Proves the feature-head grammar
- * (the conventions in the wild), block extent, size/title split, and slicing.
- */
-
 import { describe, expect, it } from "vitest";
 import {
   parsePlanBlocks,
@@ -70,7 +65,6 @@ describe("parsePlanBlocks — the block-addressing scheme", () => {
     const c6 = at(parsePlanBlocks(PLAN), 0);
     expect(c6.text).toContain("#### C6 sub-note");
     expect(c6.text).toContain("stays inside C6");
-    // ...but not the next sibling feature.
     expect(c6.text).not.toContain("C7 —");
   });
 

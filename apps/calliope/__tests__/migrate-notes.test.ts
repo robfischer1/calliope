@@ -1,9 +1,3 @@
-/**
- * F6 — the documents→notes migration over the fixture seams: version
- * ordering, byte parity, idempotent convergence, and the parity gate's
- * failure mode.
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { FixtureChaosDial } from "../src/chaos-client.js";
@@ -51,7 +45,6 @@ describe("migrateNotes (F6)", () => {
       parity_mismatches: [],
     });
 
-    // The versioned path: newest active, oldest reconstructable.
     const [node] = await dial.findByName("Note", "Notes/versioned.md");
     if (node === undefined) throw new Error("note missing");
     const body = await client.readBody(node);
@@ -63,12 +56,10 @@ describe("migrateNotes (F6)", () => {
     expect(
       (await client.readRevisionAt(node, oldest.revision)).map((s) => s.text),
     ).toEqual(["v1 body"]);
-    // Inline tags rode along.
     const edges = await dial.edges(node);
     expect(
       edges.some((e) => e.predicate === "hasTag" && e.value === "#tagged"),
     ).toBe(true);
-    // schema_type preserved on the other path.
     const [single] = await dial.findByName("Note", "Notes/single.md");
     if (single === undefined) throw new Error("note missing");
     expect(
@@ -92,18 +83,12 @@ describe("migrateNotes (F6)", () => {
 
     const second = await migrateNotes(store, client, dial, SCOPE, tags);
     expect(second.parity_mismatches).toEqual([]);
-    // The older version re-sinks as a superseding generation? NO — the sink
-    // sees the ACTIVE body. v1 differs from v2, so a naive re-run would
-    // thrash v1->v2 forever. The migration replays versions oldest-first,
-    // so the final state converges back to v2 — but a converged store must
-    // not even do that. Assert the strong form: zero new events.
     expect((await client.readRevisions(node)).length).toBe(eventsBefore);
     expect(dial.admits.length).toBe(admitsBefore);
   });
 
   it("archive rows split per document with isArchived + document_id edges (F7 prelude)", async () => {
     const store = new FixtureDocumentStore();
-    // Two distinct documents sharing one container source_path.
     await store.write({
       source_path: "F:\\OneDrive",
       body_text: "doc one body",
@@ -118,7 +103,6 @@ describe("migrateNotes (F6)", () => {
       file_path: "Ref\\Doc Two.pdf",
       source_kind: "phdb-migration",
     });
-    // A vault row keeps the F6 model untouched.
     await store.write({
       source_path: "Notes/real.md",
       body_text: "vault note",
@@ -136,7 +120,6 @@ describe("migrateNotes (F6)", () => {
       parity_mismatches: [],
     });
 
-    // Distinct notes, composite-named, archive-flagged, id-bridged.
     const [one] = await dial.findByName(
       "Note",
       "F:\\OneDrive :: Ref\\Doc One.pdf",
@@ -152,20 +135,17 @@ describe("migrateNotes (F6)", () => {
     const attr = (p: string) =>
       edgesOne.find((e) => e.predicate === p && !e.isNode)?.value;
     expect(attr("isArchived")).toBe("true");
-    // Provenance stays TRUTHFUL: the real container path, the real file.
     expect(attr("source_path")).toBe("F:\\OneDrive");
     expect(attr("file_path")).toBe("Ref\\Doc One.pdf");
     expect(attr("document_id")).toBe("1");
     expect((await client.readBody(one)).map((s) => s.text)).toEqual([
       "doc one body",
     ]);
-    // The vault note: bare-path identity, NO archive flag.
     const [vault] = await dial.findByName("Note", "Notes/real.md");
     if (vault === undefined) throw new Error("vault note missing");
     const vaultEdges = await dial.edges(vault);
     expect(vaultEdges.some((e) => e.predicate === "isArchived")).toBe(false);
 
-    // Re-run: zero deltas (identity-grain convergence).
     const admits = dial.admits.length;
     const second = await migrateNotes(store, client, dial, SCOPE);
     expect(second.nooped).toBe(3);
@@ -185,9 +165,6 @@ describe("migrateNotes (F6)", () => {
     const client = new FixtureBodyClient();
     const dial = new FixtureChaosDial();
 
-    // Simulate the F6 run: a mega-note keyed on the bare container path,
-    // plus the substrate's own tenancy edge (ownedBy — system-written, not
-    // the sink's; the unwind must leave it alone).
     const mega = await sinkNoteVersion(client, dial, SCOPE, undefined, {
       source_path: "F:\\OneDrive",
       body_text: "doc body",
@@ -221,20 +198,15 @@ describe("migrateNotes (F6)", () => {
     );
     expect(report.unwound).toEqual(["F:\\OneDrive"]);
     expect(deleted).toEqual([mega.node_id]);
-    // The graph half: every SINK-owned edge retracted; system edges (the
-    // substrate's ownedBy tenancy stamp) are not ours and survive — the
-    // allowlist that ends the phantom re-unwind loop measured live.
     expect((await dial.edges(mega.node_id)).map((e) => e.predicate)).toEqual([
       "ownedBy",
     ]);
-    // The replacement exists under the composite identity.
     const [fresh] = await dial.findByName(
       "Note",
       "F:\\OneDrive :: Ref\\Doc.pdf",
     );
     expect(fresh).toBeDefined();
 
-    // Idempotent: a re-run unwinds nothing and deletes nothing new.
     const second = await migrateNotes(
       store,
       client,
@@ -253,7 +225,6 @@ describe("migrateNotes (F6)", () => {
     const store = new FixtureDocumentStore();
     await store.write({ source_path: "Notes/x.md", body_text: "real" });
     const dial = new FixtureChaosDial();
-    // A body client that swallows saves — the failure the gate exists for.
     const broken = bareClient({
       readBody: () => Promise.resolve([]),
       saveBody: () => Promise.resolve(),

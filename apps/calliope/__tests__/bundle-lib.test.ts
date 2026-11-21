@@ -1,5 +1,3 @@
-// ── the image's bundle step, driven with a bundler double ───────────────────
-
 import { describe, expect, it } from "vitest";
 import { platformaticWasmBundled } from "@forge/stellar-core-ts/bundle";
 import {

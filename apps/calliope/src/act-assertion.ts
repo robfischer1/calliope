@@ -1,30 +1,3 @@
-/**
- * The act assertion: who a note write is FOR, when the writer is charon.
- *
- * Theia's note edits go Theia -> charon -> calliope, and charon calls calliope
- * as itself (charon-sa). That proves "charon asked", not who. Charon therefore
- * carries, beside the call, a short-lived Kairos act assertion (ES256, typ
- * `act+jwt`) naming the person whose passkey session approved it, in the
- * `X-Act-Assertion` header. This module is the verifier: the reference
- * issuer is kairos `internal/issue/act.go` (ParseActAssertion), the minting side
- * charon `lib/act-assertion.ts`.
- *
- * WHAT MAKES A NAME TRUSTWORTHY HERE (all of it, or nothing is honoured):
- *  1. the signature verifies under a key in Kairos's JWKS (alg exactly ES256,
- *     typ exactly `act+jwt`, no `crit`), issuer, audience `calliope`, azp
- *     `star/charon` in the configured trust domain, act `calliope_write`,
- *     passkey in amr, a short validity window;
- *  2. args_sha256 equals the digest of the arguments ACTUALLY RECEIVED, so an
- *     assertion cannot be lent to other arguments;
- *  3. the jti is spent exactly once ({@link JtiStore}); Kairos does not track it.
- *
- * Absent header: today's behaviour, unattributed. Present but unacceptable:
- * refused, whoever sent it.
- *
- * Config is the environment, and a PRESENT assertion with any of it unset is
- * refused (fail closed); requests without the header never read it.
- */
-
 import { createPublicKey, timingSafeEqual, verify } from "node:crypto";
 import type { KeyObject } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -79,8 +52,6 @@ export class ActRefusal extends Error {
 const invalid = (why: string): ActRefusal =>
   new ActRefusal(401, "act_assertion_invalid", why);
 
-// ── config ──────────────────────────────────────────────────────────────────
-
 /** What the verifier needs; any field empty means a present assertion is refused. */
 export interface ActConfig {
   /** Kairos's `/jwks` URL. */
@@ -101,9 +72,8 @@ export interface ActConfig {
 export const DEFAULT_ISSUER = "https://kairos.notusmi.com";
 export const DEFAULT_TRUST_DOMAIN = "notusmi.com";
 /**
- * Kairos's keyset on its Service's port 80, the default every first-party peer
- * dial took when the mesh moved to the waypoint (f0f57b7). The waypoint admits
- * a GET of /jwks from any prime caller (flux kairos-discovery).
+ * The waypoint admits a GET of /jwks from any prime caller (flux
+ * kairos-discovery).
  */
 export const DEFAULT_JWKS_URL = "http://kairos/jwks";
 
@@ -131,8 +101,6 @@ export function actConfigFromEnv(
     trustDomain: pick("CALLIOPE_ACT_TRUST_DOMAIN") || DEFAULT_TRUST_DOMAIN,
   };
 }
-
-// ── the JWKS ────────────────────────────────────────────────────────────────
 
 /** The slice of `fetch` the key cache uses. */
 export type FetchLike = (
@@ -259,8 +227,6 @@ export class JwksCache {
   }
 }
 
-// ── single use ──────────────────────────────────────────────────────────────
-
 /** Spends a jti once. `true` = this call spent it; `false` = already spent. */
 export interface JtiStore {
   claimJti(jti: string, expUnix: number): Promise<boolean>;
@@ -280,8 +246,6 @@ export class MemoryJtiStore implements JtiStore {
     return Promise.resolve(true);
   }
 }
-
-// ── the verified act, on the async context ──────────────────────────────────
 
 /** A verified assertion, as the write path sees it. */
 export interface ActAuthor {
@@ -329,8 +293,6 @@ export function withCallerSubject<T>(subject: string, fn: () => T): T {
 export function onBehalfOf(): string {
   return authors.getStore()?.subject ?? callerSubjects.getStore() ?? "";
 }
-
-// ── verification ────────────────────────────────────────────────────────────
 
 const B64URL = /^[A-Za-z0-9_-]+$/;
 const JTI_RE = /^[0-9a-f]{32}$/;

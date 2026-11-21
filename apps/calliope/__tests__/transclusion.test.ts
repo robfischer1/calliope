@@ -1,9 +1,3 @@
-/**
- * Slot-to-slot transclusion (Lamarr37-002): a placement slot references an
- * origin slot; reads resolve through it; an edit through any placement
- * rewrites the origin, CAS on the origin's blob.
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBlobStore } from "../src/blob-store.js";
 import {
@@ -106,7 +100,6 @@ describe("a placement resolves through its origin", () => {
     expect(got.blobId).toBe(src.blobId);
     expect(got.dangling).toBe(false);
     expect(got.ref).toEqual({ slot: origin, container: a });
-    // A blob slot's block is unchanged in shape: no ref, no placements.
     expect(src).not.toHaveProperty("ref");
     expect(src).not.toHaveProperty("placements");
   });
@@ -154,7 +147,6 @@ describe("edits through a placement land on the origin (all three change)", () =
     expect((await r.block(a, origin)).text).toBe("after");
     expect((await r.block(b, pb)).text).toBe("after");
     expect((await r.block(c, pc)).text).toBe("after");
-    // The placement is still a placement: no blob fact landed on it.
     expect((await readTree(r.dial, b))[0]?.blobId).toBeNull();
     expect((await readTree(r.dial, b))[0]?.ref).toBe(origin);
   });
@@ -244,7 +236,6 @@ describe("coincidental identical blobs stay independent (identity is the slot)",
     const r = rig();
     const [a, origin] = await r.withBlock("a", "TODO: verify");
     const [t, twin] = await r.withBlock("twin", "TODO: verify");
-    // Content-addressed: both slots hold the SAME blob by coincidence.
     expect((await r.block(a, origin)).blobId).toBe(
       (await r.block(t, twin)).blobId,
     );
@@ -256,7 +247,6 @@ describe("coincidental identical blobs stay independent (identity is the slot)",
     ]);
     expect((await r.block(a, origin)).text).toBe("verified");
     expect((await r.block(t, twin)).text).toBe("TODO: verify");
-    // The twin has no placements; the origin has exactly one.
     expect(await placementsOf(r.dial, twin)).toEqual([]);
     expect(await placementsOf(r.dial, origin)).toEqual([
       { slot: p, container: b },
@@ -282,7 +272,6 @@ describe("chains and cycles", () => {
   it("cycle: a planted A→B→A loop reads dangling and terminates", async () => {
     const r = rig();
     const c = await r.note("c");
-    // Written around the verb, as only corrupt data could be.
     const res = await r.dial.admit(
       [
         opCreate("Block", "x"),
@@ -302,7 +291,6 @@ describe("chains and cycles", () => {
       [x, true, y],
       [y, true, x],
     ]);
-    // And neither may be placed: each is itself a placement.
     const err = await refusal(
       writeContainer(r.facet, c, [{ op: "add", ref: x ?? "", position: "a2" }]),
     );
@@ -313,7 +301,6 @@ describe("chains and cycles", () => {
     const r = rig();
     const [, origin] = await r.withBlock("a", "deep");
     const c = await r.note("c");
-    // q holds content AND a ref (only corrupt data could); p places q.
     const res = await r.dial.admit(
       [
         opCreate("Block", "q"),
@@ -416,11 +403,9 @@ describe("removing a placement vs removing an origin", () => {
     expect(got.text).toBeNull();
     expect(got.blobId).toBeNull();
     expect(got.ref?.slot).toBe(origin);
-    // The detector, callable on its own, finds the same orphan.
     expect(await orphanedPlacements(r.dial, [origin])).toEqual([
       { slot: p, container: b, origin },
     ]);
-    // A dangling placement is removed with blobId "".
     await writeContainer(r.facet, b, [
       { op: "remove", slot: p, position: got.position, blobId: "" },
     ]);
@@ -527,7 +512,6 @@ describe("cross-tenant references (ruling 5: the doorway, default closed)", () =
       [{ op: "update", slot: p, oldBlobId: got.blobId ?? "", text: "edited" }],
       "governance",
     );
-    // The repoint admitted in the ORIGIN's scope, not the placement's.
     expect(r.dial.admits.at(-1)?.scope).toBe("notes");
     expect((await r.block(memo, origin)).text).toBe("edited");
     const placed = r.dial.factLog.filter((f) => f.predicate === TREE_REF);

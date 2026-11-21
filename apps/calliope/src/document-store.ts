@@ -1,21 +1,3 @@
-/**
- * The document store (C3, the prose strangle) — Calliope's home for dissolved
- * vault prose. The monolith's `documents` typed-write sink moves here: the
- * dissolve path (vault-mcp) posts note-ignorant payloads and the star stores
- * them verbatim with the project dedup contract.
- *
- * Dedup is `(source_path, raw_hash)` — one logical source note, content
- * hashed; an identical re-submit is a no-op (`deduped: true`), so the verb is
- * idempotent and a failed-then-retried dissolve never double-writes. This is
- * the same contract phdb's sink declared, at path grain (phdb interned paths
- * into `source_files`; the star stores the path inline — same key, one less
- * table).
- *
- * The wire shape mirrors the phdb HTTP `/write/document` contract exactly, so
- * vault-mcp's translator payloads pass through unchanged (the sink stays
- * note-ignorant; FR-004).
- */
-
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 

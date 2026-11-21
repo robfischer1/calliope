@@ -1,42 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Backfill the consciousness bus with EXISTING notes (absorb-arch-kiss).
- *
- * The live publisher ({@link ConsciousnessPublisher}) fires on a note WRITE,
- * so a container written before the bus carried `metadata.container` (or
- * before a publisher was wired at all) never reached eros's `calliope_notes`
- * slice. This sweep enumerates every note container in the notes graph,
- * projects each one exactly as a write would (`projectNote`), and publishes
- * it through the same publisher — one code path, so a backfilled row is
- * byte-identical to a freshly written one.
- *
- * OPERATOR-RUN ONLY. Nothing in the star's boot or deploy path imports or
- * invokes this file; it is a standalone `bun run`, like the other CLIs.
- *
- *   bun run src/mcp/backfill-notes.ts --dry-run          # counts only, no broker
- *   bun run src/mcp/backfill-notes.ts                    # publish everything
- *   bun run src/mcp/backfill-notes.ts --batch-size 50 --pause-ms 2000
- *
- * Run from a checkout that can reach the sovereign store and the chaos door
- * AND the broker — NOT the deployed image (it ships only the bundled
- * `server.js`; there is no source tree and no `bun install` inside it).
- *
- * Env (same as the star): DATABASE_URL / STELLAR_DB_AUTH (the store),
- * CHAOS_URL + the notes scope env (the graph), KAFKA_BOOTSTRAP (the broker;
- * required unless --dry-run; CALLIOPE_CONSCIOUSNESS_EMIT=0 refuses).
- *
- * IDEMPOTENT. A row's compaction key is `calliope_notes:<source_id>` with
- * `source_id = blake2b-8(styx://<node>) & (2^63-1)` — a function of the node
- * alone — so re-publishing a container upserts the same eros row, and a
- * second run (or a run overlapping live writes) only rewrites rows.
- *
- * SKIPS, never retracts: a suppressed (hidden) note is counted and left
- * alone, as is a container with no prose. The sweep pages the node list in
- * `--batch-size` slices and sleeps `--pause-ms` between slices so the bus and
- * eros's consumer are not hit in one burst. A per-note failure is tallied and
- * the sweep continues; any failure sets exit code 1. The last stdout line is
- * one JSON summary.
- */
 
 import { pathToFileURL } from "node:url";
 import { suppressedNotes } from "../note-suppress.js";
@@ -212,8 +174,6 @@ async function main(): Promise<void> {
     log: (line) => process.stderr.write(`${line}\n`),
   });
   process.stdout.write(`${JSON.stringify(summary)}\n`);
-  // The kafka client holds no close handle here; exit explicitly once the
-  // summary is out (every publish above was awaited to the broker's ack).
   process.exit(summary.failed > 0 ? 1 : 0);
 }
 

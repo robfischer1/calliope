@@ -1,9 +1,3 @@
-/**
- * C4 revision-store contract tests — id-preserving import idempotency and
- * the read surface, over both impls (fixture always; real postgres when
- * docker is available — the house harness).
- */
-
 import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
@@ -48,7 +42,7 @@ function contractSuite(makeStore: () => Promise<RevisionStore>): void {
     await store.importRevision({ ...REV, summary: "OVERWRITE ATTEMPT" });
     const rows = await store.revisions({ id: 101 });
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.summary).toBe("Sharpened the thesis."); // first write wins
+    expect(rows[0]?.summary).toBe("Sharpened the thesis.");
     expect((await store.counts()).revisions).toBe(1);
   });
 

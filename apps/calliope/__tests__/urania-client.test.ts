@@ -150,15 +150,12 @@ describe("UraniaBodyClient — body-model mapping (flag on)", () => {
     await client.saveBody("note1", [{ text: "edited" }]);
     const after = await client.readBody("note1");
 
-    // hasPart now points at a new node...
     expect(after[0]?.text).toBe("edited");
     expect(after[0]?.id).not.toBe(oldId);
-    // ...the old hasPart edge was removed (note no longer references it)...
     const stillLinked = fake.triples.some(
       (t) => t.from === "note1" && t.predicate === HAS_PART && t.to === oldId,
     );
     expect(stillLinked).toBe(false);
-    // ...but the old section node (its text literal) is left in place.
     const oldTextSurvives = fake.triples.some(
       (t) => t.from === oldId && t.predicate === TEXT && t.to === "original",
     );
@@ -171,7 +168,6 @@ describe("UraniaBodyClient — body-model mapping (flag on)", () => {
     const idA = before.find((s) => s.text === "a")?.id ?? "";
     expect(idA).not.toBe("");
 
-    // Reorder: b then a. "a" is byte-identical => same node, new order_key.
     await client.saveBody("note1", [{ text: "b" }, { text: "a" }]);
     const after = await client.readBody("note1");
 
@@ -224,9 +220,8 @@ describe("UraniaBodyClient — provenance / authoredBy threading", () => {
   });
 
   it("editSection defaults to authoredBy='human'", async () => {
-    // Seed a section first so editSection has something to find.
     await client.saveBody("note2", [{ text: "original" }]);
-    fake.capturedProvenance.length = 0; // reset after seed
+    fake.capturedProvenance.length = 0;
     const body = await client.readBody("note2");
     const sectionId = body[0]?.id ?? "";
     await client.editSection("note2", sectionId, "updated");
@@ -242,10 +237,6 @@ describe("UraniaBodyClient — provenance / authoredBy threading", () => {
     expect(fake.capturedProvenance).toEqual(["calliope"]);
   });
 });
-
-// ---------------------------------------------------------------------------
-// F3 — Block-op transaction log
-// ---------------------------------------------------------------------------
 
 /** All 7 required BlockOp fields. */
 const BLOCK_OP_FIELDS = [
@@ -265,7 +256,7 @@ function assertAllFields(op: BlockOp, nodeId: string): void {
   }
   expect(op.node_id).toBe(nodeId);
   expect(op.block_id).toBeTruthy();
-  expect(op.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/); // ISO-8601
+  expect(op.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 }
 
 describe("UraniaBodyClient — block-op transaction log (F3)", () => {
@@ -297,7 +288,7 @@ describe("UraniaBodyClient — block-op transaction log (F3)", () => {
 
   it("saveBody with changed prose emits an 'update' op carrying the new text", async () => {
     await client.saveBody("n2", [{ text: "original" }]);
-    emitter.ops.length = 0; // reset after seed
+    emitter.ops.length = 0;
 
     await client.saveBody("n2", [{ text: "edited" }]);
     const updateOp = emitter.ops.find((o) => o.op_type === "update");
@@ -334,20 +325,16 @@ describe("UraniaBodyClient — block-op transaction log (F3)", () => {
     if (secA === undefined) return;
     emitter.ops.length = 0;
 
-    // Swap order: b then a — both sections move, so two reorder ops are emitted.
     await client.saveBody("n4", [{ text: "b" }, { text: "a" }]);
 
-    // At least one reorder op must be emitted.
     const reorderOps = emitter.ops.filter((o) => o.op_type === "reorder");
     expect(reorderOps.length).toBeGreaterThanOrEqual(1);
 
-    // Specifically, a reorder op must exist for secA (text "a").
     const reorderA = reorderOps.find((o) => o.block_id === secA.id);
     expect(reorderA).toBeDefined();
     if (reorderA === undefined) return;
     assertAllFields(reorderA, "n4");
-    expect(reorderA.content_delta).toBe(""); // prose unchanged
-    // The new order_key is different from secA's original order_key.
+    expect(reorderA.content_delta).toBe("");
     expect(reorderA.order_key).not.toBe(secA.orderKey);
   });
 
@@ -366,7 +353,7 @@ describe("UraniaBodyClient — block-op transaction log (F3)", () => {
     assertAllFields(op, "n5");
     expect(op.op_type).toBe("update");
     expect(op.content_delta).toBe("updated prose");
-    expect(op.authored_by).toBe("human"); // F2 provenance
+    expect(op.authored_by).toBe("human");
   });
 
   it("editSection with explicit calliope provenance carries calliope in authored_by", async () => {
@@ -384,22 +371,17 @@ describe("UraniaBodyClient — block-op transaction log (F3)", () => {
   });
 
   it("block-op log is append-only: emitter.emit is never called with a mutation of prior ops", async () => {
-    // Emit 3 saves; verify all ops accumulate, none are removed or replaced.
     await client.saveBody("n7", [{ text: "alpha" }]);
     await client.saveBody("n7", [{ text: "alpha" }, { text: "beta" }]);
     await client.saveBody("n7", [{ text: "beta" }]);
 
-    // Every emitted op should still be in the array — no splices, no rewrites.
-    // The emitter array itself IS the append-only log: its length only grows.
     expect(emitter.ops.length).toBeGreaterThanOrEqual(3);
     for (const op of emitter.ops) {
-      // Each op has a valid op_type — no undefined/null entries (corruption check)
       expect(["add", "update", "delete", "reorder"]).toContain(op.op_type);
     }
   });
 
   it("no block-op emitter: saveBody still works without errors", async () => {
-    // Client without emitter — no second constructor arg
     const plainClient = new UraniaBodyClient(fake);
     await expect(
       plainClient.saveBody("n8", [{ text: "x" }]),
@@ -423,7 +405,7 @@ describe("UraniaBodyClient — applySectionOps (A11)", () => {
       { text: "beta" },
       { text: "gamma" },
     ]);
-    emitter.ops.length = 0; // only observe the apply's emissions
+    emitter.ops.length = 0;
   });
   afterEach(() => {
     if (prev === undefined) delete process.env.CALLIOPE_URANIA_WIRED;
@@ -443,19 +425,15 @@ describe("UraniaBodyClient — applySectionOps (A11)", () => {
       { op: "delete", sectionId: alpha.id },
     ]);
 
-    // ONE capture batch (atomic at the substrate).
     expect(fake.capturedProvenance.length).toBe(captureCalls + 1);
     expect(sections.map((s) => s.text)).toEqual([
       "gamma",
       "wedged",
       "beta edited",
     ]);
-    // Reorder keeps the node id (the edge moves, not the node).
     expect(applied.at(2)?.id).toBe(gamma.id);
-    // Update mints a fresh version node; delete reports the removed id.
     expect(applied.at(0)?.id).not.toBe(beta.id);
     expect(applied.at(3)?.id).toBe(alpha.id);
-    // Block-ops 1:1 with the submitted ops, in order.
     expect(emitter.ops.map((o) => o.op_type)).toEqual([
       "update",
       "add",

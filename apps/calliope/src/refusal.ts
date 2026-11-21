@@ -1,17 +1,3 @@
-/**
- * The fleet's one refusal form (stellar-core F17): an isError tool result whose
- * structured content is exactly `{code, detail}` (foundry-dies
- * schema/refusal.schema.json). `code` is a snake_case member of the fleet
- * registry, foundry-dies contracts/refusal-codes.toml, where every file that
- * spells one is a declared use of owner `calliope`.
- *
- * The verbs build their refusals as plain objects keyed `code` (the internal
- * result unions discriminate on it) and this module is the only place that
- * turns one into a wire result. The strict form carries nothing else, so a
- * refusal that held more (the gate's violations, the ids a batch refused, the
- * notes that landed first) says it in `detail`.
- */
-
 /** A refusal as the verbs build it; the extras are folded into `detail`. */
 export interface RefusalLike {
   code: string;

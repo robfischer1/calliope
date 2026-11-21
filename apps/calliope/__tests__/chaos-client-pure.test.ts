@@ -105,8 +105,6 @@ describe("shapeFromTextBlocks — which blocks count", () => {
   });
 });
 
-// ── ensureNotesRoot, driven through a scripted dial ───────────────────────────
-
 function scripted(opts: { finds: string[][]; admits?: AdmitResult[] }): {
   dial: ChaosDial;
   admitted: { ops: ChaosOp[]; scope: string }[];
@@ -262,8 +260,6 @@ describe("ensureNotesRoot — decision tree", () => {
   });
 });
 
-// ── FixtureChaosDial ──────────────────────────────────────────────────────────
-
 function lit(from: string, predicate: string, value: string): ChaosOp {
   return opAdd(from, predicate, { toLiteral: value });
 }
@@ -344,11 +340,9 @@ describe("FixtureChaosDial — slot expectations", () => {
     await expect(
       held({ literal: "y" }, { literal: "x" }),
     ).resolves.toMatchObject({ admitted: true });
-    // same size, one member differs: not held
     await expect(
       held({ literal: "x" }, { literal: "zz" }),
     ).rejects.toMatchObject({ code: "conflict" });
-    // a strict subset: not held
     await expect(held({ literal: "x" })).rejects.toMatchObject({
       code: "conflict",
     });
@@ -434,7 +428,6 @@ describe("FixtureChaosDial — batch labels and edge domains", () => {
     expect(await dial.edges(second ?? "")).toStrictEqual([]);
     expect(await dial.edges(third ?? "")).toStrictEqual([]);
     expect((await dial.edges("src"))[0]?.value).toBe(first);
-    // an empty label names nothing: that edge stays on the literal "" subject
     expect((await dial.edges("")).map((e) => e.predicate)).toEqual(["q"]);
   });
 
@@ -547,7 +540,6 @@ describe("FixtureChaosDial — retraction", () => {
     const left = await dial.edges("s");
     expect(left).toHaveLength(1);
     expect(left[0]?.value).toBe(text);
-    // the survivor is the typed one: a typed retract now removes it
     await dial.admit(
       [opRemove("s", "t", { toLiteral: Z, dtype: "instant" })],
       SCOPE,
@@ -659,7 +651,6 @@ describe("FixtureChaosDial — ref resolution", () => {
       message: "resolve_node_refs: bad_args: nope resolves to no live node",
       code: "wire_error",
     });
-    // an address that merely CONTAINS 64 hex characters is still an address
     await expect(dial.resolveNodeRefs([`q-${HEX}`])).rejects.toBeInstanceOf(
       ChaosClientError,
     );
@@ -771,18 +762,18 @@ describe("FixtureChaosDial — history closure", () => {
   it("follows added node edges from members, once, in log order", async () => {
     const dial = new FixtureChaosDial();
     const tx = (op: ChaosOp) => dial.admit([op], SCOPE);
-    await tx(opAdd("A", "child", { toNode: "B" })); //  1 A -> B
-    await tx(lit("B", "name", "b")); //                 2 B in closure
-    await tx(opAdd("A", "other", { toNode: "C" })); //  3 not a follow predicate
-    await tx(lit("C", "name", "c")); //                 4 C is not in
-    await tx(opAdd("D", "child", { toNode: "E" })); //  5 D is not a member
-    await tx(lit("E", "name", "e")); //                 6 E is not in
-    await tx(lit("A", "child", "F")); //                7 scalar: not followed
-    await tx(lit("F", "name", "f")); //                 8 F is not in
-    await tx(opAdd("X", "child", { toNode: "Y" })); //  9 X not yet a member
-    await tx(opAdd("A", "child", { toNode: "X" })); // 10 X joins
-    await tx(opRemove("X", "child", { toNode: "Y" })); // 11 a removal follows nothing
-    await tx(lit("Y", "name", "y")); //                12 Y is not in
+    await tx(opAdd("A", "child", { toNode: "B" }));
+    await tx(lit("B", "name", "b"));
+    await tx(opAdd("A", "other", { toNode: "C" }));
+    await tx(lit("C", "name", "c"));
+    await tx(opAdd("D", "child", { toNode: "E" }));
+    await tx(lit("E", "name", "e"));
+    await tx(lit("A", "child", "F"));
+    await tx(lit("F", "name", "f"));
+    await tx(opAdd("X", "child", { toNode: "Y" }));
+    await tx(opAdd("A", "child", { toNode: "X" }));
+    await tx(opRemove("X", "child", { toNode: "Y" }));
+    await tx(lit("Y", "name", "y"));
     const out = await dial.history(["A"], ["child"]);
     expect(out.map((h) => h.tx)).toEqual([1, 2, 3, 7, 9, 10, 11]);
     expect(out[0]).toStrictEqual({

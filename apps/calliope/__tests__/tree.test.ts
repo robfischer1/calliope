@@ -1,9 +1,3 @@
-/**
- * The tree (spec 040) — SC-001..005 over the fixture dial, which models
- * themis's batch-local label rule and the F2 blob edge domain exactly
- * (a fixture diverging from the door's rule would be a false pass).
- */
-
 import { describe, expect, it } from "vitest";
 import {
   FixtureChaosDial,
@@ -39,9 +33,8 @@ describe("the tree (040 F3)", () => {
     const dial = new FixtureChaosDial();
     const doc = await mintContainer(dial, "doc");
 
-    expect(await readTree(dial, doc)).toEqual([]); // empty ≠ absent
+    expect(await readTree(dial, doc)).toEqual([]);
 
-    // Insert out of order; the read sorts bytewise.
     for (const [label, pos, blob] of [
       ["b:a2", "a2", "12"],
       ["b:a0", "a0", "10"],
@@ -66,7 +59,7 @@ describe("the tree (040 F3)", () => {
       slotBirthOps(doc, "b:a0", "a0", "17"),
       "notes",
     );
-    expect(dial.admits.length).toBe(before + 1); // one batch, one transaction
+    expect(dial.admits.length).toBe(before + 1);
     const slotToken = mintedToken(res.minted);
     const tree = await readTree(dial, doc);
     expect(tree).toEqual([{ slot: slotToken, position: "a0", blobId: "17" }]);
@@ -77,14 +70,12 @@ describe("the tree (040 F3)", () => {
     const a = await mintContainer(dial, "a");
     const b = await mintContainer(dial, "b");
     await dial.admit(slotBirthOps(a, "b:a0", "a0", "77"), "notes");
-    await dial.admit(slotBirthOps(a, "b:a1", "a1", "77"), "notes"); // twice in one
-    await dial.admit(slotBirthOps(b, "b:a0", "a0", "77"), "notes"); // and in another
+    await dial.admit(slotBirthOps(a, "b:a1", "a1", "77"), "notes");
+    await dial.admit(slotBirthOps(b, "b:a0", "a0", "77"), "notes");
     const treeA = await readTree(dial, a);
     const treeB = await readTree(dial, b);
     expect(treeA.map((s) => s.blobId)).toEqual(["77", "77"]);
     expect(treeB.map((s) => s.blobId)).toEqual(["77"]);
-    // No blob was duplicated: the id is the identity, and every reference
-    // carries the same one.
     expect(new Set([...treeA, ...treeB].map((s) => s.blobId)).size).toBe(1);
   });
 
@@ -96,8 +87,6 @@ describe("the tree (040 F3)", () => {
     const slot = mintedToken(res.minted);
 
     const ops = moveOps(slot, a, b);
-    // The move touches ONLY membership: no op names the content predicate,
-    // and nothing mints.
     expect(ops.every((o) => o.predicate !== TREE_CONTENT)).toBe(true);
     expect(ops.every((o) => o.op !== "createNode")).toBe(true);
     await dial.admit(ops, "notes");
@@ -115,7 +104,7 @@ describe("the tree (040 F3)", () => {
     const r2 = await dial.admit(slotBirthOps(doc, "b:a1", "a1", "2"), "notes");
     const [s1, s2] = [mintedToken(r1.minted), mintedToken(r2.minted)];
 
-    const reorder = repositionOps(s1, "a0", "a1V"); // between a1 and a2
+    const reorder = repositionOps(s1, "a0", "a1V");
     expect(reorder.every((o) => o.op !== "createNode")).toBe(true);
     await dial.admit(reorder, "notes");
     expect((await readTree(dial, doc)).map((s) => s.slot)).toEqual([s2, s1]);
@@ -123,7 +112,7 @@ describe("the tree (040 F3)", () => {
     await dial.admit(repointOps(s2, "2", "9"), "notes");
     const tree = await readTree(dial, doc);
     expect(tree.find((s) => s.slot === s2)?.blobId).toBe("9");
-    expect(tree.find((s) => s.slot === s2)?.position).toBe("a1"); // unmoved
+    expect(tree.find((s) => s.slot === s2)?.position).toBe("a1");
   });
 
   it("removes a slot's three facts (and only those)", async () => {
@@ -144,7 +133,6 @@ describe("the tree (040 F3)", () => {
     const doc = await mintContainer(dial, "doc");
     const res = await dial.admit(slotBirthOps(doc, "b:a0", "a0", "3"), "notes");
     const slot = mintedToken(res.minted);
-    // The content fact retracts; the slot stays a member.
     await dial.admit(repointOps(slot, "3", "3").slice(0, 1), "notes");
     const tree = await readTree(dial, doc);
     expect(tree).toEqual([{ slot, position: "a0", blobId: null }]);
@@ -159,8 +147,6 @@ describe("the tree (040 F3)", () => {
     );
     const scopes = dial.admits.map((a) => a.scope);
     expect(scopes).toContain("documents");
-    // Every tree write names its tenant's graph; nothing tree-shaped landed
-    // in the notes scope.
     const notesBatches = dial.admits.filter((a) => a.scope === "notes");
     expect(
       notesBatches.every((a) =>

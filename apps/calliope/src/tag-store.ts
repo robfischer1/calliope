@@ -1,14 +1,3 @@
-/**
- * The tag mirror (C9) — Calliope's own index over the tags it writes.
- *
- * The GRAPH is the truth (`hasTag` edges on `graph:notes`); this pg table is
- * the sole-writer's mirror, carrying what the graph doesn't: per-tag write
- * PROVENANCE (`inline` vs `explicit` — the explicit-survival substrate) and
- * the cheap DISTINCT enumeration `list_tags` needs (no chaos verb enumerates
- * distinct literal values). Drift heals on a note's next reconcile; the
- * table is rebuildable from the graph.
- */
-
 import type { Pool } from "pg";
 import type { TagRow } from "./tags.js";
 
@@ -61,8 +50,6 @@ export class PgTagStore implements TagStore {
     tag: string,
     source: TagRow["source"],
   ): Promise<void> {
-    // An existing row keeps its provenance (explicit wins; a re-add never
-    // demotes explicit to inline).
     await this.pool.query(
       `INSERT INTO note_tags (node_id, tag, source) VALUES ($1, $2, $3)
        ON CONFLICT (node_id, tag) DO NOTHING`,

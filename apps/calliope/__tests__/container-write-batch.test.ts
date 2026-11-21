@@ -1,10 +1,3 @@
-/**
- * What a container save puts in its batch and what it asks the gate to hold,
- * pinned op by op: placement births, edits through a placement, placement
- * removals, the span-window replace, and the post-commit orphan report.
- * Synthetic fixtures only.
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBlobStore } from "../src/blob-store.js";
 import {
@@ -65,17 +58,14 @@ describe("a placement add", () => {
       { op: "add", text: "plain", position: "b8" },
       { op: "add", ref: origin, position: "b9" },
     ]);
-    // The batch is exactly the placement birth for the first op.
     const ops = r.dial.admits.at(-1)?.ops ?? [];
     expect(ops.slice(0, 4)).toEqual(placementBirthOps(b, "b:b7", "b7", origin));
-    // The origin is held at the blob the plan read.
     const originBlob = (await r.blockOf(a, origin)).blobId ?? "";
     expect(r.seen.at(-1)?.[0]).toEqual({
       s: origin,
       predicate: TREE_CONTENT,
       held: [{ $blob: originBlob }],
     });
-    // Each add got its own token, in op order: ordinals advance by one.
     const tokens = [w.minted[0], w.minted[1], w.minted[2]];
     expect(new Set(tokens).size).toBe(3);
     const tree = await readTree(r.dial, b);
@@ -124,14 +114,12 @@ describe("an edit through a placement", () => {
       { s: origin, predicate: TREE_CONTENT, held: [{ $blob: oldBlob }] },
     ]);
     expect(w.routed).toEqual({ 0: origin });
-    // Updating an origin that has placements removes nothing: no orphans.
     const next = (await r.blockOf(a, origin)).blobId ?? "";
     const w2 = await writeContainer(r.facet, a, [
       { op: "update", slot: origin, oldBlobId: next, text: "v3" },
     ]);
     expect(w2).not.toHaveProperty("orphaned");
     expect(w2).not.toHaveProperty("routed");
-    // A plain (unrouted) update holds no placement reference.
     expect(r.seen.at(-1)?.map((e) => e.predicate)).toEqual([TREE_CONTENT]);
   });
 
@@ -180,7 +168,6 @@ describe("removing a placement", () => {
       { s: p, predicate: TREE_REF, held: [{ node: origin }] },
       { s: origin, predicate: TREE_CONTENT, held: [{ $blob: src.blobId }] },
     ]);
-    // Dangling: the origin is gone, the placement is removed with blobId "".
     const q =
       (
         await writeContainer(r.facet, b, [

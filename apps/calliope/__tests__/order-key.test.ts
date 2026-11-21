@@ -6,7 +6,6 @@ describe("order-key", () => {
     expect(compareKeys("01", "02")).toBe(-1);
     expect(compareKeys("02", "01")).toBe(1);
     expect(compareKeys("05", "05")).toBe(0);
-    // Byte order, not numeric: "10" < "9" as raw bytes.
     expect(compareKeys("10", "9")).toBe(-1);
   });
 
@@ -15,7 +14,6 @@ describe("order-key", () => {
     expect(keys).toHaveLength(5);
     const sorted = [...keys].sort(compareKeys);
     expect(sorted).toEqual(keys);
-    // All same width => numeric and byte order agree.
     expect(new Set(keys.map((k) => k.length)).size).toBe(1);
   });
 
@@ -53,8 +51,6 @@ describe("order-key", () => {
   });
 
   it("between(null, b) descends below zero-padded sequence keys", () => {
-    // sequence() pads with "0" ("01", "02", …) — the prepend-at-top case must
-    // mint a key strictly below the padded head (was broken: returned "11").
     for (const b of ["01", "02", "001", "0100", "10"]) {
       const k = between(null, b);
       expect(compareKeys(k, b)).toBe(-1);

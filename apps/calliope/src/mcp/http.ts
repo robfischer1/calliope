@@ -1,19 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Calliope's network entry point: the prose facet served as a constellation
- * star on its REST door (`/openapi.json`, `/v1/...`), the SAME server the stdio
- * bin serves ({@link createServer} over the env-selected {@link makeBackend}
- * backend); the tool definitions are reused, never forked.
- *
- * REST only (REST mesh P7, wonka68-rm39): no `/mcp`, no loopback listener. The
- * door is `STELLAR_REST_PLAINTEXT_PORT` (8207), which also answers `/live`,
- * `/ready` and `/metrics`. Each REST call runs on a fresh server built per
- * mount over ONE long-lived backend client.
- *
- * Backend: `pg` when `DATABASE_URL` is set (the sovereign store, the production
- * default), else the chaos substrate over `CHAOS_URL`, or the in-memory fixture
- * via `CALLIOPE_MCP_BACKEND=fixture`.
- */
 
 import { argv } from "node:process";
 import { pathToFileURL } from "node:url";
@@ -60,8 +45,6 @@ export interface ServerDeps {
 
 /** The {@link createServer} options for `deps`: one place, so MCP and REST serve one surface. */
 export function serverOptions(deps: ServerDeps): ServerOptions {
-  // Findability F4: the pg arm — eros-routed when CALLIOPE_EROS_URL is set;
-  // absent, the search verb answers honest darkness (F2's contract).
   const search = makeErosProvider();
   return {
     ...(deps.revisions !== undefined ? { revisions: deps.revisions } : {}),
@@ -69,10 +52,6 @@ export function serverOptions(deps: ServerDeps): ServerOptions {
     ...(deps.tags !== undefined ? { tags: deps.tags } : {}),
     ...(deps.focus !== undefined ? { focus: deps.focus } : {}),
     ...(search !== undefined ? { search } : {}),
-    // F12 audit finding: the container surface (F4/F5) was wired in
-    // the BACKEND but never passed to the server — the fleet entry
-    // points served body verbs only. With the families retired, the
-    // container verbs ARE the write path; they ship from here.
     ...(deps.containers !== undefined ? { containers: deps.containers } : {}),
     ...(deps.consciousness !== undefined
       ? { consciousness: deps.consciousness }
@@ -101,9 +80,6 @@ export interface ServeOptions extends Omit<ServerDeps, "witness"> {
  * served) when the port is unset or cannot be bound, or the server has no door.
  */
 export async function serveCalliope(o: ServeOptions): Promise<RestMount> {
-  // One backend for the server's lifetime; a caller that needs async init (the
-  // pg backend) builds and inits the client itself and passes it in. With no
-  // client, the FULL backend of `kind`, so the fixture path serves every verb.
   let deps: ServerDeps = { ...o, witness: o.witness.log };
   let client = o.client;
   if (client === undefined) {
@@ -117,12 +93,8 @@ export async function serveCalliope(o: ServeOptions): Promise<RestMount> {
       containers: o.containers ?? backend.containers,
     };
   }
-  // Every server carries a register (an empty one answers { focus: null }).
   const focus = o.focus ?? new FocusRegister();
   const body = client;
-  // The authorship gate: config from the environment the door reads; the jti
-  // is spent in the sovereign store when there is one (survives restarts and a
-  // rolling update's overlap), in memory otherwise.
   const env = o.getenv ?? ((k: string) => process.env[k]);
   const act = {
     jti: deps.revisions ?? new MemoryJtiStore(),
@@ -146,7 +118,6 @@ export async function serveCalliope(o: ServeOptions): Promise<RestMount> {
   }
   return {
     ...rest,
-    // The sink's producer lives and dies with the door that feeds it.
     close: async () => {
       await rest.close();
       await o.witness.close();
@@ -155,30 +126,15 @@ export async function serveCalliope(o: ServeOptions): Promise<RestMount> {
 }
 
 async function main(): Promise<void> {
-  // FIRST, and bounded. stellar-core-ts 0.5.0's sender resolves its config from
-  // OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_SERVICE_NAME, both of which this star's
-  // deployment already sets — an empty endpoint disables export rather than
-  // erroring, and startTelemetry cannot outlive its budget, so this cannot stop
-  // the door from binding. Before initBackend because a span is only useful if
-  // the provider exists when the first request lands.
   const telemetryShutdown = await startTelemetry(telemetryConfigFromEnv());
 
   const kind = backendKind();
   const backend = await prepareBackend(kind);
   await initBackend(backend);
-  // Stream of Consciousness pass 4: ONE producer for the process (the
-  // servers are per-request; the broker connection is not).
   const consciousness = makeConsciousnessPublisher(process.env);
-  // 028 ("Look At This" F5): one register for the process, written by the
-  // focus consumer (`startFocusConsumer`, kafkatopics), read by every
-  // stateless request's `look`.
   const focusRegister = new FocusRegister();
   const focusConsumer = startFocusConsumer(focusRegister);
-  // The witness: one record per inbound tools/call, to the log stream and to
-  // calliope._ops.calls when KAFKA_BOOTSTRAP names a broker.
   const witness = makeWitness();
-  // The REST door is the star's only listener; a refused mount throws and the
-  // process exits before it serves half a door.
   const rest = await serveCalliope({
     kind,
     client: backend.client,
@@ -189,19 +145,14 @@ async function main(): Promise<void> {
     containers: backend.containers,
     consciousness,
     witness,
-    // Charon parity row 19: ONE producer for the process, lazily dialled.
     telemetry: createTelemetryProducer(),
   });
-  // stderr only — keep stdout clean (parity with the stdio bin's convention).
   process.stderr.write(
     `calliope serving (backend=${kind}) door=${String(rest.plaintextAddress()?.port)}\n`,
   );
 
   const shutdown = (): void => {
     void focusConsumer.stop();
-    // Flush what the batch processor is holding; a SIGTERM'd pod otherwise
-    // drops its last window of spans, which is exactly the window that
-    // explains why it was terminated.
     void telemetryShutdown();
     void rest.close().finally(() => {
       process.exit(0);
@@ -211,8 +162,6 @@ async function main(): Promise<void> {
   process.on("SIGINT", shutdown);
 }
 
-// Run only when invoked as the bin, not when imported by a test — compare the
-// resolved entry path (argv[1]) against this module's URL (ESM "is main").
 const entry = argv[1];
 if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
   main().catch((err: unknown) => {

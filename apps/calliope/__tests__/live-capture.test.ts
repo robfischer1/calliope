@@ -104,8 +104,6 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
     const ops = stub.calls[0]?.args.ops as WireOp[];
     expect(stub.calls[0]?.verb).toBe("capture");
     expect(ops).toContainEqual({ op: "intern", value: "section" });
-    // p/g are sent bare (request side moved to names 2026-08-17); chaos
-    // derives sha256(name) internally — no client-side hash on this leg.
     expect(ops).toContainEqual({
       op: "addEdge",
       s: sid,
@@ -127,8 +125,6 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
     await cap.capture(ops);
 
     const wire = stub.calls[0]?.args.ops as WireOp[];
-    // text literal interned + edge at its content-hash. p/g are sent bare
-    // (request side moved to names 2026-08-17).
     expect(wire).toContainEqual({ op: "intern", value: "Hello, world." });
     expect(wire).toContainEqual({
       op: "addEdge",
@@ -137,7 +133,6 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
       o: REF.content.hello,
       g: "moirae",
     });
-    // order_key literal interned + edge
     expect(wire).toContainEqual({ op: "intern", value: "N" });
     expect(wire).toContainEqual({
       op: "addEdge",
@@ -146,7 +141,6 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
       o: contentHash("N"),
       g: "moirae",
     });
-    // hasPart points at the section NODE (no intern, object is the node id)
     expect(wire).toContainEqual({
       op: "addEdge",
       s: note,
@@ -164,7 +158,6 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
       { op: "removeEdge", from: sid, predicate: "order_key", to: "N" },
     ]);
     const wire = stub.calls[0]?.args.ops as WireOp[];
-    // p/g are sent bare (request side moved to names 2026-08-17).
     expect(wire).toContainEqual({
       op: "removeEdge",
       s: sid,
@@ -176,9 +169,6 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
   });
 
   it("resolve() reshapes materialize_edges to calliope triples", async () => {
-    // resolve() now calls materialize_edges — the no-LWW read whose edges carry
-    // the RESOLVED predicate NAME (not a hash). Two hasPart edges both survive
-    // (where materialize would collapse them); an off-model predicate is dropped.
     stub.restore();
     const note = nameHash("calliope:note");
     const s0 = nameHash("calliope:s0");
@@ -189,16 +179,14 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
         { predicate: "hasPart", value: s0, is_node: true },
         { predicate: "hasPart", value: s1, is_node: true },
         { predicate: "text", value: "body prose", is_node: false },
-        // a predicate outside calliope's body model is dropped
         { predicate: "servesObjective", value: "x", is_node: false },
       ],
     }));
 
     const cap = new LiveUraniaCapture();
     const triples = await cap.resolve(note);
-    expect(calls[0]?.verb).toBe("materialize_edges"); // not materialize
+    expect(calls[0]?.verb).toBe("materialize_edges");
     expect(calls[0]?.args).toEqual({ node: note });
-    // both hasPart edges survive — no LWW collapse
     expect(triples).toContainEqual({
       from: note,
       predicate: "hasPart",
@@ -214,7 +202,7 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
       predicate: "text",
       to: "body prose",
     });
-    expect(triples).toHaveLength(3); // off-model predicate dropped
+    expect(triples).toHaveLength(3);
   });
 
   it("dedups duplicate facts within one batch (urania PK is s,p,o,g,tx)", async () => {
@@ -266,10 +254,8 @@ describe("LiveUraniaCapture — calliope op → urania wire op translation", () 
  */
 function uraniaSubstrateFetch(): { restore: () => void } {
   const original = globalThis.fetch;
-  // current facts keyed "s|p|o|g" -> {s,p,o}; scalars keyed content-hash -> value.
   const facts = new Map<string, { s: string; p: string; o: string }>();
   const scalars = new Map<string, string>();
-  // reverse predicate name-hash (hex) -> name, for the body-model predicates.
   const predName = new Map<string, string>(
     [HAS_PART, TEXT, ORDER_KEY, HAS_TYPE_TEST].map((n) => [nameHash(n), n]),
   );
@@ -358,7 +344,7 @@ describe("body round-trip over materialize_edges (write 3 -> read 3 in order)", 
     ]);
     const body = await client.readBody(note);
     expect(body.map((s) => s.text)).toEqual(["first", "second", "third"]);
-    expect(body).toHaveLength(3); // proves the multi-hasPart read (no LWW)
+    expect(body).toHaveLength(3);
   });
 });
 

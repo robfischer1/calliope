@@ -1,10 +1,6 @@
 /**
  * F17 batch 2a — every calliope fleet verb publishes an output schema and
  * answers structuredContent that matches it.
- *
- * Over the fixture rig, through a real MCP client: the client validates each
- * successful structuredContent against the schema the server advertised, so a
- * schema that drifts from an answer fails here, not on the gateway.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
@@ -80,7 +76,6 @@ async function rig(): Promise<Client> {
     parent_blob_sha: null,
     captured_at: "2026-05-27T10:39:48.080Z",
   });
-  // The archive's `summary_generated_at` is the text cast of a timestamptz.
   await revisions.importRevision({
     id: 2,
     schema_type: "FileRevision",

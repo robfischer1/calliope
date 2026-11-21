@@ -1,25 +1,3 @@
-/**
- * Slot-to-slot transclusion (Lamarr37-002): a PLACEMENT slot holds
- * `tree_ref → origin slot` instead of `tree_content → blob`. This module is
- * the read side every tree read shares, plus the reverse index and the
- * orphan detector.
- *
- * - Identity stays the slot (Rob, 2026-08-15). A placement never points at a
- *   blob: blobs are keyed by content, and two unrelated slots can hold the
- *   same blob by coincidence.
- * - One hop, never a chain. The write path refuses a reference to a slot that
- *   is itself a placement, so a resolved origin always holds a blob. A read
- *   that meets a chain anyway (data written around the verb) does not follow
- *   it: the placement reads dangling, its `ref` still named.
- * - Cycles cannot form: a reference only targets a blob-holding slot, and no
- *   op ever gives a placement a blob (an edit through a placement rewrites
- *   the origin).
- * - A placement whose origin lost its content (removed with
- *   `placements: "orphan"`) is an ORPHAN: it reads dangling with `ref` kept.
- *   {@link orphanedPlacements} is the callable detector a sweep can use; over
- *   the wire, an orphan is a block with `ref` and `dangling: true`.
- */
-
 import {
   type ChaosDial,
   type Tenant,
@@ -171,10 +149,8 @@ export async function slotState(
 }
 
 /**
- * The tenant a slot's tree facts live in, read off the scope chaos placed
- * them in (`materialize_edges` full). `fallback` answers when the dial cannot
- * say (no `placedEdges`, or the scope came back empty, as measured on
- * 2026-10-07) — the same rule move_blocks' tenant check uses.
+ * The tenant a slot's tree facts live in, read off the scope chaos placed them
+ * in (`materialize_edges` full).
  */
 export async function tenantOfSlot(
   dial: ChaosDial,

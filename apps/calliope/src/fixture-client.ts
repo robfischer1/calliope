@@ -36,14 +36,6 @@ interface FixtureRevision {
 /**
  * In-memory {@link BodyClient}. Sections are kept per `nodeId`; this is the
  * default for standalone dev and for Tantalus today — fully working, no wire.
- *
- * It models the substrate semantics it can: a coarse save relays a fresh
- * fractional `order_key` sequence, mints a placement id per section, and reads
- * back sorted by `orderKey` (COLLATE "C"). Copy-on-write versioning is modeled
- * ONLY as far as the A8 history surface observes it: each save/edit records a
- * write-event with a post-event snapshot, so `readRevisions`/`readRevisionAt`
- * behave like the sovereign store's lineage reconstruction (strictly
- * increasing event timestamps, save vs edit kinds, as-of reads).
  */
 export class FixtureBodyClient implements BodyClient {
   private readonly bodies = new Map<string, FixtureSection[]>();
@@ -151,7 +143,6 @@ export class FixtureBodyClient implements BodyClient {
         ),
       );
     }
-    // F4: a byte-identical re-submit is a no-op — no event, same id back.
     if (target.text === text) {
       return Promise.resolve({
         id: target.id,
@@ -224,7 +215,6 @@ export class FixtureBodyClient implements BodyClient {
       }
       const target = next.find((r) => r.id === op.sectionId);
       if (target === undefined) {
-        // Malformed batch (two ops on one id — the contract forbids it).
         return Promise.reject(
           new Error(
             `stale_section: section ${op.sectionId} was consumed earlier in the batch.`,
@@ -625,7 +615,6 @@ export class FixtureBodyClient implements BodyClient {
     },
     anchors = false,
   ): CommentRecord {
-    // Follow the comment's own lineage to its current revision's prose.
     const pairs = this.lineage.get(cc) ?? [];
     let currentId = e.commentId;
     let moved = true;
@@ -682,8 +671,6 @@ export class FixtureBodyClient implements BodyClient {
   /** The body as of `revision` — the snapshot the event recorded. */
   readRevisionAt(nodeId: string, revision: string): Promise<Section[]> {
     const events = this.revisions.get(nodeId) ?? [];
-    // The body at T = the latest event at or before T (ISO strings compare
-    // lexicographically); before the first event there was no body.
     let snapshot: FixtureSection[] = [];
     for (const e of events) {
       if (e.revision <= revision) snapshot = e.snapshot;

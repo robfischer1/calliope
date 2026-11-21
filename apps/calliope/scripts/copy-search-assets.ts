@@ -1,9 +1,3 @@
-/**
- * Ship the encoder assets beside the compiled sidecar (plan Decision 4):
- * `models/` → `dist/search-assets/`. Absence warns rather than fails — a
- * sidecar without assets still serves FTS and states the dark arm.
- */
-
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 

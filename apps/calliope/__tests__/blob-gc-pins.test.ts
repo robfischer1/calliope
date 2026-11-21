@@ -1,11 +1,3 @@
-/**
- * The blob store's reap surface and the census's bookkeeping, pinned at the
- * contract: what a reap counts and forgets, what a candidate list holds, what
- * the census marks, reaps and reports. The Pg classes are driven through a
- * stub pool that answers fixed rows, so the row-mapping code is asserted
- * without a database.
- */
-
 import type { Pool } from "pg";
 import { describe, expect, it } from "vitest";
 import { runBlobCensus } from "../src/blob-census.js";
@@ -46,7 +38,6 @@ describe("FixtureBlobStore", () => {
     expect(s.reapIds([a])).toBe(0);
     expect(s.size).toBe(0);
     expect(await s.findByContent("alpha")).toBeNull();
-    // The text is mintable again, under a fresh id that reads back.
     const again = await s.mint("alpha");
     expect(again).not.toBe(a);
     expect(await s.getText(again)).toBe("alpha");

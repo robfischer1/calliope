@@ -1,17 +1,3 @@
-/**
- * The local admit (spec 045, master-plan F13) — baby-chaos has no themis.
- *
- * On the fleet, every write rides the gate: themis translates the friendly
- * op dialect into chaos's capture wire (ops.py → go-court ops.go ToWire).
- * The desktop ships the ENGINE (chaosstore + postgres), not the court —
- * one machine, one writer, nothing to arbitrate — so the same translation
- * runs here, in process, and the batch lands on chaosstore's own `capture`
- * door. The translation is a PORT of go-court/internal/ops/ops.go ToWire,
- * held to it by the same pinned constants its tests use (ContentHash of
- * "done", NameHash of "moirae") — cross-language parity by constant, not
- * by re-deriving with the code under test.
- */
-
 import { createHash } from "node:crypto";
 
 import { ChaosRest } from "./chaos-rest.js";
@@ -201,7 +187,6 @@ export class LocalChaosDial implements ChaosDial {
   readonly #author: string;
 
   constructor(chaosUrl: string, author = "human") {
-    // chaos serves REST alone, so reads and capture share one dial onto it.
     this.#rest = new ChaosRest(chaosUrl, LOCAL_TIMEOUT_MS);
     this.#reads = new LiveChaosDial({
       chaosUrl,
@@ -217,7 +202,6 @@ export class LocalChaosDial implements ChaosDial {
     expect?: ChaosExpect[],
   ): Promise<AdmitResult> {
     const wire = toCaptureOps(ops, scope);
-    // chaos `capture` speaks the same `expect` grammar themis passes through.
     const raw = (await localCapture(this.#rest, {
       ops: wire,
       author: this.#author,

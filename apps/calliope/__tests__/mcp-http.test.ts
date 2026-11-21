@@ -2,13 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RestMount } from "@forge/stellar-core-ts/rest";
 import { recordingWitness, serveDoor } from "./rest-door.js";
 
-/**
- * Drive the calliope star over a real socket, fixture-backed, the way every
- * caller reaches it since REST mesh P7 (rm39): its REST door, the only
- * listener. The tool surface is read from the served spec's `x-mcp-tools`
- * (the server's own tools/list, carried verbatim).
- */
-
 let rest: RestMount;
 let base: string;
 
@@ -37,7 +30,6 @@ async function listTools(): Promise<ListedTool[]> {
 }
 
 beforeEach(async () => {
-  // Fixture backend: no urania connection, deterministic in-memory body model.
   ({ rest, base } = await serveDoor({ witness: recordingWitness().witness }));
 });
 
@@ -47,44 +39,38 @@ afterEach(async () => {
 
 describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
   it("serves the full verb surface via tools/list — the F3 fence", async () => {
-    // This list IS the caller-facing surface contract: every shipped verb
-    // traces to a decided master-plan Exposes row, and nothing ships that
-    // traces to none. Change it only alongside the plan that licenses it.
     const names = (await listTools()).map((t) => t.name).sort();
     expect(names).toEqual([
-      "blob_census", // F7 — the inverted-census GC (mark-and-sweep)
-      "container_history", // F5 — history IS the graph (as-of reads)
+      "blob_census",
+      "container_history",
       "copy_reference",
       "create_note",
-      "delete_note", // suppresses (default) or purges, so an import can be reversed
+      "delete_note",
       "dissolve_note",
       "export_note",
-      "file_revisions", // stays [Rob, F12] — frozen archive, read-only
+      "file_revisions",
       "list_by_tag",
       "list_tags",
       "look",
       "materialize_note",
-      "move_blocks", // Threads: re-home slots between containers of one tenant
-      "read_container", // F5 — the ordered tree read
-      "read_containers", // the batch read: one call, not ~96
-      "restore_note", // clears a suppression [Rob, 2026-10-06: delete = suppress]
-      "revision_deltas", // stays [Rob, F12] — frozen archive, read-only
-      "search", // Findability F2 — licensed by its Exposes row `search(query, scope)`
-      "set_properties", // a note's frontmatter as graph edges
-      "tag_seed_read", // Charon parity row 20 — aglaia's tag-style seed
+      "move_blocks",
+      "read_container",
+      "read_containers",
+      "restore_note",
+      "revision_deltas",
+      "search",
+      "set_properties",
+      "tag_seed_read",
       "unpin",
-      "write_container", // F4 — the ONE write path since the F12 cut
+      "write_container",
     ]);
   });
 
   it("every verb carries honest ToolAnnotations — the F10 map (B7's fence)", async () => {
-    // The pinned map: readOnlyHint / destructiveHint / idempotentHint per
-    // verb. A new verb without annotations fails here by construction.
     const MAP: Record<string, [boolean, boolean, boolean]> = {
-      // reads
       read_container: [true, false, true],
       read_containers: [true, false, true],
-      blob_census: [false, true, false], // F7 — the sweep reaps marked blobs
+      blob_census: [false, true, false],
 
       container_history: [true, false, true],
       file_revisions: [true, false, true],
@@ -95,26 +81,16 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
       materialize_note: [true, false, true],
       copy_reference: [true, false, true],
       look: [true, false, true],
-      search: [true, false, true], // Findability F2 — read-only, idempotent
-      tag_seed_read: [true, false, true], // Charon parity row 20 — env read
+      search: [true, false, true],
+      tag_seed_read: [true, false, true],
 
       unpin: [false, true, true],
-      // idempotent writes (no-op convergence tested in their own suites)
       create_note: [false, false, true],
       dissolve_note: [false, false, true],
-      // replaces a named predicate's value set (and retract: removes), so
-      // it can take a value away: destructive, and a re-run converges
       set_properties: [false, true, true],
-      // suppresses (or, purge=true, retracts) a note; a re-run answers
-      // already_suppressed / not_found, so it converges
       delete_note: [false, true, true],
-      // retracts only the marker it finds; a re-run answers not_suppressed
       restore_note: [false, false, true],
-      // the ONE write path (F4/F12): a save whose ops all net out writes
-      // nothing, but the verb itself is not idempotent (adds mint slots).
-      // Destructive: its remove op deletes a section (the dies classify it so)
       write_container: [false, true, false],
-      // re-homes slots (retracts membership + position); not idempotent
       move_blocks: [false, true, false],
     };
     const tools = await listTools();
@@ -147,12 +123,6 @@ describe("calliope-mcp HTTP star — fixture-backed over a real socket", () => {
 
 describe("the PRODUCTION boot shape (prebuilt client, F12 regression pin)", () => {
   it("serves the container surface when booted exactly as main() boots", async () => {
-    // The live outage this pins (found on the deployed star, 2026-08-16):
-    // main() passes a PREBUILT client with each facet as an option,
-    // which SKIPS the make-the-backend-internally branch — so a facet
-    // main() forgets to pass silently vanishes from the served surface
-    // while the fixture-path test above stays green. Boot the server the
-    // way main() does and pin the write path's presence.
     const { makeBackend } = await import("../src/mcp/backend.js");
     const { FocusRegister } = await import("../src/focus-register.js");
     const backend = makeBackend("fixture");

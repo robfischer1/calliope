@@ -1,6 +1,3 @@
-// Test-only: calliope served exactly as main() serves it (serveCalliope, the
-// REST door as the only listener) on an ephemeral port.
-
 import { RequestLog } from "@forge/stellar-core-ts";
 import type { RequestRecord } from "@forge/stellar-core-ts";
 import type { RestMount } from "@forge/stellar-core-ts/rest";

@@ -1,10 +1,3 @@
-/**
- * chaos over its openapi-http face: calliope's reads dialled on chaos's
- * plaintext REST door (`CALLIOPE_CHAOS_REST_URL`, e.g. `http://chaos`)
- * with stellar-core-ts's RestClient. Whether calliope-sa may reach chaos is
- * Cilium's, at the port; no caller identity rides the request.
- */
-
 import {
   RestClient,
   ToolError,

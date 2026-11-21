@@ -1,13 +1,4 @@
-/**
- * The public seam between a render surface (e.g. Tantalus) and Calliope.
- *
- * A {@link Section} is the resolved, displayable unit of a node's body. The
- * substrate stores a body as `note --hasPart--> section` node edges, where each
- * `section` carries a `text` literal (the prose, content-addressed by the
- * substrate into the scalar pool) and an `order_key` literal (a fractional sort
- * key). Calliope reads those, sorts by `order_key` (COLLATE "C"), and presents
- * the ordered {@link Section}[] to the editor.
- */
+/** The public seam between a render surface (e.g. Tantalus) and Calliope. */
 export interface Section {
   /**
    * The section node's placement id. This is a *placement* identity, not a
@@ -41,21 +32,7 @@ export interface SectionInput {
  */
 export type SessionPrincipal = `spiffe://${string}/session/${string}`;
 
-/**
- * The provenance identity carried on every body write (024 — widened).
- *
- * - `"human"`    — attributed to Rob; the gateway issues `SET ROLE human` so
- *                  block-ops written to Mnemosyne carry `authored_by = human`.
- * - `"calliope"` — machine-authored (the default for legacy / direct-engine
- *                  writes that predate the gateway auth seam).
- * - a {@link SessionPrincipal} — attributed to a specific agent session
- *   (`spiffe://{td}/session/{uuid}`), resolvable to that session's history.
- *
- * The storage column (`sections.authored_by`) is `text`; only this type and
- * the boundary validation widen. Authenticity of a supplied principal is NOT
- * verified here — form-only validation (the Kairos-vs-gateway trust posture
- * is a surfaced open item of the master plan, not decided in 024).
- */
+/** The provenance identity carried on every body write (024 — widened). */
 export type AuthoredBy = "human" | "calliope" | SessionPrincipal;
 
 /**
@@ -149,20 +126,6 @@ export function validateWriteProvenance(
 /**
  * One block-grain write op (A11) — the editor's diff carried as-is through
  * the wire, the store write, the block-op log, and the revision surface.
- *
- * - `add`     — mint a new section with the CALLER's fractional `orderKey`
- *               (client-minted between-neighbors; sibling keys never move).
- * - `update`  — single-section copy-on-write (the `edit_section` semantics):
- *               fresh placement id, `order_key` preserved unless `orderKey`
- *               is supplied (an edit+move in one gesture).
- * - `delete`  — the section leaves the body; its history is preserved.
- * - `reorder` — the section moves to the caller's `orderKey`; prose
- *               unchanged. (Placement identity is backend-defined: the
- *               substrate moves the `order_key` edge in place; the sovereign
- *               store re-places via copy-on-write.)
- *
- * Batch rules: at most ONE op per `sectionId`; any stale `sectionId` rejects
- * the WHOLE batch (`stale_section`) — nothing is applied.
  */
 export type SectionOp =
   | { op: "add"; text: string; orderKey: string }
@@ -184,30 +147,7 @@ export interface ApplySectionOpsResult {
   applied: AppliedOp[];
 }
 
-/**
- * The semantic op type emitted into the block-op transaction log (F3).
- *
- * Each editor transaction produces one or more `BlockOp` records that describe
- * WHAT changed at the block level — `add`, `update`, `delete`, or `reorder` —
- * independently of the low-level urania `UraniaOp` stream. These are emitted as
- * an APPEND-ONLY side-channel to Mnemosyne via the clotho `capture` verb; they
- * never replace the `hasPart`/section substrate writes.
- *
- * Field semantics:
- * - `block_id`      — the section's placement id (urania node hex / fixture id).
- * - `op_type`       — the semantic op: `add` (new section), `update` (prose
- *                     changed), `delete` (section removed from body), `reorder`
- *                     (same prose, new position).
- * - `content_delta` — for `add`/`update`: the new prose; for `reorder`/`delete`:
- *                     empty string (the prose itself did not change).
- * - `order_key`     — the fractional sort key at the time of the op (the new
- *                     key for `add`/`reorder`; the last known key for `delete`).
- * - `timestamp`     — ISO-8601 UTC string minted at emission time.
- * - `authored_by`   — provenance from the write path: `"human"` (gateway
- *                     `SET ROLE human` seam), `"calliope"`, or a session
- *                     principal (see {@link AuthoredBy}).
- * - `node_id`       — the owning note/node id (the subject of the `hasPart` edge).
- */
+/** The semantic op type emitted into the block-op transaction log (F3). */
 export interface BlockOp {
   block_id: string;
   op_type: "add" | "update" | "delete" | "reorder";
@@ -218,14 +158,7 @@ export interface BlockOp {
   node_id: string;
 }
 
-/**
- * Side-channel emitter for the block-op transaction log.
- *
- * The log is APPEND-ONLY: `emit` is called once per block-op and never receives
- * a destructive update. The default no-op implementation is used when no emitter
- * is injected; inject a real one (e.g. a Mnemosyne/clotho capture transport) to
- * persist the log downstream.
- */
+/** Side-channel emitter for the block-op transaction log. */
 export interface BlockOpEmitter {
   /**
    * Emit one block-op record. Implementations may be synchronous or async; the
@@ -234,15 +167,7 @@ export interface BlockOpEmitter {
   emit(op: BlockOp): void | Promise<void>;
 }
 
-/**
- * The body transport. Two implementations ship:
- *
- * - {@link FixtureBodyClient} — in-memory, fully working; the default for
- *   standalone dev and for Tantalus today.
- * - {@link UraniaBodyClient} — substrate-direct (urania capture via the Hades
- *   gate). The body-model mapping is real; the live wire is deferred behind a
- *   flag, exactly like Tantalus's current clotho swap-seam.
- */
+/** The body transport. Two implementations ship: */
 export interface BodyClient {
   /**
    * Resolve a node's body: its `hasPart` section targets, each resolved to
@@ -271,18 +196,6 @@ export interface BodyClient {
    * the changed prose mints a fresh version node and `hasPart` is rewired to it
    * (the old node stays as the prior version), exactly as a coarse save does for
    * a changed section.
-   *
-   * Resolves to the (possibly new) section's resolved {@link Section}. Rejects if
-   * `sectionId` is not a current `hasPart` target of `nodeId`.
-   *
-   * F4: a BYTE-IDENTICAL re-submit is a no-op — the current section returns
-   * unchanged (same id), and no row, lineage edge or revision event is
-   * written. The comparison is made under the write path's own lock, so a
-   * racing real edit is never swallowed. Retrying callers are safe.
-   *
-   * Optional for backward compatibility: a {@link BodyClient} predating this
-   * method (e.g. a host's own adapter) need not implement it; the two clients
-   * shipped here ({@link FixtureBodyClient}, {@link UraniaBodyClient}) both do.
    */
   editSection(
     nodeId: string,
@@ -299,8 +212,6 @@ export interface BodyClient {
    * `sectionId` is not a current section rejects the whole batch with a
    * `stale_section` error — the caller's compare-before-write race backstop.
    * One revision event (`kind: "ops"`) and one block-op per applied op.
-   *
-   * Optional for backward compatibility, like {@link editSection}.
    */
   applySectionOps(
     nodeId: string,
@@ -318,9 +229,6 @@ export interface BodyClient {
    * original and its next active neighbour. BOTH children record the
    * original as lineage predecessor, so anchors resolve forward. One
    * transaction; a stale `sectionId` rejects with `stale_section`.
-   *
-   * Optional like {@link editSection}; the fs backend deliberately never
-   * grows it (file is truth, one block, no inference).
    */
   splitSection?(
     nodeId: string,
@@ -407,13 +315,10 @@ export interface BodyClient {
   readRevisions(nodeId: string, limit?: number): Promise<RevisionMeta[]>;
 
   /**
-   * Findability F10 — bulk prose-presence: active-block counts for every id
-   * in `nodeIds` that has a body; ids with none are simply absent from the
-   * map. ONE round-trip for a whole extent — the Aglaia browse list's badge
-   * was backlogged on per-node read_body never scaling to ~1,400 nodes
-   * (footgun #5: never scan a directory's contents to render its structure).
-   * Optional: store-backed clients implement it; the fs grain's directory
-   * has the local index for this.
+   * Findability F10 — bulk prose-presence: active-block counts for every id in
+   * `nodeIds` that has a body; ids with none are simply absent from the map.
+   * Optional: store-backed clients implement it; the fs grain's directory has
+   * the local index for this.
    */
   hasBody(nodeIds: readonly string[]): Promise<Map<string, number>>;
 
@@ -425,21 +330,7 @@ export interface BodyClient {
   readRevisionAt(nodeId: string, revision: string): Promise<Section[]>;
 }
 
-/**
- * One write-event in a body's copy-on-write lineage (the A8 history surface).
- *
- * - `revision`    — the event's identity: its `created_at` as an ISO-8601 UTC
- *                   string (one transaction = one event; rows written together
- *                   share it).
- * - `kind`        — `"save"` (a coarse save minted a fresh generation),
- *                   `"edit"` (a single-section copy-on-write edit), or
- *                   `"ops"` (an A11 block-grain batch).
- * - `authoredBy`  — the provenance persisted with the event's rows.
- * - `kafkaOffset` — the writing session's log offset (025), or null when the
- *                   event carried no session context.
- * - `sections`    — how many section rows the event wrote (a save writes the
- *                   whole body; an edit writes one; an ops batch one per op).
- */
+/** One write-event in a body's copy-on-write lineage (the A8 history surface). */
 export interface RevisionMeta {
   revision: string;
   kind: "save" | "edit" | "ops";
@@ -454,11 +345,6 @@ export interface RevisionMeta {
  * widening, not a rewrite. This is a byte-compatible MIRROR of theia's
  * `packages/aglaia/src/types.ts` BodyPointer; both sides pin the shape with
  * tests, so a divergence goes red on whichever side moved.
- *
- * The body variant carries CAPTURE-TIME-RESOLVED coordinates — a stable
- * section (block) id + UTF-16 offsets into the section's rendered plain
- * text + the resolved excerpt (the drift witness) — never raw editor
- * positions.
  */
 export interface BodyPointer {
   kind: "body";

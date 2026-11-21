@@ -1,18 +1,3 @@
-/**
- * Fractional order keys.
- *
- * The substrate stores section ordering as an `order_key` literal sorted as raw
- * bytes (COLLATE "C"), not numerically. A fractional key scheme lets a new key
- * be minted strictly between any two existing keys without renumbering — the
- * property a body editor needs for insert/reorder.
- *
- * The alphabet is the printable ASCII digits `0-9`, whose byte order matches
- * their lexicographic order, so a plain string compare reproduces COLLATE "C".
- * `between(a, b)` returns a key `k` with `a < k < b` byte-wise; `a`/`b` may be
- * unbounded (`null`). A coarse save lays a fresh evenly-spaced sequence via
- * {@link sequence}; finer insert/reorder is the deferred chunking task's job.
- */
-
 const FIRST = "1";
 const LAST = "9";
 const MID = "5";
@@ -28,10 +13,6 @@ export function compareKeys(a: string, b: string): number {
  * A key strictly between `a` and `b` (byte order). `null` means unbounded:
  * `between(null, b)` yields a key below `b`, `between(a, null)` a key above `a`,
  * `between(null, null)` the canonical first key.
- *
- * Implemented with a fixed digit alphabet `0..9`. To stay strictly between two
- * adjacent keys we append/extend rather than risk a collision: the result is
- * always longer-or-equal and provably ordered.
  */
 export function between(a: string | null, b: string | null): string {
   if (a === null) {
@@ -44,22 +25,14 @@ export function between(a: string | null, b: string | null): string {
   return midpoint(a, b);
 }
 
-/** A key strictly below `b`.
- *
- * `sequence()` zero-pads ("01", "02", …), so keys legitimately start below
- * FIRST; the old fallback (`FIRST + FIRST`) returned a key ABOVE such a `b` —
- * the prepend-at-top case was broken for every sequence-minted key (found by
- * the G2 fs-client suite). Descend digit-wise instead. */
+/** A key strictly below `b`. */
 function keyBelow(b: string): string {
   const head = b[0] ?? LAST;
   if (head > "0") {
-    // A single digit one below the leading digit sorts before b (the "0" pad
-    // digit is byte-ordered below FIRST and equally valid).
     return String.fromCharCode(head.charCodeAt(0) - 1);
   }
   const tail = b.slice(1);
   if (tail === "" || /^0+$/.test(tail)) {
-    // An all-zero key: one char shorter still sorts strictly below.
     if (b.length <= 1) {
       throw new Error(`between(): no key below the floor key "${b}"`);
     }
@@ -75,9 +48,6 @@ function keyAbove(a: string): string {
   if (head < LAST) {
     return String.fromCharCode(head.charCodeAt(0) + 1);
   }
-  // a starts at the ceiling: keep the 9 and step the remainder, so a run of
-  // appends counts up ("9", "95", "96" … "99", "995") instead of growing one
-  // digit per append ("9", "95", "955", "9555" …).
   return LAST + keyAbove(a.slice(1));
 }
 
@@ -94,7 +64,6 @@ function midpoint(a: string, b: string): string {
       const mid = Math.floor((ca + cb) / 2);
       return prefix + String.fromCharCode(mid);
     }
-    // Digits adjacent or equal: keep a's digit (or floor) and descend.
     prefix += String.fromCharCode(Number.isNaN(da) ? FIRST.charCodeAt(0) : da);
     i += 1;
   }
@@ -115,15 +84,7 @@ export function sequence(n: number): string[] {
   return keys;
 }
 
-/**
- * The longest key a write may mint before the container is re-laid.
- *
- * {@link sequence} keys are 2 characters up to 98 blocks and 3 up to 998, so a
- * 4-character cap leaves one to two characters of insert headroom over a fresh
- * layout and trips after roughly 15 consecutive appends (or a handful of
- * bisections of one gap) — late enough that a rebalance is rare, early enough
- * that keys never grow without bound.
- */
+/** The longest key a write may mint before the container is re-laid. */
 export const MAX_KEY_LEN = 4;
 
 /**

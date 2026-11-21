@@ -1,27 +1,4 @@
 #!/usr/bin/env bun
-/**
- * C4 migration tool — port the git-for-ideas archive (`phdb
- * history.file_revisions` + `history.revision_triple_deltas`) into
- * Calliope's revision store (specs/004-notes-and-revision).
- *
- * Modes (run from a checkout where BOTH databases are reachable — e.g. `cd
- * apps/calliope && bun install && PHDB_DATABASE_URL=... bun run
- * src/mcp/migrate-revisions.ts`; the C3 harness. NOT the deployed runtime
- * image, which ships only the bundled `server.js` and no source tree):
- *
- *   bun run src/mcp/migrate-revisions.ts           # migrate + parity + export
- *   bun run src/mcp/migrate-revisions.ts --probe   # counts + parity only
- *
- * Ids are preserved verbatim (the deltas key on revision id; re-runs are
- * idempotent via ON CONFLICT DO NOTHING). Deltas are DENORMALIZED at copy:
- * the monolith stores (subject, predicate, object) as pks into a 13M-row
- * node dictionary — the source query joins them to labels so the star's
- * archive is self-contained.
- *
- * Parity: counts both tables, then a second pass streams BOTH sides in id
- * order (keyset pages) comparing per-row sha256 over a canonical field
- * list. Any mismatch exits nonzero. The artifact JSON records everything.
- */
 
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
@@ -114,7 +91,6 @@ async function run(probe: boolean): Promise<void> {
     parity_mismatches: [] as { table: string; id: number; reason: string }[],
   };
 
-  // ── Pass 1: copy (skipped in probe mode) ──────────────────────────────
   if (!probe) {
     let last = -1;
     for (;;) {
@@ -153,7 +129,6 @@ async function run(probe: boolean): Promise<void> {
     }
   }
 
-  // ── Pass 2: parity — counts + per-row hash stream in id order ────────
   const srcCounts = await phdb.query<{ revs: string; deltas: string }>(
     `SELECT (SELECT COUNT(*) FROM history.file_revisions) AS revs,
             (SELECT COUNT(*) FROM history.revision_triple_deltas) AS deltas`,
@@ -176,7 +151,6 @@ async function run(probe: boolean): Promise<void> {
     });
   }
 
-  // Revisions: stream both sides.
   let last = -1;
   for (;;) {
     const src = await phdb.query<SourceRevision>(
@@ -214,7 +188,6 @@ async function run(probe: boolean): Promise<void> {
     }
   }
 
-  // Deltas: stream both sides (source labels re-joined identically).
   last = -1;
   for (;;) {
     const src = await phdb.query<SourceDelta>(

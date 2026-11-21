@@ -1,10 +1,3 @@
-/**
- * Local search on the engine's postgres (046 F14) — tsvector FTS, the
- * decided local search substrate ("Eros stays local via tsvector +
- * pgvector"). The semantic arm follows pgvector into the payload and is
- * NAMED dark until then. Docker-gated: a real postgres, fixture engine.
- */
-
 import { execSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -100,7 +93,6 @@ describe.skipIf(!dockerAvailable())("local search (pg tsvector)", () => {
   it("mentions: wikilinks are linked, text matches are unlinked", async () => {
     const res = await store.mentions("Ideas/blobs.md");
     expect(res.linked.map((m) => m.id)).toEqual(["Ideas/trees.md"]);
-    // The FTS candidates never repeat the linked or the note itself.
     expect(res.unlinked.map((m) => m.id)).not.toContain("Ideas/trees.md");
     expect(res.unlinked.map((m) => m.id)).not.toContain("Ideas/blobs.md");
   });
@@ -111,7 +103,7 @@ describe.skipIf(!dockerAvailable())("local search (pg tsvector)", () => {
       "surprise: a rogue blob appears",
       "utf8",
     );
-    await store.readBody("Journal/monday.md"); // ingest + re-index
+    await store.readBody("Journal/monday.md");
     const res = await store.search("rogue blob");
     expect(res.hits.map((h) => h.id)).toContain("Journal/monday.md");
   });

@@ -1,14 +1,6 @@
-// ── the one line that names the real client ──────────────────────────────────
-//
-// `openFocusConsumer` is `new Consumer(focusConsumerOptions(bootstrap))` and
-// nothing else. Mock the package so the constructor's argument is
-// inspectable; the module's static import resolves to this mock because
-// vi.mock is hoisted above it.
-
 import { describe, expect, it, vi } from "vitest";
 
 const { consumerFactory } = vi.hoisted(() => {
-  // A regular function, not an arrow: the module calls `new Consumer(...)`.
   const consumerFactory = vi.fn(function ConsumerMock() {
     return {
       consume: () => Promise.reject(new Error("mock")),

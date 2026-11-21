@@ -1,16 +1,3 @@
-/**
- * The witness — calliope's inbound request log (Constellation Mesh wave 2).
- *
- * Every Go star records one request record per inbound `tools/call` to its log
- * stream and to `<star>._ops.calls`, and nyx builds the witnessed call graph
- * from those topics. Calliope recorded nothing, so every edge into it was
- * invisible. This wires `@forge/stellar-core-ts`'s witness: the record, the
- * dispatcher interceptor (server.ts installs it) and the sink (built here from
- * `KAFKA_BOOTSTRAP`).
- *
- * It records and refuses nothing, and names no calling star.
- */
-
 import { RequestLog, witnessSink } from "@forge/stellar-core-ts";
 import type { WitnessSink } from "@forge/stellar-core-ts";
 import { SOURCE_STAR } from "./consciousness-emit.js";

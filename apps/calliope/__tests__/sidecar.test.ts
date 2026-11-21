@@ -1,10 +1,3 @@
-/**
- * The sidecar over the ONE backend (046 F14) — the ferry wire
- * rides a LocalEngineStore; the fs backend is gone. Fixture engine (dial +
- * blob store), real working-tree directory: reads/writes hit the graph
- * fixtures AND project markdown to disk.
- */
-
 import { readFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -117,7 +110,6 @@ describe("the ferry wire", () => {
       sections: [{ text: "alpha\n\nbeta" }],
     });
     expect(write.status).toBe(200);
-    // The projection: markdown on disk, readable without the app.
     expect(await readFile(path.join(root, "note.md"), "utf8")).toBe(
       "alpha\n\nbeta",
     );
@@ -127,8 +119,6 @@ describe("the ferry wire", () => {
       sections: { id: string; text: string; orderKey: string }[];
     };
     expect(sections.map((s) => s.text)).toEqual(["alpha\n\nbeta"]);
-    // Engine identity: the section id is a durable slot token, not a
-    // generational file hash.
     expect(sections[0]?.id).toBeTruthy();
   });
 
@@ -230,7 +220,6 @@ describe("the ferry wire", () => {
     expect(res.status).toBe(400);
   });
 
-  // ── 024/F1: copy_reference — the path form ───────────────────────────────
   it("copy_reference answers the compound with the path as the id half", async () => {
     await ferry("write_body", {
       node_id: "Brain Soup/idea.md",
@@ -268,7 +257,6 @@ describe("the ferry wire", () => {
     ).toBe(400);
   });
 
-  // ── tags: the computed walk of the working tree ──────────────────────────
   it("list_tags / list_by_tag read the projected tree", async () => {
     await ferry("write_body", {
       node_id: "a.md",
@@ -288,7 +276,6 @@ describe("the ferry wire", () => {
     expect(byTag).toEqual({ tag: "#calm", node_ids: ["b.md"] });
   });
 
-  // ── search without the engine's postgres: honest darkness ────────────────
   it("search names its dark arms when no index pool is wired", async () => {
     const res = await ferry("search", { query: "anything" });
     expect(res.status).toBe(200);
@@ -328,11 +315,11 @@ describe("the boot gate", () => {
       throw new Error("no address");
     try {
       const health = await healthAt(address.port);
-      expect(health.engine).toBe("booting"); // health never blocks
+      expect(health.engine).toBe("booting");
       const pending = bodyAt(address.port);
       releaseStore(store);
       const res = await pending;
-      expect(res.status).toBe(200); // waited, then served
+      expect(res.status).toBe(200);
     } finally {
       await new Promise((resolve) => gated.close(resolve));
     }

@@ -1,10 +1,3 @@
-/**
- * F9 one-logical-write-one-batch (calliope#16182): a note create or promote
- * carries its attributes on the `{"$mint":0}` batch, so a new note is born
- * whole; an existing note's attribute reconcile and additive assert ride ONE
- * admit. The body write stays the declared carve-out (its own store).
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { FixtureChaosDial, opAdd } from "../src/chaos-client.js";
@@ -31,7 +24,6 @@ describe("createNote carries attrs on the mint", () => {
       (e) => e.predicate === "source_path",
     );
     expect(attr?.value).toBe("Born/Whole.md");
-    // The mint batch itself holds the attribute (not a later admit).
     expect(
       mints[0]?.ops.some(
         (o) => o.op === "addEdge" && o.predicate === "source_path",
@@ -54,7 +46,6 @@ describe("sinkNoteVersion admits (one logical write)", () => {
       undefined,
       { additiveAttrs: [["document_id", "doc-1"]] },
     );
-    // The ensured Notes root is its own admit; the note's is one.
     const noteAdmits = dial.admits.filter((a) =>
       a.ops.some((o) => o.op === "addEdge" && o.from_id === "One/Admit.md"),
     );

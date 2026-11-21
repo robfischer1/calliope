@@ -1,8 +1,3 @@
-/**
- * The container write (spec 041) — SC-001..005: blob-first ordering,
- * netting, one batch per save, refusal leaves orphans and no tree change.
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBlobStore } from "../src/blob-store.js";
 import {
@@ -49,8 +44,8 @@ describe("the container write (041 F4)", () => {
       },
     ]);
     expect(edit.noop).toBe(false);
-    expect(blobs.size).toBe(4); // exactly one new blob
-    expect(dial.admits.length).toBe(admitsBefore + 1); // one batch
+    expect(blobs.size).toBe(4);
+    expect(dial.admits.length).toBe(admitsBefore + 1);
 
     const after = await readTree(dial, doc);
     expect(after.map((s) => s.blobId)).toEqual([
@@ -58,7 +53,6 @@ describe("the container write (041 F4)", () => {
       edit.blobIds[0] ?? null,
       tree[2]?.blobId ?? null,
     ]);
-    // N-1 slots untouched: same slot tokens, same positions.
     expect(after.map((s) => s.slot)).toEqual(tree.map((s) => s.slot));
   });
 
@@ -83,8 +77,8 @@ describe("the container write (041 F4)", () => {
     ]);
     expect(res.noop).toBe(true);
     expect(res.applied).toEqual([]);
-    expect(blobs.size).toBe(blobsBefore); // dedup — no row
-    expect(dial.admits.length).toBe(admitsBefore); // no transaction at all
+    expect(blobs.size).toBe(blobsBefore);
+    expect(dial.admits.length).toBe(admitsBefore);
   });
 
   it("carries only the real ops of a mixed batch (SC-003)", async () => {
@@ -100,14 +94,13 @@ describe("the container write (041 F4)", () => {
     const admitsBefore = dial.admits.length;
 
     const res = await writeContainer(facet, doc, [
-      { op: "update", slot: s0.slot, oldBlobId: s0.blobId, text: "one" }, // no-op
-      { op: "update", slot: s1.slot, oldBlobId: s1.blobId, text: "two'" }, // real
+      { op: "update", slot: s0.slot, oldBlobId: s0.blobId, text: "one" },
+      { op: "update", slot: s1.slot, oldBlobId: s1.blobId, text: "two'" },
     ]);
     expect(res.noop).toBe(false);
     expect(res.applied).toEqual([1]);
     expect(dial.admits.length).toBe(admitsBefore + 1);
     const batch = dial.admits[dial.admits.length - 1];
-    // Only the real op's facts rode: one retract + one assert, both content.
     expect(batch?.ops).toHaveLength(2);
     expect(batch?.ops.every((o) => o.predicate === TREE_CONTENT)).toBe(true);
   });
@@ -127,7 +120,6 @@ describe("the container write (041 F4)", () => {
     ).rejects.toThrow(ChaosClientError);
     dial.refuseWith = null;
 
-    // Blob-first: the mint happened (orphan), the tree did not change.
     expect(await blobs.findByContent("refused prose")).not.toBeNull();
     expect(await readTree(dial, doc)).toEqual(before);
   });
@@ -178,7 +170,6 @@ describe("the container write (041 F4)", () => {
 
     it("a stale oldBlobId refuses as conflict naming the slot, writing nothing", async () => {
       const { facet, dial, doc, s0, b0 } = await twoBlocks();
-      // another writer moves the slot after the caller read b0
       const other = await writeContainer(facet, doc, [
         { op: "update", slot: s0.slot, oldBlobId: b0, text: "one, theirs" },
       ]);
@@ -201,12 +192,11 @@ describe("the container write (041 F4)", () => {
       ]);
       const before = await readTree(dial, doc);
       const err = await writeContainer(facet, doc, [
-        { op: "update", slot: s0.slot, oldBlobId: b0, text: "one, mine" }, // fresh
-        { op: "update", slot: s1.slot, oldBlobId: b1, text: "two, mine" }, // stale
+        { op: "update", slot: s0.slot, oldBlobId: b0, text: "one, mine" },
+        { op: "update", slot: s1.slot, oldBlobId: b1, text: "two, mine" },
       ]).catch((e: unknown) => e);
       expect((err as ChaosClientError).code).toBe("conflict");
       expect((err as ChaosClientError).message).toContain(s1.slot);
-      // the fresh half did not land either
       expect(await readTree(dial, doc)).toEqual(before);
       expect(await contentOf(dial, s0.slot)).toEqual([b0]);
     });
@@ -277,7 +267,7 @@ describe("the container write (041 F4)", () => {
     await writeContainer(facet, doc, [
       { op: "remove", slot: s1.slot, position: "a1", blobId: s1.blobId ?? "" },
     ]);
-    expect(blobs.size).toBe(blobsBefore); // nothing minted
+    expect(blobs.size).toBe(blobsBefore);
     const after = await readTree(dial, doc);
     expect(after.map((s) => s.slot)).toEqual([s0.slot]);
     expect(after[0]?.position).toBe("a2");

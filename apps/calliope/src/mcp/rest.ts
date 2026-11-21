@@ -1,9 +1,3 @@
-/**
- * The REST face of calliope: its verbs as OpenAPI 3.1 under `/openapi.json`
- * and `/v1/...`, served plain on `STELLAR_REST_PLAINTEXT_PORT`, the star's
- * only listener. A missing or unbindable port refuses the mount.
- */
-
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withSpan } from "@forge/stellar-core-ts";
 import { mountRest } from "@forge/stellar-core-ts/rest";
@@ -39,10 +33,6 @@ export function spanned(next: RestHandler): RestHandler {
 export async function mountRestFace(o: RestFaceOptions): Promise<RestMount> {
   const getenv = o.getenv ?? ((k: string) => process.env[k]);
   return mountRest(o.build, {
-    // The roster key, not the MCP server's own name (`calliope-mcp`): Hades
-    // checks X-Star against the star it dialled, and the forwarder step a
-    // staircase gains here names spiffe://notusmi.com/star/<star>, the
-    // star's SVID shape (R22).
     star: STAR,
     getenv,
     soleListener: true,

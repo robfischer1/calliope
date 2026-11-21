@@ -1,12 +1,3 @@
-/**
- * F6 migration suite (spec 043) — the honest harness: the OLD store is a
- * REAL postgres exercised through PgBodyClient's own write API (true
- * old-model lineage: coarse saves, copy-on-write edits, reorders, deletes,
- * ops-only bodies, comments), the NEW stores are the fixture dial + blobs.
- * SC-001 parity (HEAD + every revision as-of), SC-002 idempotency, SC-003
- * drift refusal, SC-004 comments.
- */
-
 import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
@@ -73,15 +64,12 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
     pg = new PgBodyClient(pool);
     await pg.ensureSchema({ legacy: true });
 
-    // ── true old-model lineage ──────────────────────────────────────────
-    // rev 1: coarse save, three blocks.
     await pg.saveBody(NODE_A, [
       { text: "alpha" },
       { text: "beta" },
       { text: "gamma" },
     ]);
     await sleep(5);
-    // rev 2: copy-on-write edit of beta (re-mints the id + supersession).
     let body = await pg.readBody(NODE_A);
     const beta = body[1];
     if (beta === undefined) throw new Error("no beta");
@@ -89,7 +77,6 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
       { op: "update", sectionId: beta.id, text: "beta, revised" },
     ]);
     await sleep(5);
-    // rev 3: reorder alpha to the end.
     body = await pg.readBody(NODE_A);
     const alpha = body[0];
     const last = body[body.length - 1];
@@ -98,21 +85,18 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
       { op: "reorder", sectionId: alpha.id, orderKey: last.orderKey + "V" },
     ]);
     await sleep(5);
-    // rev 4: delete gamma.
     body = await pg.readBody(NODE_A);
     const gamma = body.find((s) => s.text === "gamma");
     if (gamma === undefined) throw new Error("no gamma");
     await pg.applySectionOps(NODE_A, [{ op: "delete", sectionId: gamma.id }]);
     await sleep(5);
 
-    // An ops-only body (never coarse-saved — the anchor-coalesce case).
     await pg.applySectionOps(NODE_B, [
       { op: "add", text: "ops-only one", orderKey: "a0" },
       { op: "add", text: "ops-only two", orderKey: "a1" },
     ]);
     await sleep(5);
 
-    // A comment on the revised beta, in A's comment container.
     body = await pg.readBody(NODE_A);
     const target = body.find((s) => s.text === "beta, revised");
     if (target === undefined) throw new Error("no target");
@@ -143,7 +127,7 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
     const before = dial.admits.length;
     const report = await migrateTree(deps, { probe: true });
     expect(report.probe).toBe(true);
-    expect(report.containers).toBe(3); // A, A#comments, B
+    expect(report.containers).toBe(3);
     expect(dial.admits.length).toBe(before);
     expect(blobs.size).toBe(0);
   });
@@ -153,8 +137,6 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
     expect(report.parity_mismatches).toEqual([]);
     expect(report.refused).toEqual([]);
     expect(report.migrated).toBe(3);
-    // The tenant graphs were ensured before any admit (live chaos would
-    // refuse facts to an unregistered graph).
     expect([...dial.graphs].sort()).toEqual(["comments", "notes"]);
 
     const recA = report.per_container.find((c) => c.node === NODE_A);
@@ -162,10 +144,8 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
     expect(recA.status).toBe("migrated");
     expect(recA.revisions).toHaveLength(4);
 
-    // HEAD parity, read back through the NEW model.
     const head = await readContainer({ blobs, dial }, recA.container);
     expect(head.blocks.map((b) => b.text)).toEqual(["beta, revised", "alpha"]);
-    // As-of rev 1: the original three, original order.
     const rev1Tx = recA.revisions[0]?.tx;
     if (rev1Tx === null || rev1Tx === undefined) throw new Error("no tx");
     const past = await readContainer({ blobs, dial }, recA.container, {
@@ -173,7 +153,6 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
     });
     expect(past.blocks.map((b) => b.text)).toEqual(["alpha", "beta", "gamma"]);
 
-    // The ops-only body migrated too.
     const recB = report.per_container.find((c) => c.node === NODE_B);
     expect(recB?.status).toBe("migrated");
     const headB = await readContainer({ blobs, dial }, NODE_B);
@@ -184,9 +163,6 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
   });
 
   it("keeps original authorship in the graph (D2a, Rob 2026-08-16)", async () => {
-    // NODE_A replayed four revisions in the earlier migration run; each
-    // landed one migration_provenance fact in the bookkeeping batch. A
-    // skipped re-run adds none (asserted by the count staying 4).
     const recA = (await migrateTree(deps)).per_container.find(
       (c) => c.node === NODE_A,
     );
@@ -204,12 +180,10 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
   });
 
   it("migrates the comment as a slot-to-slot fact (SC-004)", async () => {
-    // Runs against the state the previous test built.
     const commentContainerRec = (await migrateTree(deps)).per_container.find(
       (c) => c.node === `${NODE_A}#comments`,
     );
-    expect(commentContainerRec?.status).toBe("skipped"); // already migrated
-    // Find the comment slot via its provenance and check the edge.
+    expect(commentContainerRec?.status).toBe("skipped");
     const commentSlots = await dial.findByValue(
       "comments",
       "migrated_from_section",
@@ -229,9 +203,6 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
   });
 
   it("canonicalizes duplicate order keys, preserving the old read's order", async () => {
-    // Old-model debris: two sections sharing an order_key; the old read
-    // tiebreaks on id, the tree's address cannot. Found live: 1 of the
-    // first 25 production containers HEAD-diverged on exactly this.
     const NODE_D = "d4".repeat(32);
     await pg.importSection(NODE_D, { id: "aaa", text: "first", orderKey: "m" });
     await pg.importSection(NODE_D, {
@@ -251,7 +222,6 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
       "second",
       "third",
     ]);
-    // Unique addresses now: "m" < "m0" < "z".
     expect(head.blocks.map((b) => b.position)).toEqual(["m", "m0", "z"]);
   });
 
@@ -259,10 +229,9 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
     const admitsBefore = dial.admits.length;
     const blobsBefore = blobs.size;
     const report = await migrateTree(deps);
-    expect(report.skipped).toBe(4); // A, A#comments, B + the duplicate-key container
+    expect(report.skipped).toBe(4);
     expect(report.migrated).toBe(0);
     expect(blobs.size).toBe(blobsBefore);
-    // comments idempotency: the edge pre-check found it; zero NEW admits.
     expect(dial.admits.length).toBe(admitsBefore);
   });
 
@@ -278,10 +247,6 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
   });
 
   it("recovers a container whose first run died mid-replay", async () => {
-    // The 2026-08-16 full-run casualty, reproduced: an infrastructure
-    // failure kills the run between revision admits — tree facts landed,
-    // no marker. The re-run must clean the debris and converge, not
-    // double every slot.
     const NODE_C = "c3".repeat(32);
     await pg.saveBody(NODE_C, [{ text: "one" }, { text: "two" }]);
     await sleep(5);
@@ -321,7 +286,6 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
       migrateTree({ ...deps, dial: flaky }, { node: NODE_C }),
     ).rejects.toThrow("misbehaving");
 
-    // rev 1 landed before the crash: real debris, honestly there.
     const debris = await readContainer({ blobs, dial }, NODE_C);
     expect(debris.blocks.length).toBeGreaterThan(0);
 
@@ -344,11 +308,6 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
   });
 
   it("lands a container whose graph node has NO nodes row on a carrier", async () => {
-    // The full-run finding (2026-08-16): old sections rows outliving
-    // hard-deleted nodes. The fixture admits anything, chaos would not —
-    // mimic the subject guard: an edge naming NODE_E as its subject id
-    // refuses unless the same batch createNodes that label (exactly what
-    // the carrier-mint batch does).
     const NODE_E = "e5".repeat(32);
     await pg.saveBody(NODE_E, [
       { text: "orphan alpha" },
@@ -398,8 +357,7 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
     expect(rec?.status).toBe("migrated");
     expect(report.parity_mismatches).toEqual([]);
     expect(report.refused).toEqual([]);
-    expect(rec?.container).not.toBe(NODE_E); // landed on the carrier
-    // The provenance fact is the index: old id → carrier.
+    expect(rec?.container).not.toBe(NODE_E);
     const carriers = await dial.findByValue(
       "notes",
       "migrated_container_id",
@@ -413,7 +371,6 @@ describe.skipIf(!HAVE_DOCKER)("migrate-tree (real old store)", () => {
       "orphan gamma",
     ]);
 
-    // A re-run finds the carrier's marker through the guard and skips.
     const again = await migrateTree(
       { ...deps, dial: guarded },
       { node: NODE_E },

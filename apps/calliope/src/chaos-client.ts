@@ -1,27 +1,3 @@
-/**
- * ChaosClient — Calliope's graph-write muscle (C8).
- *
- * The prose tenant's east-west dials onto the constellation's graph plane:
- *
- *  - **themis** (`CALLIOPE_THEMIS_REST_URL`, default `http://themis`) —
- *    the gated write. `admit(ops, scope)` runs permit → capture; a refused
- *    batch surfaces its violations verbatim. The op grammar mirrors athena's
- *    `court.py` (the proven litigant): `{op:"createNode", kind, label}` ·
- *    `{op:"addEdge", from_id, predicate, to_literal|to_node}`. **No
- *    intra-batch refs exist on the wire** — a mint-then-link is two `admit`
- *    calls; the minted tokens cross back in `minted[]`.
- *
- *  - **chaos** (`CALLIOPE_CHAOS_REST_URL`, default `http://chaos`) — the
- *    identity reads. `findByName(kind, label)` is the documented F2 reuse
- *    lookup (`createNode` never dedups; a caller wanting reuse-not-create
- *    looks the name up first); `resolveNodes(tokens)` is the existence oracle
- *    (the node dictionary; unknown hashes are omitted).
- *
- * This is deliberately NOT an extension of `HadesCapture` (the human-plane
- * body write via Charon) nor of `LiveUraniaCapture` (the raw body-capture) —
- * identity mints ride the GATE. Both dials are plain REST (`POST /v1/<verb>`).
- */
-
 import { createHash } from "node:crypto";
 
 import {
@@ -40,11 +16,7 @@ import {
   toDirectCaptureOps,
 } from "./direct-capture.js";
 
-// themis's REST door (port 80): where `admit` goes unless
-// CALLIOPE_THEMIS_REST_URL names another base.
 export const DEFAULT_THEMIS_URL = "http://themis";
-// chaos's REST door (port 80): where every chaos verb goes unless
-// CALLIOPE_CHAOS_REST_URL names another base.
 const DEFAULT_CHAOS_URL = "http://chaos";
 const TIMEOUT_MS = 30_000;
 /** The author calliope's direct captures carry . */
@@ -52,7 +24,6 @@ const DIRECT_AUTHOR = "calliope";
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
-/** Coerce an unknown wire field to string (typeof-narrowed, never [object]). */
 /**
  * The rows of a chaos list read. chaos answered a bare array until stellar-core
  * F17 made every MCP answer an object-rooted one (`{items: [...]}`); a reader
@@ -108,9 +79,6 @@ function edgeFields(target: EdgeTarget): Record<string, unknown> {
     to_literal: target.toLiteral ?? null,
     to_node: target.toNode ?? null,
   };
-  // Only when present: pre-F3 consumers (and themis validators) treat an
-  // explicit null third target as a schema surprise; absence is the
-  // compatible spelling of "not a blob edge".
   if (target.toBlob !== undefined) {
     fields.to_blob = target.toBlob;
   }
@@ -238,11 +206,8 @@ export function graphToken(graph: string): string {
 
 /**
  * The scope a placed read answered, as a token — or "" when it answered
- * none. MEASURED 2026-10-07: chaos's `materialize_edges full` answered
- * `graph: ""` for every fact on a live note, and hashing that empty name
- * pinned each purge retraction to sha256(""), a scope the facts never
- * lived in. An empty answer stays empty, so the retraction falls back to
- * the batch's scope.
+ * none. An empty answer stays empty, so the retraction falls back to the
+ * batch's scope.
  */
 export function placedGraph(graph: string): string {
   return graph === "" ? "" : graphToken(graph);
@@ -297,12 +262,8 @@ export interface ChaosDial {
    *  the chaos door, like the reads; themis's wire has no registerGraph). */
   registerGraph(name: string): Promise<void>;
   /**
-   * Raw quads from subjects, optionally as-of a past transaction (F5 —
-   * history is a graph read). predicateNames are NAMES here, and the live
-   * dial sends them as names — chaos derives sha256(name) internally
-   * (request side moved to names 2026-08-17). Rows are wire-form: s/p/g
-   * 64-hex, o 64-hex (node token or scalar content-hash by the row's
-   * predicate) or `blob:<id>`.
+   * Rows are wire-form: s/p/g 64-hex, o 64-hex (node token or scalar
+   * content-hash by the row's predicate) or `blob:<id>`.
    */
   quadsFrom(
     subjects: string[],
@@ -370,25 +331,6 @@ export function opRemove(
 /**
  * Shape a `tools/call` result from its TEXT blocks, for a server that sends no
  * `structuredContent` at all.
- *
- * The Python (FastMCP) chaos door always emitted `structuredContent`, so this
- * client read only that field and treated its absence as "no payload". The Go
- * door emits the payload in `content[].text` and NO structured field, so every
- * verb came back `undefined` — and because the call sites coerce a non-array to
- * `[]` (`findByValue`, `resolveNodes`), that surfaced as an EMPTY RESULT rather
- * than an error. `read_plan` answered `document_not_found` for plans that exist,
- * which is a far worse failure than a throw: it looks like absent data.
- *
- * Measured 2026-08-14 against the live Go door — the node is really there:
- *
- *     find_by_value(notes, source_path, "…/Dionysus…Master-plan.md")
- *       wire: {"result":{"content":[{"type":"text","text":"[\"019ff961…\"]"}]}}
- *       was:  undefined -> []        -> document_not_found
- *       now:  ["019ff961…"]
- *
- * Block rules follow the Python client's `shape_tool_payload`: ONE text block is
- * the payload; SEVERAL are one JSON document each, because the server SDK emits
- * one block per item and concatenating them is not valid JSON.
  */
 export function shapeFromTextBlocks(content: unknown): unknown {
   if (!Array.isArray(content)) return undefined;
@@ -401,10 +343,6 @@ export function shapeFromTextBlocks(content: unknown): unknown {
         typeof (b as { text?: unknown }).text === "string",
     )
     .map((b) => b.text);
-  // Destructure rather than index: `first` narrows to `string | undefined` on
-  // its own, so the emptiness check is the type guard too — no assertion, which
-  // the lint config forbids in both spellings. `as unknown` because JSON.parse
-  // is typed `any` and returning it bare trips no-unsafe-return.
   const [first, ...rest] = texts;
   if (first === undefined) return undefined;
   if (rest.length === 0) return JSON.parse(first) as unknown;
@@ -549,7 +487,6 @@ export class LiveChaosDial implements ChaosDial {
     expect?: ChaosExpect[],
   ): Promise<AdmitResult> {
     if (this.directCapture) return this.admitDirect(ops, scope, expect);
-    // `expect` rides only when stated: an empty list is a plain admit.
     const args: Record<string, unknown> =
       expect !== undefined && expect.length > 0
         ? { ops, scope, expect }
@@ -588,9 +525,6 @@ export class LiveChaosDial implements ChaosDial {
     expect?: ChaosExpect[],
   ): Promise<AdmitResult> {
     const rest = this.chaosRest;
-    // Who this request writes for, as act-gate verified it (a human, else the
-    // waypoint's session or star); chaos records it beside calliope's own
-    // author. Absent on an unattributed request or a background job.
     const onBehalfOf = verifiedOnBehalfOf();
     const args: Record<string, unknown> = {
       ops: toDirectCaptureOps(ops, scope),
@@ -694,7 +628,6 @@ export class LiveChaosDial implements ChaosDial {
       !Array.isArray(shaped.refs) ||
       !Array.isArray(shaped.missing)
     ) {
-      // A chaos that predates missing_ok answers the legacy token map.
       throw new ChaosClientError(
         "resolve_node_refs: missing_ok answered no {refs, missing}",
         "bad_result",
@@ -865,7 +798,6 @@ export class LiveChaosDial implements ChaosDial {
       const row = (t ?? {}) as Record<string, unknown>;
       return {
         tx: typeof row.tx === "number" ? row.tx : Number(asStr(row.tx)),
-        // `container_history.at` is `format: date-time` on the wire.
         at: asDateTime(
           row.at === null || row.at === undefined ? null : asStr(row.at),
         ),
@@ -885,8 +817,6 @@ export class LiveChaosDial implements ChaosDial {
     return raw.held.map(asStr);
   }
 }
-
-// ── the Notes root (C8's orphan-safety anchor) ────────────────────────────────
 
 /** The root's identity: a distinct kind so a user note titled "Notes" can
  *  never BE the root (the by-name key is kind‖label). */
@@ -958,7 +888,6 @@ export async function ensureNotesRoot(
       edges.violations,
     );
   }
-  // Re-find: a concurrent ensure may have won the race.
   const settled = await dial.findByName(NOTE_ROOT_KIND, NOTE_ROOT_LABEL);
   const winner = settled.length > 0 ? lowest(settled) : token;
   if (settled.length > 1) {
@@ -981,17 +910,14 @@ export interface ChaosFacet {
   scope: string;
 }
 
-/** The tenant set — one graph per tenant (Git for Ideas F3). Notes
- *  predates F3; the others are registered idempotently at first use.
- *  `issues` is the sixth (2026-08-22, ourea#5289): a capture's prose —
- *  the pin body and Casper's enriched report — lands as blocks on the
- *  intent node, scoped to graph:issues so the structure stays invisible
- *  from every other tenant's graph while the bytes dedupe in the one
- *  blob store. Mnemosyne stays graph-native on its own and joins only if
- *  it adopts the shared store.
- *  `threads` is the seventh (Glaucus Threads become containers): each
- *  signed thread segment is a Block slot under the Thread's node, its
- *  metadata facts on the slot, scoped to graph:threads. */
+/**
+ * The tenant set — one graph per tenant (Git for Ideas F3). Notes predates
+ * F3; the others are registered idempotently at first use. Mnemosyne stays
+ * graph-native on its own and joins only if it adopts the shared store.
+ * `threads` is the seventh (Glaucus Threads become containers): each signed
+ * thread segment is a Block slot under the Thread's node, its metadata facts
+ * on the slot, scoped to graph:threads.
+ */
 export const TENANTS = [
   "notes",
   "documents",
@@ -1025,9 +951,6 @@ export function notesScope(env: NodeJS.ProcessEnv = process.env): string {
   return tenantScope("notes", env);
 }
 
-// ── the fixture dial (tests + the standalone fixture server) ─────────────────
-
-/** In-memory ChaosDial: deterministic tokens, name-keyed reuse, no network. */
 /** What chaos stores for a typed literal (the fixture's normaliser). */
 function storedLiteral(value: string, dtype: string): string {
   const canonical =
@@ -1116,8 +1039,6 @@ export class FixtureChaosDial implements ChaosDial {
     expect?: ChaosExpect[],
   ): Promise<AdmitResult> {
     this.admits.push({ ops, scope });
-    // Expectations are judged before ANY op applies: all of the batch or
-    // none of it, as the store does.
     for (const [i, x] of (expect ?? []).entries()) {
       const failure = this.#expectFailure(i, x);
       if (failure !== "") {
@@ -1133,11 +1054,6 @@ export class FixtureChaosDial implements ChaosDial {
         violations: this.refuseWith,
       });
     }
-    // Batch-local label -> minted token, themis's exact rule: a NON-EMPTY
-    // createNode label names its mint for later ops in the SAME batch;
-    // first create wins a duplicate. Without this, a one-transaction slot
-    // birth (create + three edges) is untestable offline. Two passes,
-    // because themis pre-indexes creates before translating edges.
     const batchLabels = new Map<string, string>();
     const minted: string[] = [];
     for (const op of ops) {
@@ -1203,8 +1119,6 @@ export class FixtureChaosDial implements ChaosDial {
         const value = hasBlob
           ? asStr(toBlob)
           : resolveRef(op.to_node) || asStr(op.to_literal);
-        // A typed retract hits the typed fact of that canonical value; an
-        // untyped one hits only an untyped fact of that exact text.
         const rdtype = typeof op.dtype === "string" ? op.dtype : "";
         const rstored =
           rdtype === "" || hasBlob ? "" : storedLiteral(value, rdtype);
@@ -1275,8 +1189,6 @@ export class FixtureChaosDial implements ChaosDial {
     for (const t of tokens) {
       const token = this.#tokenOf(t);
       if (token === undefined) {
-        // The door refuses the whole call on an unknown ADDRESS (a hex
-        // token is merely omitted).
         if (!/^[0-9a-f]{64}$/.test(t)) {
           return Promise.reject(
             new ChaosClientError(
@@ -1287,7 +1199,6 @@ export class FixtureChaosDial implements ChaosDial {
         continue;
       }
       const kind = this.kinds.get(token);
-      // Chaos echoes the FIRST ref sent for a node: a later one is the same row.
       if (kind !== undefined && out[token] === undefined)
         out[token] = { ref: t, label: this.labels.get(token) ?? "", kind };
     }
@@ -1352,10 +1263,9 @@ export class FixtureChaosDial implements ChaosDial {
     predicateNames: string[] | null,
     graph?: string,
   ): Promise<QuadRow[]> {
-    void graph; // the fixture is single-graph; the door scopes for real
+    void graph;
     const want = new Set(subjects);
     const preds = predicateNames === null ? null : new Set(predicateNames);
-    // Replay the log ≤ asOf into live state, exactly the door's rank-1 read.
     const live = new Map<string, (typeof this.factLog)[number]>();
     for (const entry of this.factLog) {
       if (asOfTx !== null && entry.tx > asOfTx) continue;
@@ -1367,8 +1277,6 @@ export class FixtureChaosDial implements ChaosDial {
     for (const entry of live.values()) {
       if (!want.has(entry.s)) continue;
       if (preds !== null && !preds.has(entry.predicate)) continue;
-      // Wire form: p is the predicate name-hash; a scalar o is its
-      // content-hash (invertible via resolveScalars); blob o is blob:<id>.
       const o =
         entry.domain === "blob"
           ? `blob:${entry.value}`
@@ -1395,7 +1303,7 @@ export class FixtureChaosDial implements ChaosDial {
   failHeldBlobs = false;
 
   heldBlobs(graph?: string): Promise<string[]> {
-    void graph; // single-graph fixture: every scope answers the one log
+    void graph;
     if (this.failHeldBlobs) {
       return Promise.reject(
         new ChaosClientError("held_blobs: fixture refuses", "wire_error"),
@@ -1413,7 +1321,7 @@ export class FixtureChaosDial implements ChaosDial {
     follow: string[],
     graph?: string,
   ): Promise<HistoryEntry[]> {
-    void graph; // single-graph fixture
+    void graph;
     const followSet = new Set(follow);
     const closure = new Set(subjects);
     for (const entry of this.factLog) {

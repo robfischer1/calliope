@@ -48,9 +48,6 @@ describe("IndexingBodyClient — the write-side body push (B)", () => {
   });
 
   it("forwards write provenance (authoredBy, kafkaOffset) through every write", async () => {
-    // Found live 2026-08-14: the decorator forwarded only (nodeId, ops), so
-    // every production write stored 'human' — the pg client is ALWAYS wrapped
-    // in production, and the bare-client tests never saw the drop.
     const principal =
       "spiffe://notusmi.com/session/e5d3b0ee-4afb-441c-af3e-a61f7527c2c9";
     const seen: {

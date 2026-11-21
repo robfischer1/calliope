@@ -1,8 +1,3 @@
-/**
- * The container read and history (spec 042) — SC-001..003 over the fixture
- * dial's transaction log (the door's contract, offline).
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBlobStore } from "../src/blob-store.js";
 import { FixtureChaosDial, opCreate } from "../src/chaos-client.js";
@@ -38,7 +33,6 @@ describe("the container read (042 F5)", () => {
     await writeContainer(facet, doc, [
       { op: "add", text: "real", position: "a0" },
     ]);
-    // A tree fact naming a blob the store never minted (a foreign id).
     const tree = await readTree(dial, doc);
     const slot = tree[0];
     if (slot?.blobId == null) throw new Error("bad setup");
@@ -115,7 +109,6 @@ describe("the container read (042 F5)", () => {
 
   it("lists N transactions for N edits, removed members included (SC-003)", async () => {
     const { facet, dial, doc } = await setup();
-    // tx2: birth (tx1 was the container mint — no edges, not in history).
     await writeContainer(facet, doc, [
       { op: "add", text: "a", position: "a0" },
       { op: "add", text: "b", position: "a1" },
@@ -123,7 +116,6 @@ describe("the container read (042 F5)", () => {
     const tree = await readTree(dial, doc);
     const [s0, s1] = tree;
     if (s0?.blobId == null || s1?.blobId == null) throw new Error("bad setup");
-    // tx3: edit s1. tx4: remove s1. tx5: edit s0.
     const edited = await writeContainer(facet, doc, [
       { op: "update", slot: s1.slot, oldBlobId: s1.blobId, text: "b2" },
     ]);

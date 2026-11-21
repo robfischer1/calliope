@@ -1,11 +1,4 @@
-/**
- * Stream of Consciousness pass 4 (specs 048 + 049) — the write verbs publish.
- *
- * Over the fixture rig: a dissolve publishes the note with its tags,
- * provenance and lifecycle; a container write publishes again; a write that
- * nets to nothing publishes nothing; a publisher that refuses never fails the
- * write.
- */
+/** Stream of Consciousness pass 4 (specs 048 + 049) — the write verbs publish. */
 import { describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -79,9 +72,7 @@ describe("the write verbs publish the note (pass 4)", () => {
     expect(p?.title).toBe("Idea");
     expect(p?.sourcePath).toBe("Brain Soup/Idea.md");
     expect(p?.schemaType).toBe("Note");
-    // Tags ride as the graph stores them — the `#tag` form `hasTag` carries.
     expect(p?.tags).toEqual(["#alpha"]);
-    // instants read back as chaos renders them: Eastern, explicit offset
     expect(p?.createdAt).toBe("2026-08-31T20:00:00-04:00");
     expect(p?.updatedAt).toBe("2026-09-03T20:00:00-04:00");
     expect(p?.lifecycle).toBe("active");
@@ -127,8 +118,6 @@ describe("the write verbs publish the note (pass 4)", () => {
     expect(publisher.published[1]?.body).toBe("# Idea\n\nsecond thought");
     expect(publisher.published[1]?.authorKind).toBeUndefined();
 
-    // The identical text again: blob-first dedup nets the op out, so nothing
-    // is written and nothing is published.
     const reread = await mcp.callTool({
       name: "read_container",
       arguments: { container: node },
@@ -157,10 +146,6 @@ describe("the write verbs publish the note (pass 4)", () => {
   });
 
   it("a note minted by create_note publishes its title from hasName", async () => {
-    // mnemosyne's shape: create_note("memory:<label>") then write_container.
-    // The mint writes the title as `hasName` — no `title` attribute exists —
-    // and the projection must still carry it, or eros cannot tell a memory's
-    // prose (already indexed as the memory's own row) from a note.
     const { mcp, publisher } = await rig();
     const minted = await mcp.callTool({
       name: "create_note",
@@ -168,8 +153,7 @@ describe("the write verbs publish the note (pass 4)", () => {
     });
     expect(minted.isError).toBeFalsy();
     const node = (minted.structuredContent as { node_id: string }).node_id;
-    expect(publisher.published).toHaveLength(0); // one empty block: nothing to index
-    // mnemosyne updates the lone born block (block 0); it never adds a second.
+    expect(publisher.published).toHaveLength(0);
     const written = await mcp.callTool({
       name: "write_container",
       arguments: {
@@ -249,7 +233,6 @@ describe("the delete verbs keep the index in step (eros)", () => {
     expect(publisher.published).toHaveLength(2);
     expect(publisher.published[1]?.node).toBe(node);
     expect(publisher.published[1]?.body).toBe("# Idea\n\nfirst thought #alpha");
-    // A note that was never suppressed is not published by restore.
     await call(mcp, "restore_note", { ids: [node] });
     expect(publisher.published).toHaveLength(2);
   });
@@ -265,8 +248,6 @@ describe("the delete verbs keep the index in step (eros)", () => {
       dry_run: false,
     });
     expect(publisher.retracted).toEqual([node]);
-    // Purged: no facts left, so a second purge answers not_found and
-    // retracts again — idempotent at the index.
     await call(mcp, "delete_note", {
       ids: [node],
       purge: true,
@@ -294,7 +275,6 @@ describe("the delete verbs keep the index in step (eros)", () => {
     const ghost = "cd".repeat(32);
     await call(mcp, "delete_note", { ids: [node], dry_run: false });
     expect(publisher.retracted).toEqual([node]);
-    // already_suppressed + not_found, dry: nothing reaches the index.
     await call(mcp, "delete_note", { ids: [node, ghost] });
     await call(mcp, "delete_note", { ids: [ghost], purge: true });
     expect(publisher.retracted).toEqual([node]);

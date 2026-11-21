@@ -1,22 +1,3 @@
-/**
- * The verified caller as a write's author: the mesh's answer to "who is this
- * write for" when no act assertion rides the request.
- *
- * The prime waypoint verifies a Kairos token on the way in and writes its
- * claims as `x-kairos-*` (flux infrastructure/prime-waypoint.yaml,
- * kairos-session-stars, which targets Service/calliope). Its Envoy deletes a
- * client's copy of every header it writes before verifying anything (jwt_authn
- * sanitizePayloadHeaders, measured on Kairos 2026-11-13), and it overwrites
- * X-Forwarded-Client-Cert on every request. This reads the pair the way
- * stellar-core-go `caller` does: the subject from `x-kairos-sub`, the calling
- * workload from the one XFCC element. A request with no single XFCC element
- * did not come through the waypoint, so its `x-kairos-sub` names no one.
- *
- * Only a human of this trust domain is recorded (`human/<handle>`), the same
- * shape the act assertion records; a session or star subject is the write's
- * ordinary author and adds no row.
- */
-
 import { HANDLE_RE } from "./act-assertion.js";
 import type { ActAuthor } from "./act-assertion.js";
 

@@ -1,5 +1,3 @@
-// ── 028 ("Look At This" F5): the focus register + the look verb ──────────────
-
 import { describe, expect, it } from "vitest";
 import {
   CONSUMER_GROUP,
@@ -57,7 +55,6 @@ describe("FocusRegister — the LWW broadcast slot", () => {
     reg.set(pointer({ section: "first" }), "t1");
     reg.set(pointer({ section: "second" }), "t2");
     expect(reg.current()?.pointer.section).toBe("second");
-    // N readers of one value: reading changes nothing
     reg.current();
     reg.current();
     expect(reg.current()?.pointer.section).toBe("second");
@@ -80,8 +77,6 @@ describe("handleTelemetryMessage — the pure fold", () => {
   });
 
   it("is last-write-wins across messages — one event per message", () => {
-    // charon produces one record per event, so the ordering that matters is
-    // message to message, not inside a message.
     const reg = new FocusRegister();
     for (const section of ["a", "b"]) {
       handleTelemetryMessage(
@@ -123,9 +118,6 @@ describe("handleTelemetryMessage — the pure fold", () => {
   });
 
   it("TOLERATES a type it has never heard of — never throws, never folds", () => {
-    // `type` is an open string by design (the checkpoints.kind precedent):
-    // a theia variant shipped after this star must reach the topic and pass
-    // through here untouched. A stricter decode would be a regression.
     const reg = new FocusRegister();
     reg.set(pointer({ section: "held" }), "t0");
     for (const type of ["cursor-warp", "doc-change", "session-start"]) {
@@ -133,7 +125,6 @@ describe("handleTelemetryMessage — the pure fold", () => {
         handleTelemetryMessage(reg, msg({ type, pointer: pointer() }), now);
       }).not.toThrow();
     }
-    // The unknown types changed nothing — the held focus is untouched.
     expect(reg.current()?.pointer.section).toBe("held");
   });
 
@@ -143,7 +134,6 @@ describe("handleTelemetryMessage — the pure fold", () => {
       reg,
       msg({
         type: "selection-change",
-        // A complete pointer, but a variant this register cannot read.
         pointer: { ...pointer(), kind: "star-card" },
       }),
       now,
@@ -152,8 +142,6 @@ describe("handleTelemetryMessage — the pure fold", () => {
   });
 
   it("skips a record the contract refuses rather than throwing", () => {
-    // A consumer that threw here would wedge the partition instead of
-    // committing past one bad record.
     const reg = new FocusRegister();
     for (const missing of ["v", "ts", "nodeId", "eventId"]) {
       const wire = Object.fromEntries(
@@ -231,8 +219,6 @@ describe("look — read the register, verify the witness", () => {
   });
 });
 
-// ── 029 ("Look At This" F6): the pin store ───────────────────────────────────
-
 describe("the pin store — stack, dedupe, unpin", () => {
   const now = () => new Date("2026-08-13T12:00:00.000Z");
 
@@ -240,7 +226,7 @@ describe("the pin store — stack, dedupe, unpin", () => {
     const reg = new FocusRegister();
     reg.pin("p1", pointer({ section: "a" }), "t1");
     reg.pin("p2", pointer({ section: "b" }), "t2");
-    reg.pin("p1", pointer({ section: "z" }), "t3"); // redelivery — once, original
+    reg.pin("p1", pointer({ section: "z" }), "t3");
     expect(reg.pins().map((p) => p.pinId)).toEqual(["p1", "p2"]);
     expect(reg.pins()[0]?.pointer.section).toBe("a");
   });
@@ -255,7 +241,6 @@ describe("the pin store — stack, dedupe, unpin", () => {
     expect(reg.unpin("p1")).toBe(true);
     expect(reg.unpin("p1")).toBe(false);
     expect(reg.pins().map((p) => p.pinId)).toEqual(["p2"]);
-    // live focus unchanged by pin churn
     expect(reg.current()?.pointer.section).toBe("live");
     reg.set(pointer({ section: "moved-on" }), "t9");
     expect(reg.pins().map((p) => p.pinId)).toEqual(["p2"]);
@@ -274,12 +259,12 @@ describe("the pin store — stack, dedupe, unpin", () => {
     );
     handleTelemetryMessage(
       reg,
-      msg({ type: "pointer-pin", pointer: pointer() }), // no pinId
+      msg({ type: "pointer-pin", pointer: pointer() }),
       now,
     );
     handleTelemetryMessage(
       reg,
-      msg({ type: "pointer-pin", pinId: "", pointer: pointer() }), // blank
+      msg({ type: "pointer-pin", pinId: "", pointer: pointer() }),
       now,
     );
     handleTelemetryMessage(
@@ -291,10 +276,6 @@ describe("the pin store — stack, dedupe, unpin", () => {
   });
 
   it("pins ONLY on pointer-pin — another type carrying a pinId is not a pin", () => {
-    // The pin branch is gated on the TYPE first. An event of some other
-    // kind that happens to carry a well-formed pinId and pointer must not
-    // stack a pin: `pointer-pin` is the deliberate gesture, and nothing
-    // else may forge it.
     const reg = new FocusRegister();
     for (const type of ["doc-change", "session-end", "cursor-warp"]) {
       handleTelemetryMessage(
@@ -323,7 +304,6 @@ describe("look with pins + the unpin verb", () => {
     expect(r.pins.map((p) => p.pin_id)).toEqual(["p1", "p2", "p3"]);
     expect(r.pins.map((p) => p.drift)).toEqual(["none", "drifted", "gone"]);
     expect(r.pins[1]?.current_text).toBe("stable prose here");
-    // reading resolved nothing away
     expect(reg.pins().length).toBe(3);
   });
 
@@ -336,8 +316,6 @@ describe("look with pins + the unpin verb", () => {
   });
 });
 
-// ── 030 ("Look At This" F7): the live-clear fold ─────────────────────────────
-
 describe("pointer-live-clear (030 / Look At This F7)", () => {
   const now = () => new Date("2026-08-13T12:00:00.000Z");
 
@@ -348,10 +326,8 @@ describe("pointer-live-clear (030 / Look At This F7)", () => {
     handleTelemetryMessage(reg, msg({ type: "pointer-live-clear" }), now);
     expect(reg.current()).toBeNull();
     expect(reg.pins().map((p) => p.pinId)).toEqual(["p1"]);
-    // idempotent on empty
     handleTelemetryMessage(reg, msg({ type: "pointer-live-clear" }), now);
     expect(reg.current()).toBeNull();
-    // opting back in resumes normally
     handleTelemetryMessage(
       reg,
       msg({ type: "selection-change", pointer: pointer() }),

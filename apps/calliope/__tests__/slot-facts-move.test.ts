@@ -1,9 +1,3 @@
-/**
- * Threads as containers — the `threads` tenant, slot facts on write_container
- * and the facts read, and move_blocks (fixture dial, through a real MCP
- * client where the verb surface matters).
- */
-
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -112,7 +106,7 @@ describe("slot facts", () => {
       ],
     });
     expect(res.isError).toBeFalsy();
-    expect(dial.admits.length).toBe(before + 1); // ONE batch
+    expect(dial.admits.length).toBe(before + 1);
 
     const read = await call(mcp, "read_container", {
       container: c,
@@ -140,7 +134,6 @@ describe("slot facts", () => {
     expect(by("signedAs")[0]?.value).toBe("Scotty36");
     expect(by("inSeat")[0]?.value).toBe("calliope");
     expect(by("legacyId")[0]?.value).toBe("1316");
-    // Repeatables read back sorted by value (deterministic), not write order.
     expect(by("authored").map((f) => f.value)).toEqual([
       "b/one.md",
       "b/two.md",
@@ -151,7 +144,6 @@ describe("slot facts", () => {
       seq: 3,
     });
 
-    // Off by default; as-of and batch reads agree.
     const plain = await call(mcp, "read_container", { container: c });
     expect(
       (plain.structuredContent?.blocks as Record<string, unknown>[])[0],
@@ -505,7 +497,7 @@ describe("move_blocks", () => {
   it("moves slots contiguous, in original relative order, to the end", async () => {
     const { facet, from, to, mcp } = await two();
     const src = await readTree(facet.dial, from);
-    const pick = [src[2], src[0]].map((s) => s?.slot ?? ""); // asked out of order
+    const pick = [src[2], src[0]].map((s) => s?.slot ?? "");
     const res = await call(mcp, "move_blocks", {
       from,
       to,
@@ -590,7 +582,6 @@ describe("move_blocks", () => {
     const [a] = await readTree(facet.dial, from);
     const realAdmit = dial.admit.bind(dial);
     dial.admit = async (ops, scope, expect) => {
-      // A concurrent writer lands between the read and the batch.
       dial.admit = realAdmit;
       await writeContainer(facet, from, [
         { op: "add", text: "late", position: "09" },
@@ -607,7 +598,6 @@ describe("move_blocks", () => {
     const { facet, from, to } = await two();
     const [a] = await readTree(facet.dial, from);
     const slot = a?.slot ?? "";
-    // A post-move edit of the slot's text lands on the slot only.
     const { tx } = await moveBlocks(
       facet,
       { from, to, slots: [slot] },
@@ -625,9 +615,9 @@ describe("move_blocks", () => {
     const inFrom = slotTxs(await containerHistory(facet, from));
     const inTo = slotTxs(await containerHistory(facet, to));
     const edit = Math.max(...inTo);
-    expect(inFrom[0]).toBeLessThan(tx ?? 0); // the births precede the move
+    expect(inFrom[0]).toBeLessThan(tx ?? 0);
     expect(inFrom).toContain(tx);
     expect(inTo).toContain(tx);
-    expect(inFrom).toContain(edit); // the edit, via the ever-held closure
+    expect(inFrom).toContain(edit);
   });
 });

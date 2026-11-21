@@ -1,4 +1,3 @@
-// Test-only: a Kairos stand-in (an ES256 key, its JWKS, an assertion minter).
 import { generateKeyPairSync, sign } from "node:crypto";
 import type { KeyObject } from "node:crypto";
 import type { ActConfig, FetchLike } from "../src/act-assertion.js";

@@ -1,28 +1,4 @@
 #!/usr/bin/env bun
-/**
- * F6 migration tool (spec 043, Git for Ideas) — move every old-store
- * container into the blob+tree model: prose → blobs, membership/order →
- * tree facts, history → a chain of graph transactions.
- *
- * Replay, per container, oldest revision first: the diff between
- * consecutive reconstructions is keyed on section ids PLUS the
- * supersessions edges, so a slot's identity is CONTINUOUS across the old
- * model's re-minted ids — the exact churn this migration retires. One
- * admit per non-empty revision, blob-first inside it. Parity is per-row
- * and two-sided (HEAD + every revision as-of its recorded tx); any
- * mismatch exits nonzero naming the rows. Markers make re-runs no-ops and
- * interrupted runs resumable; old-store drift AFTER a marker refuses.
- *
- * The OLD tables are never written — reads stay on them until F12 cuts,
- * gated on this run's parity report.
- *
- * Modes (env: DATABASE_URL, CALLIOPE_CHAOS_URL, CALLIOPE_THEMIS_URL):
- *
- *   bun run src/mcp/migrate-tree.ts            # migrate + parity
- *   bun run src/mcp/migrate-tree.ts --probe    # read-only counts
- *   bun run src/mcp/migrate-tree.ts --limit 10 # first N containers
- *   bun run src/mcp/migrate-tree.ts --node <id># one container
- */
 
 import { pathToFileURL } from "node:url";
 import { Pool } from "pg";
@@ -63,11 +39,6 @@ import type { Section } from "../types.js";
 export const MIGRATED_FROM_SECTION = "migrated_from_section";
 export const MIGRATED_CONTAINER_ID = "migrated_container_id";
 export const SECTIONS_MIGRATED = "sections_migrated";
-/** Per-revision original authorship, kept IN THE GRAPH (Rob, 2026-08-16):
- *  the admit wire deliberately carries no author override (N5), so each
- *  replayed revision's original author + timestamp land as one scalar
- *  fact on the container — queryable after F12 drops the old tables,
- *  without opening an identity-assertion door on the gate. */
 export const MIGRATION_PROVENANCE = "migration_provenance";
 export const COMMENTS_ON = "comments_on";
 
@@ -114,13 +85,13 @@ interface SlotState {
   text: string;
 }
 
-/** Transient-failure patterns that are SAFE to retry even for admit: each
- *  means the connection was never established (DNS lookup, dial, refusal),
- *  so no transaction can have landed. Anything mid-flight stays fatal for
- *  writes — an admit whose RESPONSE was lost may have landed, and a blind
- *  replay would double-apply the batch. (The full-run casualty, 2026-08-16:
- *  docker's embedded DNS answered "server misbehaving" once, ~25 minutes
- *  in, and the fail-fast runner died with 6,000 containers to go.) */
+/**
+ * Transient-failure patterns that are SAFE to retry even for admit: each means
+ * the connection was never established (DNS lookup, dial, refusal), so no
+ * transaction can have landed. Anything mid-flight stays fatal for writes —
+ * an admit whose RESPONSE was lost may have landed, and a blind replay would
+ * double-apply the batch.
+ */
 const ADMIT_RETRYABLE =
   /dial tcp|server misbehaving|no such host|connection refused|ECONNREFUSED|EAI_AGAIN/i;
 
@@ -317,13 +288,10 @@ async function resolveContainer(
   return acquireCarrier(dial, node, tenant, probe);
 }
 
-/** The carrier path — a kind-"node" stand-in labelled by the old id, the
- *  provenance fact as its index; idempotent via findByName. Serves (a)
- *  non-hex container ids and (b) hex containers whose graph node has NO
- *  nodes row (full-run finding, 2026-08-16: 415 old sections containers
- *  outlive their nodes — most are TOMBSTONED and still satisfy the facts
- *  FK, but hard-absent ones refuse at the subject guard, so their replay
- *  lands on a carrier instead). */
+/**
+ * The carrier path — a kind-"node" stand-in labelled by the old id, the
+ * provenance fact as its index; idempotent via findByName.
+ */
 async function acquireCarrier(
   dial: ChaosDial,
   node: string,
@@ -397,8 +365,6 @@ function diffRevision(
       for (const section of target) {
         const existing = slots.get(section.id);
         if (existing !== undefined) {
-          // Same old id survives — text is immutable in place in the old
-          // model; position may drift on reorder-adjacent events.
           consumed.add(section.id);
           let state = existing;
           if (existing.text !== section.text) {
@@ -417,8 +383,6 @@ function diffRevision(
           nextState.set(section.id, state);
           continue;
         }
-        // A successor: its FIRST predecessor's slot continues; any other
-        // predecessors' slots are removed below (merge semantics).
         const preds = (supersedes.get(section.id) ?? []).filter((p) =>
           slots.has(p),
         );
@@ -427,9 +391,6 @@ function diffRevision(
           const prev = slots.get(carrier);
           if (prev === undefined) throw new Error("carrier vanished");
           consumed.add(carrier);
-          // The successor's id ALSO maps to this slot: a comment (or any
-          // cross-reference) may cite any generation's id, and after F12
-          // the provenance facts are the only index left.
           batch.push(
             opAdd(prev.slot, MIGRATED_FROM_SECTION, {
               toLiteral: section.id,
@@ -452,7 +413,6 @@ function diffRevision(
           nextState.set(section.id, state);
           continue;
         }
-        // Genuinely new.
         const blobId = await mintBlob(section.text);
         const label = `m:${section.id}`;
         batch.push(
@@ -461,14 +421,13 @@ function diffRevision(
         );
         births.push({ sectionId: section.id, label });
         nextState.set(section.id, {
-          slot: label, // resolved to the minted token in next()
+          slot: label,
           position: section.orderKey,
           blobId,
           text: section.text,
         });
       }
 
-      // Departures: previous ids neither present nor consumed as carriers.
       for (const [id, state] of slots) {
         if (targetIds.has(id) || consumed.has(id)) continue;
         batch.push(
@@ -551,11 +510,6 @@ export async function migrateTree(
     per_container: [],
   };
 
-  // The tenant graphs must exist before any admit lands facts in them —
-  // live chaos refuses writes to an unregistered graph (the graph guard),
-  // and "comments" predates nothing: this run is its first writer. The
-  // fixture's registerGraph is a no-op set, which is exactly why this
-  // line exists here and not in a test's beforeAll.
   if (!probe) {
     await dial.registerGraph(tenantScope("notes"));
     await dial.registerGraph(tenantScope("comments"));
@@ -569,7 +523,6 @@ export async function migrateTree(
   if (opts.limit !== undefined) nodes = nodes.slice(0, opts.limit);
   report.containers = nodes.length;
 
-  // Section id → slot token, across containers (comments resolution).
   const slotBySection = new Map<string, { slot: string; tenant: Tenant }>();
 
   containers: for (const node of nodes) {
@@ -593,9 +546,6 @@ export async function migrateTree(
     }
     record.container = container;
 
-    // A hex container whose node has no nodes row cannot carry facts; the
-    // replay retries ONCE on a carrier when the subject guard says so —
-    // guard-driven, so there is no second existence oracle to drift.
     let carrierTried = false;
     replay: for (;;) {
       try {
@@ -604,7 +554,7 @@ export async function migrateTree(
           if (marker === markerValue) {
             record.status = "skipped";
             report.skipped += 1;
-            continue containers; // comments resolution falls back to findByValue
+            continue containers;
           }
           record.status = "refused_drift";
           report.refused.push(
@@ -614,12 +564,6 @@ export async function migrateTree(
         }
         if (probe) continue containers;
 
-        // Crash recovery — a prior run that died mid-replay left tree facts
-        // with no marker (the marker is stamped only after parity passes).
-        // Replaying onto that debris would re-birth every slot and fail HEAD
-        // parity with doubled prose, so the debris is removed first and the
-        // replay starts from a clean tree. tx stays null: cleanup is
-        // bookkeeping, not a revision — parity and provenance both skip it.
         const dirty = await readContainer({ blobs, dial }, container);
         if (dirty.blocks.length > 0) {
           const cleanup: ChaosOp[] = [];
@@ -697,14 +641,6 @@ export async function migrateTree(
         }
         if (record.status !== "migrated") continue containers;
 
-        // HEAD reconcile — import-shaped debris, found live (container
-        // 00fad279…): a bulk import lands N ACTIVE anchor rows (supersedes
-        // NULL, distinct created_at), so the old model's HEAD reads all of
-        // them while its history reads each as a one-row generation. The
-        // replay honestly reproduces the history; this closing pass diffs the
-        // replayed end-state onto the old HEAD read so the tree's head equals
-        // readBody exactly — one more transaction, recorded as its own
-        // synthetic revision.
         const headTarget = canonicalizePositions(await pg.readBody(node));
         const headDiff = await diffRevision(
           container,
@@ -737,7 +673,6 @@ export async function migrateTree(
           slotBySection.set(sectionId, { slot: state.slot, tenant });
         }
 
-        // Parity, two-sided. HEAD:
         const facet = { blobs, dial };
         const oldHead = await pg.readBody(node);
         const newHead = await readContainer(facet, container);
@@ -746,11 +681,10 @@ export async function migrateTree(
           report.parity_mismatches.push(`${node}: HEAD texts/order diverge`);
           continue containers;
         }
-        // Every revision as-of its tx:
         let parityOk = true;
         for (const rev of record.revisions) {
-          if (rev.tx === null) continue; // pre-first-content revisions
-          if (rev.revision === "head-reconcile") continue; // synthetic — HEAD covers it
+          if (rev.tx === null) continue;
+          if (rev.revision === "head-reconcile") continue;
           const oldAt = await pg.readRevisionAt(node, rev.revision);
           const newAt = await readContainer(facet, container, {
             asOfTx: rev.tx,
@@ -765,10 +699,6 @@ export async function migrateTree(
         }
         if (!parityOk) continue containers;
 
-        // Mark converged — ONE bookkeeping admit carrying the marker AND the
-        // per-revision original-authorship facts (never rides a revision
-        // batch, so as-of parity reads are untouched; history honestly shows
-        // one migration-bookkeeping transaction per container).
         const bookkeeping: ChaosOp[] = [
           opAdd(container, SECTIONS_MIGRATED, { toLiteral: markerValue }),
         ];
@@ -784,9 +714,6 @@ export async function migrateTree(
         report.migrated += 1;
         break replay;
       } catch (err) {
-        // The subject guard's "no nodes row" for OUR hex container: land
-        // the whole replay on a carrier instead and start over. Any other
-        // error stays fatal (fail-fast is this tool's contract).
         if (
           !carrierTried &&
           container === node &&
@@ -810,7 +737,6 @@ export async function migrateTree(
     }
   }
 
-  // comments_on → slot-to-slot facts in the comments graph.
   if (!probe) {
     const commentRows = await pool.query<{
       comment_id: string;
