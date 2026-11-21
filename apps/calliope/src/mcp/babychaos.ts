@@ -1,3 +1,24 @@
+/**
+ * Baby chaos (spec 045, master-plan F13) — the desktop runs the REAL
+ * engine: a bundled PostgreSQL plus the chaosstore door, supervised by the
+ * sidecar, replacing nothing yet (the fs backend dies at F14, not here).
+ *
+ * One store, two deployments: the fleet's engine and this one differ only
+ * in where they run. Markdown stays the working tree; this is `.git`.
+ *
+ * Supervision is CRASH-ONLY by design: Grace's Rust shell already carries
+ * a generation-safe respawn ladder for the ONE process it spawns (the
+ * sidecar), so the cheapest correct lifecycle is to let any engine child's
+ * death take the whole sidecar down (exit 1) and let Grace bring the stack
+ * back — one supervisor, not two. First-run `initdb` builds beside the data
+ * directory and renames in on success, so `PG_VERSION` at the real path
+ * always means a finished cluster; one that exists is never re-initialized.
+ *
+ * Auth is `trust` on 127.0.0.1 ONLY: a single-user desktop store behind a
+ * loopback bind; nothing listens beyond the machine (the sidecar's own
+ * bind rule, inherited).
+ */
+
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
@@ -91,12 +112,21 @@ async function waitForChaos(url: string, tries = 120): Promise<void> {
     try {
       const res = await fetch(`${url}/openapi.json`);
       if (res.ok) return;
-    } catch {}
+    } catch {
+      // not up yet
+    }
     await new Promise((r) => setTimeout(r, 500));
   }
   throw new Error("babychaos: chaosstore never became ready");
 }
 
+/**
+ * Build a cluster at `dataDir` without blocking the event loop or exposing a
+ * partial one. initdb takes ~30 s on a `\\wsl.localhost` root and writes
+ * PG_VERSION in its first second: run synchronously it held back the sidecar's
+ * handshake until Grace's 30 s budget nearly lapsed, and a kill mid-run would
+ * leave a directory the presence check reads as finished.
+ */
 export async function initCluster(
   initdb: string,
   dataDir: string,
@@ -136,6 +166,7 @@ export async function startEngine(
   const dataDir = join(home, "pgdata");
   mkdirSync(home, { recursive: true });
 
+  // First run — a data directory that exists is NEVER re-initialized.
   if (!existsSync(join(dataDir, "PG_VERSION"))) {
     await initCluster(bin(payload.pgBin, "initdb"), dataDir);
   }
@@ -159,6 +190,8 @@ export async function startEngine(
       String(pgPort),
       "-c",
       "listen_addresses=127.0.0.1",
+      // No unix socket dir games — TCP loopback is the one path, same on
+      // both platforms (windows postgres has no unix sockets anyway).
       ...(IS_WINDOWS ? [] : ["-k", ""]),
     ],
     { stdio: ["ignore", "ignore", "inherit"] },
@@ -168,6 +201,7 @@ export async function startEngine(
   const adminUrl = `postgresql://${PG_USER}@127.0.0.1:${String(pgPort)}/postgres`;
   await waitForPg(adminUrl);
 
+  // Databases, idempotently (CREATE DATABASE has no IF NOT EXISTS).
   const admin = new Pool({ connectionString: adminUrl, max: 1 });
   for (const db of ["calliope", "chaos"]) {
     const exists = await admin.query(
@@ -186,10 +220,19 @@ export async function startEngine(
     env: {
       ...process.env,
       CHAOS_BIGINT_DATABASE_URL: chaosDb,
+      // chaos serves REST alone since its MCP face retired (a56b4058), and
+      // that listener is the only one: without the port it exits at boot.
+      // Its SPIFFE source fail-softs on a desktop with no workload API.
       STELLAR_REST_PLAINTEXT_PORT: String(chaosPort),
+      // No kafka on a desktop: empty brokers leave the witness log on the
+      // child's stdout, which this spawn discards (the sidecar's own
+      // stdout stays the ONE handshake line).
       KAFKA_BOOTSTRAP: "",
       CHAOS_GO_KAFKA_BOOTSTRAP: "",
       OTEL_SDK_DISABLED: "true",
+      // The desktop runs the same guards as the fleet, stated rather than
+      // inherited: chaos refuses off and warn at boot (Rob, b567f286), so a
+      // stray value in the user's environment must not stop the engine.
       CHAOS_OBJECT_GUARD_MODE: "enforce",
       CHAOS_CARDINALITY_GUARD_MODE: "enforce",
       CHAOS_SHAPE_GUARD_MODE: "enforce",
