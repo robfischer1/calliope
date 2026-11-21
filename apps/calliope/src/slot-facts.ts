@@ -1,16 +1,3 @@
-/**
- * Slot facts — the metadata that rides ON a Block slot (Glaucus Threads as
- * Calliope containers). A thread segment is a slot like a note's block; who
- * wrote it, in which session, what it quotes and links are facts and edges
- * on that slot, written in the SAME admit batch that births it.
- *
- * The predicate set is CLOSED: the verb cannot be used to write an
- * arbitrary edge. Persona / Session / Window / Moment / Checkpoint have no
- * graph nodes yet, so every node-valued predicate accepts EITHER an existing
- * 64-hex node token OR a literal placeholder (a scalar where the node does
- * not exist yet); a read says which form each fact is.
- */
-
 import { createHash } from "node:crypto";
 import {
   type ChaosOp,
@@ -169,8 +156,6 @@ export function validateSlotFacts(
     if (p === "legacyId" && !/^\d+$/.test(f.literal ?? "")) {
       throw new SlotFactError("facts: legacyId must be a non-negative integer");
     }
-    // A turn window's ends are seqs; an empty window ends one before it
-    // starts, so the first one can end at -1.
     if (
       (p === "spanFrom" || p === "spanTo") &&
       !/^-?\d+$/.test(f.literal ?? "")

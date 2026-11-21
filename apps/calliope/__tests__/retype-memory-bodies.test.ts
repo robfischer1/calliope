@@ -25,12 +25,6 @@ import { installOfflineGuard } from "./setup/offline.js";
 
 const SCOPE = "notes";
 
-// The same two guards as archived-tags.test.ts, for the same reason: main
-// picks its dial with `deps.dial ?? new LiveChaosDial()`, and Stryker's
-// `??` -> `&&` mutant turns a passed fixture into a LIVE dial — which, in the
-// cluster lanes, would resolve chaos and themis and retype the real graph.
-// A plaintext dead URL keeps tls() off the Workload API socket and every
-// fetch off the network; the offline guard is the independent backstop.
 const DEAD_URL = "http://127.0.0.1:1";
 vi.stubEnv("CALLIOPE_CHAOS_URL", DEAD_URL);
 vi.stubEnv("CHAOS_URL", DEAD_URL);
@@ -88,7 +82,6 @@ describe("retype", () => {
   it("selects only Note-typed body titles", async () => {
     const { dial, a, b, c } = await seeded();
     const { extent, candidates } = await selectCandidates(dial, SCOPE);
-    // The plain note, the near miss, and three bodies (the root is untyped).
     expect(extent).toBe(5);
     expect(candidates.map((x) => x.id)).toEqual([a, b, c].sort());
     expect(candidates.every((x) => !x.hasTarget)).toBe(true);
@@ -126,7 +119,6 @@ describe("retype", () => {
       expect(await types(dial, id)).toEqual(["Memory"]);
     for (const id of [plain, near])
       expect(await types(dial, id)).toEqual(["Note"]);
-    // The kind (the reuse key) is untouched: the same node comes back.
     expect(await dial.findByName("Note", "memory:mnemosyne:alpha")).toEqual([
       a,
     ]);

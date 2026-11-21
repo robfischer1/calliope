@@ -1,10 +1,3 @@
-/**
- * BlobStore conformance suite (spec 039, guarantees G1-G7) — runs against a
- * REAL ephemeral postgres, not a simulator: the expression-index ON CONFLICT
- * arbiter and concurrent-mint convergence are exactly what a fake would get
- * wrong. Skipped (with a visible reason) when docker is unavailable.
- */
-
 import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
@@ -63,7 +56,6 @@ describe.skipIf(!HAVE_DOCKER)("BlobStore (real postgres)", () => {
     }
     const schema = new PgBodyClient(pool);
     await schema.ensureSchema();
-    // T001 acceptance: the bootstrap is idempotent — a second run is a no-op.
     await schema.ensureSchema();
     store = new BlobStore(pool);
   }, 120_000);
@@ -74,7 +66,6 @@ describe.skipIf(!HAVE_DOCKER)("BlobStore (real postgres)", () => {
       execSync(`docker rm -f ${containerId}`, { stdio: "ignore" });
   });
 
-  // G6 — the store carries identity and text, nothing else.
   it("has exactly {id, text} as columns — no structural attribute", async () => {
     const res = await pool.query<{ column_name: string }>(
       `SELECT column_name FROM information_schema.columns
@@ -83,7 +74,6 @@ describe.skipIf(!HAVE_DOCKER)("BlobStore (real postgres)", () => {
     expect(res.rows.map((r) => r.column_name)).toEqual(["id", "text"]);
   });
 
-  // G1 — idempotent mint, duplicate writes nothing.
   it("mints once, dedupes forever (row count asserted)", async () => {
     const text = "The quick brown fox jumps over the lazy dog.";
     const first = await store.mint(text);
@@ -95,7 +85,6 @@ describe.skipIf(!HAVE_DOCKER)("BlobStore (real postgres)", () => {
     expect(await rowCount()).toBe(before);
   });
 
-  // G2 — distinct bytes, distinct ids (incl. the unicode-normalization edge).
   it("gives distinct content distinct ids", async () => {
     const a = await store.mint("alpha paragraph");
     const b = await store.mint("beta paragraph");
@@ -112,7 +101,6 @@ describe.skipIf(!HAVE_DOCKER)("BlobStore (real postgres)", () => {
     expect(await store.getText(b)).toBe(nfd);
   });
 
-  // G3 — byte-exact round trip: empty, unicode, and beyond the btree ceiling.
   it("round-trips the empty blob", async () => {
     const id = await store.mint("");
     expect(await store.getText(id)).toBe("");
@@ -120,7 +108,7 @@ describe.skipIf(!HAVE_DOCKER)("BlobStore (real postgres)", () => {
   });
 
   it("dedupes multi-kilobyte prose (past the ~2.7KB btree row ceiling)", async () => {
-    const big = "A long paragraph of durable prose. ".repeat(300); // ~10.5 KB
+    const big = "A long paragraph of durable prose. ".repeat(300);
     const first = await store.mint(big);
     const before = await rowCount();
     const second = await store.mint(big);
@@ -129,7 +117,6 @@ describe.skipIf(!HAVE_DOCKER)("BlobStore (real postgres)", () => {
     expect(await store.getText(first)).toBe(big);
   });
 
-  // G4 — absence is null, never a fabrication, never a throw.
   it("returns null for an id that names nothing", async () => {
     expect(await store.getText("999999999")).toBeNull();
   });
@@ -144,7 +131,6 @@ describe.skipIf(!HAVE_DOCKER)("BlobStore (real postgres)", () => {
     expect(await store.findByContent(text)).toBe(id);
   });
 
-  // G5 — ranked FTS; empty result on no match.
   it("answers full-text queries ranked, [] on no match", async () => {
     const hitA = await store.mint("The zeppelin drifted over the harbor.");
     const hitB = await store.mint(
@@ -156,12 +142,10 @@ describe.skipIf(!HAVE_DOCKER)("BlobStore (real postgres)", () => {
     expect(ids).toContain(hitA);
     expect(ids).toContain(hitB);
     expect(ids).not.toContain(miss);
-    // ranked: the denser match sorts first
     expect(ids.indexOf(hitB)).toBeLessThan(ids.indexOf(hitA));
     expect(await store.search("xylophonequark")).toEqual([]);
   });
 
-  // G7 — concurrent duplicate mints converge on one row.
   it("converges 32 concurrent mints of one text onto one row", async () => {
     const text = "concurrently minted paragraph, exactly one home";
     const before = await rowCount();
@@ -172,9 +156,6 @@ describe.skipIf(!HAVE_DOCKER)("BlobStore (real postgres)", () => {
     expect(await rowCount()).toBe(before + 1);
   });
 
-  // 042 F5 SC-004 — the two-store read's blob half, measured: a
-  // representative 50-block container's batched text fetch. The number is
-  // recorded in specs/042-container-read/measurement.md.
   it("fetches a 50-block container's prose in one batched read (measured)", async () => {
     const ids: string[] = [];
     for (let i = 0; i < 50; i++) {
@@ -196,19 +177,16 @@ describe.skipIf(!HAVE_DOCKER)("BlobStore (real postgres)", () => {
     console.log(
       `[measurement 042 SC-004] batched getTexts(50 x ~1KB): mean ${mean.toFixed(2)}ms over ${String(runs.length)} runs (${runs.map((r) => r.toFixed(1)).join(", ")})`,
     );
-    expect(mean).toBeLessThan(250); // sanity ceiling, not the recorded number
+    expect(mean).toBeLessThan(250);
   });
 
-  // FR-001 — immutability: the module exposes no update/delete path. Static
-  // guarantee (surface is mint/getText/findByContent/search only); assert the
-  // surface here so a future verb addition trips this suite.
   it("exposes no mutating surface beyond mint", () => {
     const surface = Object.getOwnPropertyNames(BlobStore.prototype).sort();
     expect(surface).toEqual([
       "constructor",
       "findByContent",
       "getText",
-      "getTexts", // 042 F5: the batched read — still a read
+      "getTexts",
       "mint",
       "search",
     ]);

@@ -1,9 +1,3 @@
-/**
- * Pins slot-facts validation messages and the span-window retract/held
- * helpers, so a mutated literal, regex, predicate name or filter changes an
- * observable result.
- */
-
 import { describe, expect, it } from "vitest";
 import type { NodeEdge } from "../src/chaos-client.js";
 import {

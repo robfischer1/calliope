@@ -15,22 +15,7 @@ import { compareKeys, sequence } from "./order-key.js";
 /** No-op emitter used when no {@link BlockOpEmitter} is injected. */
 const NULL_EMITTER: BlockOpEmitter = { emit: () => undefined };
 
-/**
- * The substrate body model (the predicates this client reads/writes):
- *
- *   note    --hasPart-->   section          (node edge; "hasPart" predicate)
- *   section : hasType "section"              (plain node; a placement id)
- *   section --text-->      "<prose>"         (literal; urania interns it
- *                                             content-addressed into scalars)
- *   section --order_key--> "<key>"           (literal; fractional, COLLATE "C")
- *
- * Edits are copy-on-write: changed prose mints a NEW version (a fresh section
- * node) that supersedes the old; `hasPart` is rewired to the new node.
- *
- * RETIRED — never emitted here: hasBlock, "block" type, block_types, the
- * "body"->bodyArrId handle, hasOrderKey, arrangements / hasMember / place /
- * move / unplace.
- */
+/** The substrate body model (the predicates this client reads/writes): */
 export const SECTION_TYPE = "section";
 export const HAS_PART = "hasPart";
 export const TEXT = "text";
@@ -73,15 +58,7 @@ export interface UraniaCapture {
    * note's `hasPart` edges and each section's `text` / `order_key` literals.
    */
   resolve(subject: string): Promise<UraniaTriple[]>;
-  /**
-   * Apply a batch of mutation ops atomically (urania capture via Hades).
-   *
-   * @param ops - The ops to apply.
-   * @param authoredBy - Provenance identity for the write. Defaults to
-   *   `"calliope"` (machine-authored). Pass `"human"` so that Mnemosyne
-   *   attributes the resulting block-ops to the human author (Rob), which the
-   *   gateway enforces via `SET ROLE human`.
-   */
+  /** Apply a batch of mutation ops atomically (urania capture via Hades). */
   capture(ops: UraniaOp[], authoredBy?: AuthoredBy): Promise<void>;
   /** Mint a fresh, unique section placement id under `nodeId`. */
   mintSectionId(nodeId?: string): string;
@@ -89,7 +66,6 @@ export interface UraniaCapture {
 
 /** Default guard: live transport is deferred unless explicitly enabled. */
 function wiringEnabled(): boolean {
-  // Same posture as Tantalus's clotho seam: off unless an env flag opts in.
   const flag =
     typeof process !== "undefined"
       ? process.env.CALLIOPE_URANIA_WIRED
@@ -122,8 +98,6 @@ class UnwiredCapture implements UraniaCapture {
  * complete; the *transport* is deferred. With no wired {@link UraniaCapture}
  * injected, every read/save throws "not wired" (guarded behind
  * `CALLIOPE_URANIA_WIRED`), exactly like Tantalus's current clotho swap-seam.
- *
- * Inject a real transport to go live — the mapping does not change.
  */
 export class UraniaBodyClient implements BodyClient {
   private readonly capture: UraniaCapture;
@@ -172,20 +146,6 @@ export class UraniaBodyClient implements BodyClient {
   /**
    * Coarse-save via copy-on-write. Read the current body, then for the new
    * `sections` (in display order, relaid onto a fresh fractional sequence):
-   *
-   *  - prose changed (or a new position) -> mint a fresh section node
-   *    (`hasType section`, `text`, `order_key`) and wire `note --hasPart-->`;
-   *  - prose unchanged at this position -> reuse the existing section node, but
-   *    rewrite its `order_key` if the position moved (still a new edge, the old
-   *    removed).
-   *
-   * Then unwire (`removeEdge hasPart`) every old section the new body no longer
-   * references. The superseded section nodes are left in place — they remain the
-   * historical versions the substrate's lineage points at; only `hasPart` moves.
-   *
-   * @param authoredBy - Provenance identity. Defaults to `"human"` (the gateway
-   *   auth seam enforces `SET ROLE human` so Mnemosyne attributes these writes
-   *   to the human author). Pass `"calliope"` for machine-only writes.
    */
   async saveBody(
     nodeId: string,
@@ -196,17 +156,12 @@ export class UraniaBodyClient implements BodyClient {
     const keys = sequence(sections.length);
     const ops: UraniaOp[] = [];
 
-    // Match new sections to existing ones positionally, reusing a node only when
-    // the prose is byte-identical (copy-on-write: changed prose => new version).
     const used = new Set<string>();
     const keptHasPart = new Set<string>();
 
-    // Collect semantic block-ops as we classify each section.
     const blockOps: BlockOp[] = [];
     const ts = this.timestamp();
 
-    // keys is sequence(sections.length) — parallel to sections — so zip them
-    // into placements and iterate that, keeping the loop assertion-free.
     const placements = sections.map((section, i) => ({
       text: section.text,
       orderKey: keys[i] ?? "",
@@ -217,7 +172,6 @@ export class UraniaBodyClient implements BodyClient {
       if (reuse !== undefined) {
         used.add(reuse.id);
         keptHasPart.add(reuse.id);
-        // Same prose => same content-addressed node; only the order may move.
         if (reuse.orderKey !== orderKey) {
           ops.push({
             op: "removeEdge",
@@ -231,7 +185,6 @@ export class UraniaBodyClient implements BodyClient {
             predicate: ORDER_KEY,
             to: orderKey,
           });
-          // Semantic reorder: same prose, new position.
           blockOps.push({
             block_id: reuse.id,
             op_type: "reorder",
@@ -245,7 +198,6 @@ export class UraniaBodyClient implements BodyClient {
         continue;
       }
 
-      // New prose at this position => mint a new version node (copy-on-write).
       const id = this.capture.mintSectionId(nodeId);
       keptHasPart.add(id);
       ops.push({ op: "createNode", id, hasType: SECTION_TYPE });
@@ -258,10 +210,6 @@ export class UraniaBodyClient implements BodyClient {
       });
       ops.push({ op: "addEdge", from: nodeId, predicate: HAS_PART, to: id });
 
-      // Determine semantic op: add (no prior section with this prose) or update
-      // (the prior body had a section that was superseded — same position, new prose).
-      // "update" applies when there was a prior section at this slot that had
-      // different prose; otherwise it's a net-new add.
       const hadPriorAtSlot = current.some((c) => !used.has(c.id));
       blockOps.push({
         block_id: id,
@@ -274,8 +222,6 @@ export class UraniaBodyClient implements BodyClient {
       });
     }
 
-    // Rewire: drop hasPart for every old section the new body dropped or
-    // superseded. (The section node itself stays — it is the prior version.)
     for (const old of current) {
       if (!keptHasPart.has(old.id)) {
         ops.push({
@@ -284,9 +230,6 @@ export class UraniaBodyClient implements BodyClient {
           predicate: HAS_PART,
           to: old.id,
         });
-        // Only emit a delete op for sections that weren't covered by an update op
-        // (update already supersedes the old id — the new node's block-op was
-        // emitted above as "update"; no separate "delete" for the old node).
         const coveredByUpdate = blockOps.some(
           (b) => b.op_type === "update" && !keptHasPart.has(old.id),
         );
@@ -306,7 +249,6 @@ export class UraniaBodyClient implements BodyClient {
 
     await this.capture.capture(ops, authoredBy);
 
-    // Emit block-ops as an append-only side-channel (after the substrate write).
     for (const blockOp of blockOps) {
       await this.emitBlockOp(blockOp);
     }
@@ -319,11 +261,6 @@ export class UraniaBodyClient implements BodyClient {
    * (the old node is left in place as the prior version). Every other section is
    * untouched — this is the fine-grained counterpart to {@link saveBody}, which
    * reconciles the whole body.
-   *
-   * Rejects if `sectionId` is not a current `hasPart` target of `nodeId`.
-   *
-   * @param authoredBy - Provenance identity. Defaults to `"human"`. See
-   *   {@link saveBody} for the gateway-auth contract.
    */
   async editSection(
     nodeId: string,
@@ -349,7 +286,6 @@ export class UraniaBodyClient implements BodyClient {
     ];
     await this.capture.capture(ops, authoredBy);
 
-    // Emit a semantic "update" block-op for the new section node.
     await this.emitBlockOp({
       block_id: id,
       op_type: "update",
@@ -366,16 +302,6 @@ export class UraniaBodyClient implements BodyClient {
   /**
    * A11 block-grain transactional apply — ONE capture batch (atomic at the
    * substrate), the editor's ops carried as-is. Per-op substrate semantics:
-   *
-   * - `update`  — the {@link editSection} copy-on-write (fresh version node,
-   *               `hasPart` rewired; key kept unless the op carries one);
-   * - `add`     — mint a section node with the CALLER's `order_key`;
-   * - `delete`  — unwire `hasPart` (the node stays as history);
-   * - `reorder` — move the `order_key` edge in place (node id stable).
-   *
-   * Block-ops emit 1:1 with the applied ops — no derivation heuristics. A
-   * stale or duplicated `sectionId` rejects the WHOLE batch (`stale_section`
-   * / malformed), nothing captured.
    */
   async applySectionOps(
     nodeId: string,
@@ -433,7 +359,6 @@ export class UraniaBodyClient implements BodyClient {
       }
       const target = byId.get(op.sectionId);
       if (target === undefined) {
-        // Unreachable (validated above); throwing keeps `applied` aligned.
         throw new Error(
           `stale_section: section ${op.sectionId} vanished mid-batch.`,
         );
@@ -524,11 +449,6 @@ export class UraniaBodyClient implements BodyClient {
     post.sort((a, b) => compareKeys(a.orderKey, b.orderKey));
     return { sections: post, applied };
   }
-
-  // ── F14 interface collapse: the substrate-direct client predates the
-  //    revision/presence reads and its transport is a swap-seam anyway —
-  //    these refuse with the exact text the old capability guards used,
-  //    so a caller reaching them learns the same thing at the same seam.
 
   readRevisions(): Promise<RevisionMeta[]> {
     return Promise.reject(

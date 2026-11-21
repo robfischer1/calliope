@@ -1,25 +1,3 @@
-/**
- * THE CROSS-TENANT SEAM (Lamarr37-002, Rob's ruling 5). This is the one place
- * that decides whether a placement may cross tenants. The data model and the
- * write path support a cross-tenant reference fully: `tree_ref` is a node
- * edge, node tokens are global, and an edit through a cross-tenant placement
- * admits at the origin's scope. Only this policy refuses it.
- *
- * The default DENIES a cross-tenant placement. A governance container that
- * places a notes block would let an edit outside governance change law
- * without an inscription (ruling 4). Same-tenant is always allowed.
- *
- * Two actions reach the policy, both from writeContainer before anything is
- * minted:
- * - `place`: an `add {ref}` op creates a placement.
- * - `write_through`: an `update` on a placement rewrites its origin.
- *
- * TO OPEN THE DOORWAY, change the one line in `defaultPlacementPolicy` from
- * `if (req.fromTenant !== req.toTenant) throw ...` to a real permission check
- * (or delete it to allow every crossing). A facet can also carry its own
- * policy (`ContainerFacet.placementPolicy`); the tests stub one that allows.
- */
-
 import type { Tenant } from "./chaos-client.js";
 import { PlacementError } from "./transclusion.js";
 

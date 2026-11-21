@@ -1,9 +1,3 @@
-/**
- * The blob census (spec 044-blob-gc) — F7's success criteria: unreferenced
- * reapable (after the mark round), referenced never reaped, dangling
- * reported, incomplete census reaps nothing, empty report ≠ no report.
- */
-
 import { describe, expect, it } from "vitest";
 import { runBlobCensus } from "../src/blob-census.js";
 import { FixtureBlobGc, FixtureBlobStore } from "../src/blob-store.js";
@@ -28,14 +22,12 @@ describe("the blob census (F7)", () => {
     ]);
     const orphan = await blobs.mint("orphaned by a crashed save");
 
-    // Round 1: complete census MARKS the orphan, reaps nothing.
     const round1 = await runBlobCensus({ gc, dial });
     expect(round1.complete).toBe(true);
     expect(round1.marked).toEqual([orphan]);
     expect(round1.reaped).toEqual([]);
     expect(blobs.size).toBe(2);
 
-    // Round 2 with execute: the still-unheld mark reaps; the held survives.
     const round2 = await runBlobCensus({ gc, dial }, { execute: true });
     expect(round2.executed).toBe(true);
     expect(round2.reaped).toEqual([orphan]);
@@ -50,7 +42,6 @@ describe("the blob census (F7)", () => {
     const round1 = await runBlobCensus({ gc, dial });
     expect(round1.marked).toEqual([pending]);
 
-    // The in-flight save lands between rounds.
     await writeContainer(facet, doc, [
       { op: "add", text: "minted for a save in flight", position: "a0" },
     ]);
@@ -70,14 +61,13 @@ describe("the blob census (F7)", () => {
     expect(report.marked).toEqual([]);
     expect(report.reaped).toEqual([]);
     expect(report.reporters.every((r) => !r.ok)).toBe(true);
-    expect(await gc.readMarks()).toEqual([]); // no mark state written
+    expect(await gc.readMarks()).toEqual([]);
     dial.failHeldBlobs = false;
     void orphan;
   });
 
   it("reports dangling references and never fixes them", async () => {
     const { dial, gc, doc } = await setup();
-    // A tree fact naming a blob the store never minted.
     const { slotBirthOps } = await import("../src/tree.js");
     await dial.admit(slotBirthOps(doc, "b:a0", "a0", "424242"), "notes");
     const report = await runBlobCensus({ gc, dial });
@@ -97,7 +87,6 @@ describe("the blob census (F7)", () => {
     const { dial, blobs, gc } = await setup();
     await blobs.mint("pre-snapshot orphan");
     const report = await runBlobCensus({ gc, dial });
-    // Everything ≤ snapshot and unheld is marked; nothing beyond.
     expect(report.marked).toHaveLength(1);
   });
 });

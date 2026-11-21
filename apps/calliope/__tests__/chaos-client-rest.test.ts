@@ -1,8 +1,7 @@
 /**
- * LiveChaosDial.admit over themis's plaintext REST door (rest-mesh P4):
- * admit is POST /v1/admit; a themis refusal keeps its error shape.
- * fetch is stubbed; nothing leaves the process. The document is
- * themis's own GET /openapi.json, trimmed to admit (2026-10-29).
+ * LiveChaosDial.admit over themis's plaintext REST door (rest-mesh P4): admit
+ * is POST /v1/admit; a themis refusal keeps its error shape. fetch is stubbed;
+ * nothing leaves the process.
  */
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

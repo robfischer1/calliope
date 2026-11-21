@@ -1,9 +1,3 @@
-/**
- * The date-time grammar pinned at its edges: every shape the two text
- * patterns must refuse or read one particular way, the calendar and offset
- * bounds, and the leap-day rule. Synthetic values only.
- */
-
 import { describe, expect, it } from "vitest";
 import {
   asDateTime,
@@ -17,7 +11,6 @@ import {
 } from "../src/instant.js";
 
 describe("the text patterns, shape by shape", () => {
-  // [text, parseInstantMicros, canonicalWallclock, canonicalInstant, timeDtype]
   const shapes: [
     string,
     string | null,

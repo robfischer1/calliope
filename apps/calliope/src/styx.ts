@@ -1,25 +1,4 @@
-/**
- * Styx addresses on the read verbs (`read_container`, `read_containers`).
- *
- * Chaos answers in addresses — three words (`able-frost-casual`) with a label
- * and kind, never a token. A caller that holds only an address reads a
- * container by it. Calliope is an internal star and MAY hold the node token
- * while it reads the tree; it must never hand one back that the caller did not
- * send. So the address is resolved here, the token is used for the read, and
- * the answer echoes the address as sent.
- *
- * HOW A REF BECOMES A TOKEN. `resolve_node_refs` answers in two shapes:
- *   - `missing_ok:true` — `{refs, missing}` in input order, each ref echoed as
- *     sent, no token (names the misses without refusing);
- *   - the legacy default — keyed by token, each row echoing the ref as sent,
- *     but it refuses the whole call on an unknown address.
- * So: the echo names the misses, the legacy map (asked only of the found
- * refs, so it cannot refuse) names each found ref's token, and the two join
- * on `ref` — two calls whatever the batch size. A found ref with no row
- * echoing it (two refs naming one node share the row, which echoes the first
- * sent; or a chaos that predates the echo) is asked singly — the legacy map
- * of a single ref has one key.
- */
+/** Styx addresses on the read verbs (`read_container`, `read_containers`). */
 import type { ChaosDial } from "./chaos-client.js";
 import { NODE_TOKEN_RE } from "./types.js";
 

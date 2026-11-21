@@ -1,8 +1,6 @@
 /**
- * Charon parity rows 19 and 20: the tag seed and the writing-telemetry
- * ingest, ported from charon. No broker is dialled: every producer here is a
- * double, so the refusal split (drop vs replay), the one-send-per-batch rule
- * and the key rule are measured rather than inferred.
+ * Charon parity rows 19 and 20: the tag seed and the writing-telemetry ingest,
+ * ported from charon.
  */
 import { describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";

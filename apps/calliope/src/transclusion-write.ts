@@ -1,27 +1,3 @@
-/**
- * The write side of transclusion (Lamarr37-002): before a save mints
- * anything, read each op's slot and decide where it lands.
- *
- * - `add {ref}` places a reference to an existing blob-holding slot. A
- *   missing origin is `not_found`; an origin that is itself a placement is
- *   `bad_args` (chains are refused, so a read is always one hop).
- * - `update` on a placement is ROUTED: it repoints the ORIGIN's blob, so
- *   every placement changes ("all three change", Rob 2026-10-30).
- * - `remove` on a placement retracts only the placement. `remove` on an
- *   origin that still has placements is `has_placements` unless the op says
- *   `placements: "orphan"`.
- * - Every op must land in ONE scope: themis `admit` adds facts in one scope
- *   per batch, so a save whose routed edits reach another tenant's origin
- *   alongside its own edits is refused `bad_args` (split it per tenant)
- *   rather than split into two admits, which would be a race.
- *
- * ATOMICITY: every read here is re-asserted at commit by an `expect` on the
- * batch (origin holds the blob; placement still names the origin), so a
- * concurrent writer turns this save into a `conflict`, never a lost write.
- * The one gap is an origin's INBOUND placements, which `expect` cannot see;
- * the post-commit orphan detector covers it (transclusion.ts).
- */
-
 import type { Tenant } from "./chaos-client.js";
 import { isNodeToken } from "./chaos-client.js";
 import type { ContainerFacet, ContainerOp } from "./container-write.js";
@@ -171,7 +147,6 @@ export async function planRouting(
     }
   }
 
-  // An origin's placements: the ones this same save removes do not count.
   for (const { index, slot, orphan } of originRemoves) {
     const live = (await placementsOf(dial, slot)).filter(
       (p) => !removing.has(p.slot),

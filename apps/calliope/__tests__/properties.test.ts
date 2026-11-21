@@ -70,7 +70,6 @@ describe("set_properties — frontmatter as edges", () => {
     expect(r.tags_added).toEqual(["#interest/health"]);
     expect(r.tags_skipped).toEqual([]);
     expect(r.tx).toBeTypeOf("number");
-    // one property batch + one tag batch
     expect(dial.admits.length - before).toBe(2);
     expect(dial.admits[before]?.scope).toBe(SCOPE);
     const childOf = (await dial.edges(id)).find(
@@ -393,7 +392,6 @@ describe("set_properties — frontmatter as edges", () => {
     expect(await valuesOf(dial, made.node_id, "hasType")).toEqual([
       "Governance",
     ]);
-    // side effects stay on hasType=Note
     expect(r.tags_added).toEqual([]);
     expect(r.tags_skipped).toEqual(["#governance/core"]);
     expect(await valuesOf(dial, made.node_id, "hasTag")).toEqual([]);
@@ -419,8 +417,6 @@ describe("set_properties — frontmatter as edges", () => {
   it("reads the kind off the row that echoes the ref, not the token key", async () => {
     const id = "ab".repeat(32);
     const other = "cd".repeat(32);
-    // A dial whose rows are keyed so the token key would mislead: the row for
-    // the asked ref says Note, and it is found by its echoed ref.
     const dial = new FixtureChaosDial();
     const base = dial.resolveNodeRefs.bind(dial);
     dial.resolveNodeRefs = async (tokens) => {
@@ -449,7 +445,7 @@ describe("set_properties — frontmatter as edges", () => {
       properties: [{ predicate: "p", values: [{ literal: "v" }] }],
     });
     expect(isSetPropertiesError(r) && r.code).toBe("not_a_note");
-    expect(dial.admits).toHaveLength(1); // only the setup
+    expect(dial.admits).toHaveLength(1);
   });
 
   it("refuses reserved, blank and padded predicates before any read", async () => {
@@ -550,8 +546,6 @@ describe("the frontmatter round trip", () => {
   });
 });
 
-// ── the verb over the MCP surface ───────────────────────────────────────────
-
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { FixtureBlobStore } from "../src/blob-store.js";
@@ -649,8 +643,6 @@ describe("set_properties over MCP, and the round trip through export", () => {
     expect((r.structuredContent as { code: string }).code).toBe("not_a_note");
   });
 });
-
-// ── the pins the mutation lane asked for ────────────────────────────────────
 
 describe("set_properties — exact refusals and quiet paths", () => {
   it("names the refusal in its detail", async () => {

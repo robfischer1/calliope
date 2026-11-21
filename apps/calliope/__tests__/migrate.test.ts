@@ -1,10 +1,3 @@
-/**
- * Migrator pure-function tests: content hashing, enumeration filters. The
- * end-to-end migration is exercised against live chaos + pg at cutover (the
- * parity gate is the arbiter — specs/002 T004); these pin the pieces that
- * decide what migrates and what parity means.
- */
-
 import { describe, expect, it } from "vitest";
 import {
   bodyOwners,
@@ -66,7 +59,7 @@ describe("parity hash", () => {
     ];
     const reordered = [second, first];
     const edited = [first, { ...second, text: "changed" }];
-    expect(contentHashOfBody(same)).toBe(contentHashOfBody(a)); // ids don't count
+    expect(contentHashOfBody(same)).toBe(contentHashOfBody(a));
     expect(contentHashOfBody(reordered)).not.toBe(contentHashOfBody(a));
     expect(contentHashOfBody(edited)).not.toBe(contentHashOfBody(a));
   });

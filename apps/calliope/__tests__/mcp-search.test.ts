@@ -57,7 +57,6 @@ describe("the search verb over MCP", () => {
     const body = res.structuredContent as SearchResponse;
     expect(body.hits[0]?.id).toBe("x.md");
     expect(body.armsDark).toEqual(["semantic"]);
-    // The text summary names the dark arm — the UI's honesty hook.
     const text =
       (res.content as { type: string; text: string }[])[0]?.text ?? "";
     expect(text).toContain("dark: semantic");

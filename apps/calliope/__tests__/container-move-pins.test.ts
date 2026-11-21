@@ -1,10 +1,3 @@
-/**
- * move_blocks, pinned past what the behaviour tests reach: the exact
- * refusal codes and messages, the cross-tenant fence, the key arithmetic of
- * each landing (end / start / after an anchor), the three rebalance shapes,
- * and the batch's own shape (ops, expects, error mapping, result).
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBlobStore } from "../src/blob-store.js";
 import {
@@ -173,7 +166,6 @@ describe("move_blocks refusals say exactly what is wrong", () => {
   it("refuses an anchor with no room after it, naming both positions", async () => {
     const w = await world(["01"], ["05", "06"]);
     const [d0, d1] = w.slotsOf(w.dst);
-    // Two members holding one key: no key fits strictly between them.
     await w.dial.admit(repositionOps(d1 ?? "", "06", "05"), "notes");
     const admits = w.dial.admits.length;
     await expect(
@@ -196,7 +188,6 @@ describe("the cross-tenant fence", () => {
   it("refuses a source whose membership is homed in another tenant's graph", async () => {
     const w = await world(["01", "02"], ["03"]);
     const [a] = w.slotsOf(w.src);
-    // Written under notes, moved as threads: the edges sit in another graph.
     await expect(
       moveBlocks(
         w.facet,
@@ -237,13 +228,10 @@ describe("the cross-tenant fence", () => {
     const d = w.slotsOf(w.dst)[0] ?? "";
     const foreign = scopeHash("elsewhere");
     w.dial.placed = [
-      // foreign graph, held value, but not the membership predicate
       edge(w.from, "tree_ref", a, foreign),
       edge(w.to, "tree_ref", d, foreign),
-      // foreign membership of a value the container does not hold
       edge(w.from, TREE_MEMBER, "e".repeat(64), foreign),
       edge(w.to, TREE_MEMBER, "f".repeat(64), foreign),
-      // held membership with no graph on the wire, and in the home graph
       edge(w.from, TREE_MEMBER, a, ""),
       edge(w.to, TREE_MEMBER, d, scopeHash("notes")),
     ];

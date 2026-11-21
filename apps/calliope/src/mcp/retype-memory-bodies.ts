@@ -1,32 +1,4 @@
 #!/usr/bin/env bun
-/**
- * One-off backfill: retype mnemosyne's body containers from hasType "Note"
- * to hasType "Memory" on the notes graph.
- *
- * mnemosyne writes each memory's prose into a calliope container titled
- * `memory:<scope>:<name>`. Before create_note took a `type`, every one of
- * them carried hasType "Note", so they all sat in the Notes extent. New
- * bodies now mint as Memory; this moves the standing ones.
- *
- * Only the hasType edge moves. The node's kind stays Note: `(Note, title)` is
- * create_note's reuse key, so a different kind would mint a twin on the next
- * body write. Shapes govern by nodes.kind, so the Memory shape's required
- * fields never apply to these nodes.
- *
- * Runs in the calliope pod, under calliope's own SVID and env. The image
- * ships only the bundled server, so bundle this file first and copy it in:
- *
- *   bun build src/mcp/retype-memory-bodies.ts --target=bun --outfile r.js
- *   kubectl -n prime cp r.js <pod>:/tmp/r.js
- *   kubectl -n prime exec <pod> -- bun /tmp/r.js --probe       # dry run
- *   kubectl -n prime exec <pod> -- bun /tmp/r.js [--batch N]   # apply
- *   kubectl -n prime exec -i <pod> -- bun /tmp/r.js --revert < log.json
- *
- * Each mode prints one JSON document on stdout. The apply document IS the
- * revert log: every batch's tx and node ids. Idempotent: a node already
- * Memory-only is not selected again, and a node holding both types only
- * loses the Note edge.
- */
 
 import { pathToFileURL } from "node:url";
 import {
@@ -130,7 +102,6 @@ export async function retype(
     const chunk = candidates.slice(i, i + opts.batch);
     const res = await dial.admit(chunk.flatMap(retypeOps), scope);
     if (!res.admitted) {
-      // The log so far is the revert record for what DID land.
       throw new RetypeRefused(log, res.violations);
     }
     log.batches.push({ tx: res.tx ?? null, ids: chunk.map((c) => c.id) });
@@ -192,14 +163,7 @@ export interface StdoutSink {
   once(event: "drain", listener: () => void): unknown;
 }
 
-/**
- * Write to a stream and resolve once it has taken the bytes. A false from
- * write() means the rest is buffered, so wait for "drain": cli exits right
- * after main, and exiting over a buffered write cut a 400 KB probe off at
- * 128 KiB on the kubectl exec pipe (measured 2026-10-04). bun's
- * writableNeedDrain reads false even then, so the write()'s own answer is
- * the only signal.
- */
+/** Write to a stream and resolve once it has taken the bytes. */
 export function writeStdout(
   line: string,
   stream: StdoutSink = process.stdout,

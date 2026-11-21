@@ -2,13 +2,6 @@
  * @forge/calliope — the Notes & Prose Muse's wire. The body service behind
  * `calliope-mcp` (:8204, via Hades): the section body model
  * (note --hasPart--> section --text/order_key--> …) and its transports.
- *
- * The editor surface that used to live here is `@forge/aglaia` (the split,
- * 2026-07-04): Calliope keeps the verbs, Aglaia gets the UI. What remains is
- * service-facing — the {@link Section} / {@link SectionInput} shapes, the
- * {@link BodyClient} transport contract, and the two service backends
- * ({@link UraniaBodyClient} substrate-direct, {@link FixtureBodyClient}
- * in-memory for tests/dev).
  */
 export type {
   Section,
@@ -28,7 +21,6 @@ export {
 export type { UraniaCapture, UraniaOp, UraniaTriple } from "./urania-client.js";
 export { between, compareKeys, sequence } from "./order-key.js";
 
-// C3 — the document store (the prose strangle's dissolve sink).
 export {
   PgDocumentStore,
   FixtureDocumentStore,
@@ -42,7 +34,6 @@ export type {
   ListDocumentsQuery,
 } from "./document-store.js";
 
-// C4 — the revision store (git-for-ideas, re-homed frozen history).
 export { PgRevisionStore, FixtureRevisionStore } from "./revision-store.js";
 export type {
   RevisionStore,

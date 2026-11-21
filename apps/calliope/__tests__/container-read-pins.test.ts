@@ -1,11 +1,3 @@
-/**
- * The container reads, pinned where the behaviour tests stop: what each
- * read asks the dial for (predicates, subjects, scalar hashes, round-trip
- * counts), how a slot with odd or missing facts is shaped, the as-of read's
- * order and fallback keys, the batch read's frontmatter-only and dangling
- * rules, the revision's exact digest and the history's origin merge.
- */
-
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { FixtureBlobStore } from "../src/blob-store.js";
@@ -153,8 +145,6 @@ describe("the as-of read", () => {
     const tx = lastTx();
     const tree = await readTree(dial, c);
     const tokens = tree.map((s) => s.slot);
-    // The fixture mints in op order: the fallback (slot token) order is the
-    // REVERSE of the position order, so only a resolved position sorts right.
     expect(tokens[0] ?? "").toBe(sorted(tokens)[1]);
 
     dial.reset();
@@ -493,8 +483,6 @@ describe("the batch read", () => {
     expect(withTexts.containers[0]?.revision).toBe(
       sha([[`${real?.slot ?? ""}:${real?.blobId ?? ""}`, `${bare}:`], null]),
     );
-    // A slot without content is dangling and never given a text, even by a
-    // store that would answer one.
     expect(
       withTexts.containers[0]?.blocks.map((b) => [b.text, b.dangling]),
     ).toEqual([

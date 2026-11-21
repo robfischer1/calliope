@@ -1,21 +1,3 @@
-/**
- * Calliope-MCP server — registers the four prose-facet tools on an
- * {@link McpServer} over a {@link BodyClient}.
- *
- * The prose facet (this MCP) is the peer of clotho's work/graph facet: clotho
- * builds the plan graph (board CRUD on nodes); Calliope-MCP writes the plan
- * prose — the node *bodies* (`note --hasPart--> section --text/order_key-->`) —
- * on those same nodes. Tool shapes mirror clotho's conceptually (read / write /
- * append / edit), not its Python stack.
- *
- * Tools (F3 — the block grain is the primary surface):
- *  - create_block / read_block / update_block / delete_block — block CRUD
- *  - split_block / merge_block                — identity-preserving structure
- *  - read_body(node_id)                       — resolve a container's blocks
- *  - write_body(node_id, sections)            — LEGACY coarse-save
- *  - append_section / edit_section / apply_section_ops — the editor's batch path
- */
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
@@ -86,12 +68,6 @@ import { refuse, refusalResult } from "../refusal.js";
 import type { RefusalResult } from "../refusal.js";
 import type { SearchProvider, SearchResponse } from "../search-types.js";
 
-/**
- * Adapt a typed tool result to the MCP SDK's `structuredContent` slot, which
- * is typed as an index-signature record. A named interface result is not
- * structurally a `Record<string, unknown>` (no implicit index signature), so
- * copy it into a fresh record at the boundary.
- */
 /** A transclusion refusal on the wire. Each code is spelled here, literally,
  *  so the fleet registry (foundry-dies refusal-codes.toml) reads it. */
 function placementRefusal(err: PlacementError): RefusalResult {
@@ -209,26 +185,15 @@ export function createServer(
     name: "calliope-mcp",
     version: "0.1.0",
   });
-  // BEFORE the first tool registers: McpServer installs its one `tools/call`
-  // handler when the first tool lands, and the witness wraps that registration.
   if (options?.witness !== undefined)
     witnessToolCalls(server.server, options.witness);
-  // After the witness, so it records these refusals too: every call is held
-  // to the schema tools/list advertises — a missing required field and an
-  // undeclared one refuse as bad_args before any handler runs.
   enforceInputSchemas(server.server, refuse);
 
-  // The suppressed notes (delete_note's default): every listing drops them.
-  // No chaos facet, no notes graph, nothing to hide.
   const hiddenNotes = (): Promise<ReadonlySet<string>> =>
     options?.chaos === undefined
       ? Promise.resolve(new Set<string>())
       : suppressedNotes(options.chaos.dial, options.chaos.scope);
 
-  // Stream of Consciousness pass 4: publish the note AFTER its write landed.
-  // Best-effort by construction — the publisher counts its own failures and
-  // never throws; a projection that cannot be read is logged and the write
-  // still stands. The index being behind is the publisher's metric to carry.
   const consciousness = options?.consciousness;
   const publishNote = async (
     facet: ContainerFacet,
@@ -237,9 +202,6 @@ export function createServer(
   ): Promise<void> => {
     if (consciousness === undefined) return;
     try {
-      // A write to a SUPPRESSED note must not put it back in the index: the
-      // marker outlives the write, so the row stays retracted until
-      // restore_note publishes it again.
       if ((await hiddenNotes()).has(node)) {
         await consciousness.retract(node);
         return;
@@ -253,9 +215,6 @@ export function createServer(
     }
   };
 
-  // 024: optional per-call write provenance, shared by every sections-writing
-  // verb. Form-only validation — authenticity is the master plan's surfaced
-  // open item, not decided here.
   const authoredByField = z
     .string()
     .refine(isAuthoredBy, {
@@ -272,9 +231,6 @@ export function createServer(
   const asAuthor = (v: string | undefined): AuthoredBy | undefined =>
     v !== undefined && isAuthoredBy(v) ? v : undefined;
 
-  // 025: the session's log offset at the moment of the write. Only valid
-  // alongside a session-principal authored_by (validateWriteProvenance in
-  // each handler); absent = NULL stored, never a guess.
   const kafkaOffsetField = z
     .number()
     .int()
@@ -287,9 +243,6 @@ export function createServer(
         "call; absent = no session context (stored NULL).",
     );
 
-  // C9: the inline-tag reconcile — fires after any successful body write
-  // when the chaos facet + tag mirror are wired. Non-fatal: a tag failure
-  // never fails the body write it rides behind (logged loudly instead).
   const afterBodyWrite = async (nodeId: string): Promise<void> => {
     if (options?.chaos === undefined || options.tags === undefined) {
       return;
@@ -310,14 +263,6 @@ export function createServer(
     }
   };
 
-  // The same reconcile behind a container save. The removed body verbs ran
-  // it after every write; write_container — aglaia's save since 081 F9 —
-  // never did, so a `#tag` typed or deleted in the editor never reached
-  // hasTag or the note_tags mirror. It reads the body back through the TREE
-  // (containerBodies), never the body client, whose pg form dials the
-  // dropped `sections` table. Notes tenant only: the other tenants' prose is
-  // not a note's. Non-fatal for the same reason as above, but the outcome
-  // rides the result so a caller can see the tag path ran.
   const tagChaos = options?.chaos;
   const inlineTags = options?.tags;
   const afterContainerWrite = async (
@@ -340,8 +285,6 @@ export function createServer(
       );
       return delta === undefined ? {} : { tags: delta };
     } catch (err) {
-      // String(), not .message: an Error keeps its class name, anything
-      // else still renders.
       const detail = String(err);
       console.error(
         `calliope-mcp: inline-tag reconcile failed for ${container}: ${detail}`,
@@ -382,10 +325,6 @@ export function createServer(
       },
     );
   }
-
-  // ── F3: the block-native verb surface — the primary grain ────────────────
-
-  // ── 026: comments — the attributed-review surface ────────────────────────
 
   if (options?.pathBodies === true) {
     server.registerTool(
@@ -758,9 +697,6 @@ export function createServer(
           content: [
             { type: "text", text: `${String(rows.length)} revision(s).` },
           ],
-          // `summary_generated_at` was archived as the text cast of a
-          // timestamptz (`2026-08-01 09:15:00.5-04`), which is not a date-time
-          // the client accepts; both stamps are emitted as one or as null.
           structuredContent: {
             revisions: rows.map((row) => ({
               ...row,
@@ -804,9 +740,6 @@ export function createServer(
     );
   }
 
-  // 028 ("Look At This" F5): the attention-pointer read verb — served when
-  // the boot wired a focus register. Read-only: N sessions are N readers of
-  // one value; the verb never mutates the register.
   if (options?.focus !== undefined) {
     const register = options.focus;
     server.registerTool(
@@ -876,14 +809,6 @@ export function createServer(
 
   if (options?.chaos !== undefined) {
     const { dial, scope } = options.chaos;
-    // calliope#5290: the note verbs read and write prose through the TREE
-    // — the path read_container / write_container already serve — never
-    // through the body client, whose pg form still dials the `sections`
-    // table the cut dropped (every by-id materialize on the live star
-    // erred `relation "sections" does not exist` while read_container on
-    // the same id answered). The fleet always carries the container facet
-    // (backend.ts wires it beside the chaos facet); the bare client is the
-    // fixture-only harness shape.
     const bodies =
       options.containers !== undefined
         ? containerBodies(options.containers)
@@ -978,7 +903,6 @@ export function createServer(
           result.generation !== "nooped" &&
           options.containers !== undefined
         ) {
-          // A dissolve is the human's own act of promotion.
           await publishNote(options.containers, result.node_id, {
             authorKind: "human",
           });
@@ -1027,8 +951,6 @@ export function createServer(
           .meta({ "x-requiredAnyOf": [["container_id"], ["source_path"]] }),
       },
       async ({ container_id, source_path }) => {
-        // The advertised x-requiredAnyOf, in the handler's words: a handle
-        // sent empty is no handle (the vendor keyword's present rule).
         const handle = noteHandle("export_note", container_id, source_path);
         if (handle.refusal !== undefined) return handle.refusal;
         let nodeId = handle.container_id;
@@ -1036,9 +958,6 @@ export function createServer(
           const [hit] = await dial.findByName("Note", handle.source_path);
           nodeId = hit;
         }
-        // A missing handle never reaches a read — the miss is decided
-        // before the body is asked for, so the no-handle path performs no
-        // dial read at all (pinned by the container-body suite).
         const miss = (detail: string) => refuse("not_found", detail);
         if (nodeId === undefined) {
           return miss(handle.source_path ?? "");
@@ -1047,8 +966,6 @@ export function createServer(
         if (body.length === 0) {
           return miss(nodeId);
         }
-        // The source YAML (set_properties' `frontmatter` literal) re-joins
-        // the export as its leading fence, so a vault note round-trips.
         const markdown = withFrontmatter(
           body.map((s) => s.text).join("\n\n"),
           frontmatterOf(await dial.edges(nodeId)),
@@ -1361,9 +1278,6 @@ export function createServer(
       },
     );
 
-    // One value is a literal OR a node token: exactly one key, the shape
-    // the handler counts (x-requiredOneOfKeys — key presence, since the
-    // handler refuses an empty literal in its own words).
     const propertyValue = z
       .strictObject({
         literal: z
@@ -1656,8 +1570,6 @@ export function createServer(
       async ({ container, ops, slot, replacements, tenant }) => {
         const graph = tenant ?? "notes";
         const exactlyOne = "send exactly one of ops or replacements";
-        // Slots this save rewrote: an origin's edit reaches every container
-        // placing it, and those are republished too.
         let edited: string[];
         try {
           let result: Record<string, unknown> & { noop: boolean };
@@ -1694,12 +1606,8 @@ export function createServer(
           }
           let tagOutcome = {};
           if (!result.noop && graph === "notes") {
-            // Tags before the publish, so the projection carries them.
             tagOutcome = await afterContainerWrite(facet, container);
             await publishNote(facet, container);
-            // Transclusion fan-out: every other container reading an edited
-            // block (its origin's, its placements') is reconciled and
-            // republished, best-effort like the publish itself.
             if (edited.length > 0) {
               for (const other of await fanOutContainers(
                 facet.dial,
@@ -1873,7 +1781,6 @@ export function createServer(
       async ({ container, as_of_tx, facts, placements }) => {
         let token = container;
         if (isStyx(container)) {
-          // A hex token never reaches the dictionary: only an address does.
           const hit = (await resolveStyx(facet.dial, [container])).tokens.get(
             container,
           );
@@ -1955,9 +1862,6 @@ export function createServer(
           });
         }
         const asked = [...new Set(containers)];
-        // Hex goes straight through, byte for byte as before; only styx
-        // addresses are resolved (two chaos calls for the whole batch), read
-        // by token and answered under the address sent.
         const { tokens, missing: unresolved } = await resolveStyx(
           facet.dial,
           asked.filter(isStyx),
@@ -1972,8 +1876,6 @@ export function createServer(
                 facts,
               });
         if (tokens.size > 0 || unresolved.size > 0) {
-          // One row per ref as sent, in the order sent: an address and the
-          // hex of the same node are two asks and two answers.
           const rowOf = new Map(result.containers.map((r) => [r.container, r]));
           const gone = new Set(result.missing);
           result.containers = readable.flatMap((c) => {
@@ -2067,13 +1969,6 @@ export function createServer(
             .describe("Reap previously-marked, still-unheld blobs."),
         }),
       },
-      // `extra` carries the caller's progress token; the census is the one
-      // verb here that can outlive hades' 25s IDLE reap, because it is a
-      // mark-and-sweep in which every tenant graph reports the blob ids its
-      // log holds — unbounded by construction and growing with the store.
-      // Without a beat the router stops waiting, the sweep keeps running
-      // star-side, and the caller is told to consider retrying a GC pass
-      // that may already be reaping.
       async ({ execute }, extra) => {
         const report = await withHeartbeat(extra, "blob census", () =>
           runBlobCensus(

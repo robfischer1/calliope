@@ -1,12 +1,4 @@
-/**
- * delete_note — every fact of a note goes, nothing else does.
- *
- * Synthetic data only: a FixtureChaosDial, a FixtureBlobStore and a
- * FixtureTagStore behind the real MCP server. Pins the edge kinds in both
- * directions, the slot facts, the tag mirror, the dry-run default, the
- * refusals (non-Note, protected, stray children), the shared-blob and
- * shared-slot survivals, batch, and the not_found re-delete.
- */
+/** delete_note — every fact of a note goes, nothing else does. */
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -152,7 +144,6 @@ async function richNote(r: Rig) {
   });
   expect(res.isError).toBeFalsy();
   await edge(dial, a, "supersededBy", { toNode: target });
-  // Inbound: a property edge from another note, and a collection member.
   await edge(dial, referrer, "related", { toNode: a });
   const collection = await mint(dial, "Collection");
   await edge(dial, collection, "hasMember", { toNode: a });
@@ -195,13 +186,10 @@ describe("delete_note — the verb", () => {
       (await r.dial.edges(referrer)).some((e) => e.predicate === "related"),
     ).toBe(false);
     expect(await r.dial.edges(collection)).toEqual([]);
-    // The target note itself is untouched — only the edge onto it went.
     expect(
       (await r.dial.edges(target)).some((e) => e.predicate === "hasType"),
     ).toBe(true);
     expect(await blocks(r.mcp, a)).toEqual([]);
-    // Every retraction is pinned to the scope the fact lives in, and the
-    // membership, read from both ends, is retracted once.
     const last = r.dial.admits.at(-1);
     expect(last?.ops.filter((o) => o.predicate === "tree_member")).toHaveLength(
       1,
@@ -221,7 +209,6 @@ describe("delete_note — the verb", () => {
       blobs_deleted: 0,
       tag_rows: 2,
     });
-    // History keeps the note: the log still holds its facts.
     expect(r.dial.factLog.some((f) => f.s === a && f.added)).toBe(true);
   });
 
@@ -298,7 +285,6 @@ describe("delete_note — the verb", () => {
     expect(out.notes[0]?.blocks).toBe(0);
     expect(out.notes[0]?.shared_blocks).toBe(1);
     expect(out.notes[0]?.blobs).toEqual([]);
-    // B keeps its own born empty block beside the slot A shared into it.
     expect(await blocks(r.mcp, b)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ slot: s.slot, text: "shared slot" }),
@@ -318,7 +304,6 @@ describe("delete_note — the verb", () => {
       "deleted",
       "deleted",
     ]);
-    // The child's parent edge is one fact, retracted once.
     expect(out.notes[0]?.edges_in).toEqual({ parent: 1 });
     expect(out.notes[1]?.edges_out.parent).toBe(1);
     for (const id of [parent, child, other]) {
@@ -418,7 +403,6 @@ describe("delete_note — protected notes", () => {
     expect((await r.dial.edges(a)).map((e) => e.predicate)).toEqual([
       "ownedBy",
     ]);
-    // Only system edges left: a re-delete is not_found, not not_a_note.
     const again = await del(r.mcp, [a], false);
     expect(again.out.notes[0]?.status).toBe("not_found");
   });
@@ -533,7 +517,6 @@ describe("deleteNotes — arguments and failure paths", () => {
     if (isDeleteNotesError(out)) throw new Error(out.detail);
     expect(out.notes[0]?.tags).toEqual([]);
     expect(await r.dial.edges(a)).toEqual([]);
-    // The mirror was not this call's to touch.
     expect(await r.tags.byNode(a)).toEqual([{ tag: "#t", source: "explicit" }]);
   });
 
@@ -621,7 +604,6 @@ describe("delete_note — the edges of each rule", () => {
     if (s === undefined) throw new Error("no block");
     const comment = await mint(r.dial, "Comment");
     await edge(r.dial, comment, "annotates", { toNode: s.slot });
-    // Blob-domain and literal facts on the slot that are NOT its content.
     await r.dial.admit(
       [
         opAdd(s.slot, "attachment", { toBlob: "999" }),
@@ -658,14 +640,12 @@ describe("delete_note — the edges of each rule", () => {
 
   it("reports blob ids in numeric order", async () => {
     const r = await rig();
-    // 7 burned blobs, then the shared empty born blob (8) minted by the
-    // first create_note, so the texts below land on 9 and 10.
     for (let i = 0; i < 7; i += 1) await r.blobs.mint(`burn ${String(i)}`);
     const other = await note(r.mcp, "Other");
-    await addBlock(r.mcp, other, "nine"); // blob 9
+    await addBlock(r.mcp, other, "nine");
     const a = await note(r.mcp, "A");
-    await addBlock(r.mcp, a, "ten"); // blob 10, first slot
-    await addBlock(r.mcp, a, "nine"); // blob 9, second slot
+    await addBlock(r.mcp, a, "ten");
+    await addBlock(r.mcp, a, "nine");
     const { out } = await del(r.mcp, [a]);
     expect(out.notes[0]?.blobs).toEqual(["9", "10"]);
   });
@@ -842,7 +822,6 @@ describe("delete_note — retract-in-own-graph", () => {
     const r = await rig();
     const a = await note(r.mcp, "Rich");
     const target = await note(r.mcp, "Target");
-    // One fact lives in a graph other than the batch scope.
     const admitted = await r.dial.admit(
       [opAdd(a, "supersededBy", { toNode: target })],
       "backfill",
@@ -857,7 +836,6 @@ describe("delete_note — retract-in-own-graph", () => {
     const removed = last?.ops.filter((o) => o.op === "removeEdge") ?? [];
     expect(removed.length).toBeGreaterThan(0);
     for (const op of removed) {
-      // Every retraction names a graph that holds a fact of the note, never none and never a stranger.
       expect(typeof op.graph === "string" && homes.has(op.graph)).toBe(true);
     }
     expect(removed.find((o) => o.predicate === "supersededBy")?.graph).toBe(

@@ -146,9 +146,7 @@ describe("LiveChaosDial.referrers", () => {
         g: G,
         graph: "notes",
       },
-      // A scalar sharing the bytes is a different identity.
       { s: OTHER, predicate: "x", o: NODE, o_domain: "scalar", g: G },
-      // A node fact onto something else is not ours.
       { s: OTHER, predicate: "y", o: OTHER, o_domain: "node", g: G },
     ];
     expect(await live().referrers(NODE)).toEqual([

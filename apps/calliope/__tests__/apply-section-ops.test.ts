@@ -36,7 +36,6 @@ describe("apply_section_ops tool — over FixtureBodyClient", () => {
       "gamma",
     ]);
     expect(result.applied).toHaveLength(3);
-    // The revision surface records one "ops" event with the op count.
     const revs = await client.readRevisions("n1");
     expect(revs.at(0)).toMatchObject({ kind: "ops", sections: 3 });
   });

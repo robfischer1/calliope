@@ -1,9 +1,3 @@
-/**
- * F6 — the note-native dissolve sink, over the fixture dials: identity keyed
- * by source_path, one-block CoW generations, provenance-as-attributes, and
- * idempotence at every layer.
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { FixtureChaosDial, opAdd } from "../src/chaos-client.js";
@@ -41,32 +35,26 @@ describe("sinkNoteVersion (F6)", () => {
     expect(res.created).toBe(true);
     expect(res.generation).toBe("minted");
 
-    // One-block container, byte-identical body.
     const body = await client.readBody(res.node_id);
     expect(body).toHaveLength(1);
     expect(body[0]?.text).toBe("# Idea\n\nprose #brain-soup");
 
-    // Identity: the graph name IS the source_path.
     expect(await dial.findByName("Note", "Brain Soup/Idea.md")).toEqual([
       res.node_id,
     ]);
 
-    // Provenance attributes on the note.
     const edges = await dial.edges(res.node_id);
     const attr = (p: string) =>
       edges.find((e) => e.predicate === p && !e.isNode)?.value;
     expect(attr("source_path")).toBe("Brain Soup/Idea.md");
     expect(attr("raw_hash")).toBe(sha256("# Idea\n\nprose #brain-soup"));
     expect(attr("source_kind")).toBe("vault-note");
-    // an instant reads back as chaos renders it: Eastern, explicit offset
     expect(attr("mtime")).toBe("2026-06-30T20:00:00-04:00");
     expect(attr("title")).toBe("Idea");
     expect(attr("schema_type")).toBe("DigitalDocument");
-    // Absent columns → absent attributes.
     expect(attr("ctime")).toBeUndefined();
     expect(attr("file_path")).toBeUndefined();
 
-    // Inline tags became real tag edges (like any other note).
     expect(attr("hasTag")).toBe("#brain-soup");
   });
 
@@ -80,10 +68,9 @@ describe("sinkNoteVersion (F6)", () => {
       source_path: "Notes/n.md",
       body_text: "v2",
     });
-    expect(v2.node_id).toBe(v1.node_id); // reuse, not a twin
+    expect(v2.node_id).toBe(v1.node_id);
     expect(v2.created).toBe(false);
     expect(v2.generation).toBe("superseded");
-    // As-of reconstruction serves each version.
     const revs = await client.readRevisions(v1.node_id);
     expect(revs).toHaveLength(2);
     const [newest, oldest] = revs;
@@ -98,14 +85,12 @@ describe("sinkNoteVersion (F6)", () => {
         (s) => s.text,
       ),
     ).toEqual(["v2"]);
-    // raw_hash attr reconciled to the newest — old literal retracted.
     const hashes = (await dial.edges(v1.node_id)).filter(
       (e) => e.predicate === "raw_hash",
     );
     expect(hashes).toHaveLength(1);
     expect(hashes[0]?.value).toBe(sha256("v2"));
 
-    // Identical re-submit: zero deltas everywhere.
     const eventsBefore = (await client.readRevisions(v1.node_id)).length;
     const admitsBefore = dial.admits.length;
     const v3 = await sinkNoteVersion(client, dial, SCOPE, tags, {
@@ -114,7 +99,7 @@ describe("sinkNoteVersion (F6)", () => {
     });
     expect(v3.generation).toBe("nooped");
     expect((await client.readRevisions(v1.node_id)).length).toBe(eventsBefore);
-    expect(dial.admits.length).toBe(admitsBefore); // no attr ops, no tag ops
+    expect(dial.admits.length).toBe(admitsBefore);
   });
 
   it("a refused admit surfaces as a NotesSinkError with violations", async () => {
@@ -170,7 +155,6 @@ describe("sinkNoteVersion (F6)", () => {
     expect(attr("title")).toBe("Multi");
     expect(attr("hasTag")).toBe("#f9");
 
-    // Identical re-dissolve: no-op at every layer.
     const admits = dial.admits.length;
     const again = await dissolveContainer(client, dial, SCOPE, tags, {
       source_path: "Notes/multi.md",
@@ -181,7 +165,6 @@ describe("sinkNoteVersion (F6)", () => {
     expect(again.generation).toBe("nooped");
     expect(dial.admits.length).toBe(admits);
 
-    // Changed content: ONE superseding generation, history keeps the old.
     const v2 = await dissolveContainer(client, dial, SCOPE, tags, {
       source_path: "Notes/multi.md",
       blocks: ["# Multi", "rewritten"],
@@ -223,8 +206,6 @@ describe("reconcileAttrs converges to exactly {want} (aiws:converge R-E3)", () =
       body_text: "v1",
       subject: "Split",
     });
-    // The split: want ("Split") stands beside a stale literal and a
-    // node-form value on the same single-valued slot.
     await dial.admit(
       [
         opAdd(v1.node_id, "title", { toLiteral: "Stale" }),
@@ -244,7 +225,6 @@ describe("reconcileAttrs converges to exactly {want} (aiws:converge R-E3)", () =
     expect(titles).toEqual([
       expect.objectContaining({ value: "Split", isNode: false }),
     ]);
-    // want stayed: the batch retracts the two stale values and adds nothing.
     const batch = dial.admits
       .slice(before)
       .flatMap((a) => a.ops)
@@ -310,7 +290,6 @@ describe("reconcileAttrs over placed reads", () => {
       expect.objectContaining({ op: "removeEdge", to_literal: "Stale" }),
       expect.objectContaining({ op: "removeEdge", to_node: N, graph: G1 }),
     ]);
-    // The scope-less read pins nothing: the retraction rides the batch's.
     expect(sent[0]?.[1]).not.toHaveProperty("graph");
   });
 

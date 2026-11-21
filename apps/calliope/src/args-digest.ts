@@ -1,34 +1,3 @@
-// The elevation args digest, in TypeScript — vendored from charon
-// (apps/server/src/lib/args-digest.ts, the minting side of the calliope_write
-// act assertion) so that calliope recomputes the SAME bytes charon bound.
-//
-// Kept byte-exact with charon's copy, which is itself pinned to vectors
-// computed by stellar-core-go `elevation.ArgsDigest`
-// (__tests__/fixtures/args-digest-vectors.json, copied verbatim from charon and
-// asserted in __tests__/args-digest.test.ts). stellar-core-ts's own
-// `argsDigest` is NOT used: it digests a parsed value and so loses an integer
-// literal past 2^53, which this reader keeps digit for digit.
-//
-// A port of stellar-core-go `elevation.ArgsDigest` (themis vendors it at
-// vendor/git.notusmi.com/rob/stellar-core-go/elevation/digest.go): the SHA-256,
-// in hex, of the CANONICAL JSON of a call's whole argument object with the
-// top-level `_stepup` key removed. Absent, empty or `null` arguments digest as
-// "{}". Charon recomputes it over the arguments it is about to show Rob, so
-// "what Rob approves is what runs" is checked here, not trusted from themis.
-//
-// CANONICAL, as Go renders it: object keys sorted by their UTF-8 BYTES (not
-// UTF-16 code units: they differ for astral characters), no whitespace, no HTML
-// escaping, U+2028/2029 escaped, a lone surrogate read as U+FFFD, and numbers
-// by value. A number is parsed from its LITERAL, never through a JS double: a
-// plain integer literal keeps its digits (two distinct 64-bit ids never
-// collapse), any other form that is integral below 2^53 is that integer, and
-// the rest is the shortest float64 that round-trips, in Go's `%g` shape
-// (`1e-07`, `1.5e+300`; exponent form below 1e-4 and from 1e6 up).
-//
-// Pinned against vectors computed by the Go code itself:
-// __tests__/fixtures/args-digest-vectors.json. If themis's digest changes,
-// those vectors change first and this file follows.
-
 import { createHash } from "node:crypto";
 
 /** The argument a retry carries the step-up challenge in; never part of the digest. */
@@ -47,8 +16,6 @@ export class DigestError extends Error {
     this.name = "DigestError";
   }
 }
-
-// ---- a strict JSON reader that keeps number literals ----------------------
 
 const WS = new Set([" ", "\t", "\n", "\r"]);
 const NUM_RE = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/;
@@ -109,7 +76,7 @@ class Reader {
       this.ws();
       if (this.s[this.i] !== ":") this.fail("expected ':'");
       this.i++;
-      out.set(k, this.value()); // a duplicate key: the last wins, as in Go
+      out.set(k, this.value());
       this.ws();
       const c = this.s[this.i++];
       if (c === "}") return out;
@@ -178,7 +145,6 @@ class Reader {
         case "u": {
           const hi = this.hex4();
           if (hi >= 0xd800 && hi < 0xdc00) {
-            // A high surrogate pairs only with an immediately following \uDC00-DFFF.
             const next = this.s.slice(this.i, this.i + 6);
             if (/^\\u[dD][c-fC-F][0-9a-fA-F]{2}$/.test(next)) {
               this.i += 2;
@@ -208,8 +174,6 @@ export function parseRaw(text: string): Raw {
   if (!r.done()) throw new DigestError("arguments carry trailing data");
   return v;
 }
-
-// ---- canonical rendering ---------------------------------------------------
 
 function utf8(s: string): Buffer {
   return Buffer.from(s, "utf8");
@@ -275,7 +239,7 @@ export function canonicalArgs(input: string | Raw): string {
   } else {
     v = input;
   }
-  if (v === null) return "{}"; // a literal null is no arguments
+  if (v === null) return "{}";
   if (typeof v !== "object" || Array.isArray(v) || v instanceof RawNum) {
     throw new DigestError("arguments are not a JSON object");
   }

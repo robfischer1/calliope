@@ -1,13 +1,3 @@
-/**
- * BlobStore — the content-deduped prose store (spec 039, master-plan F1).
- *
- * One table of immutable text rows keyed by a surrogate bigint. Minting the
- * same bytes twice returns the same id and writes nothing. The blob knows
- * nothing about who wrote it or where it belongs — membership, ordering and
- * authorship are graph concerns (the tree, F3+). Nothing here updates or
- * deletes a row: blobs are immortal until the F7 census reaps orphans.
- */
-
 import type { Pool } from "pg";
 
 /** ts_rank score — an ordering signal only; the absolute value is meaningless. */
@@ -17,9 +7,6 @@ export interface BlobSearchHit {
   rank: number;
 }
 
-// The exact expression of the blobs_content_key unique index; ON CONFLICT
-// must match it token-for-token or postgres won't recognize the arbiter.
-// (blob_content_hash is the schema's declared-IMMUTABLE sha256-of-UTF8.)
 const CONTENT_KEY = `blob_content_hash(text)`;
 
 /** The prose-store surface the write path consumes — implemented by the

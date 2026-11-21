@@ -1,19 +1,3 @@
-/**
- * The blob census (spec 044-blob-gc, master-plan F7) — reap blobs nothing
- * points at, surface facts that point at nothing. The graph's census
- * protocol with the roles swapped: the blob store asks who still holds a
- * reference, the graph answers PER ROSTERED GRAPH, and nothing is reaped
- * unless every expected reporter answered.
- *
- * Write-ordering (F4) deliberately produces orphan blobs on failure; the
- * only safe reaper is one that refuses to run on an incomplete census.
- * Mark-and-sweep: a COMPLETE census marks the unheld; a LATER complete
- * census reaps only ids still unheld AND already marked — the grace
- * window that protects blobs minted for a save still in flight. Held is
- * the graph's LOG (as-of reads resolve historical blobs forever), so only
- * never-referenced orphans ever reap.
- */
-
 import type { GcStore } from "./blob-store.js";
 import { type ChaosDial, type Tenant, tenantScope } from "./chaos-client.js";
 
@@ -72,7 +56,6 @@ export async function runBlobCensus(
     executed: false,
   };
 
-  // Snapshot FIRST: ids minted after this instant are out of frame.
   const snapshot = await deps.gc.maxId();
 
   const held = new Set<string>();
@@ -92,12 +75,11 @@ export async function runBlobCensus(
     }
   }
   report.held = held.size;
-  if (!report.complete) return report; // an incomplete census reaps NOTHING
+  if (!report.complete) return report;
 
   const stored = new Set(
     snapshot === null ? [] : await deps.gc.listIdsUpTo(snapshot),
   );
-  // Dangling: held by the graph, absent from the store. Reported, not fixed.
   for (const id of held) {
     if (!stored.has(id)) report.dangling.push(id);
   }
@@ -112,7 +94,6 @@ export async function runBlobCensus(
     report.reaped = reapable;
     report.executed = true;
   }
-  // The new mark set: everything unheld now (minus what was just reaped).
   const reapedSet = new Set(report.reaped);
   report.marked = unheld.filter((id) => !reapedSet.has(id));
   await deps.gc.writeMarks(report.marked);

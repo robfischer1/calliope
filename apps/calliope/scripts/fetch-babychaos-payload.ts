@@ -1,24 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Assemble the baby-chaos engine payload (spec 045 F13) — the directory
- * that ships beside the sidecar binary:
- *
- *   <out>/pg/{bin,lib,share}   relocatable PostgreSQL (zonky embedded
- *                              binaries: self-contained, rpath'd libs,
- *                              the same artifacts the embedded-postgres
- *                              ecosystem boots in tests)
- *   <out>/chaosstore[.exe]     the REAL engine door, built from the chaos
- *                              repo (cmd/chaos — the store took its canonical
- *                              name and moved to the repo root, 2026-08-22; the
- *                              payload keeps its own file name)
- *
- * An operator script, not CI: it needs network (maven central), docker is
- * NOT needed, and a Go toolchain + a chaos checkout for the store build.
- *
- *   bun run scripts/fetch-babychaos-payload.ts --platform linux
- *   bun run scripts/fetch-babychaos-payload.ts --platform windows \
- *     --chaos /path/to/chaos --out dist/babychaos-windows
- */
 
 import { spawnSync } from "node:child_process";
 import {
@@ -70,7 +50,6 @@ async function main(): Promise<void> {
     ) ?? "",
   );
 
-  // ── PostgreSQL: the zonky embedded binaries jar (a zip holding one txz).
   const flavor = platform === "linux" ? "linux-amd64" : "windows-amd64";
   const jarUrl =
     `https://repo1.maven.org/maven2/io/zonky/test/postgres/` +
@@ -101,8 +80,6 @@ async function main(): Promise<void> {
   if (!existsSync(initdb))
     throw new Error(`payload malformed: ${initdb} missing`);
 
-  // ── chaosstore: the engine door, built from source — one store, two
-  //    deployments; the desktop runs the exact fleet code.
   if (!existsSync(join(chaosRepo, "cmd", "chaos"))) {
     throw new Error(
       `chaos repo not found at ${chaosRepo} (--chaos / CHAOS_REPO)`,

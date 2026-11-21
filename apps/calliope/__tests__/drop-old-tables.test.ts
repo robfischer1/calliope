@@ -1,9 +1,3 @@
-/**
- * The gated drop (047 F12) — the cut refuses without a clean parity
- * report against a frozen store, and removes exactly the three replaced
- * tables when the gate passes. Docker-gated: a real postgres.
- */
-
 import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
@@ -51,7 +45,6 @@ describe.skipIf(!dockerAvailable())("the gated drop (F12)", () => {
     }
     const pg = new PgBodyClient(pool);
     await pg.ensureSchema({ legacy: true });
-    // Two old-store containers, exactly what a clean report would cover.
     await pg.saveBody("a1".repeat(32), [{ text: "one" }]);
     await pg.saveBody("b2".repeat(32), [{ text: "two" }]);
   }, 120_000);
@@ -116,7 +109,6 @@ describe.skipIf(!dockerAvailable())("the gated drop (F12)", () => {
       );
       expect(Number(res.rows[0]?.n)).toBe(0);
     }
-    // The blob store is untouched — the cut removes ONLY the old model.
     await pool.query(`SELECT count(*) FROM blobs`);
     await pool.query(`SELECT count(*) FROM blob_gc_marks`);
   });

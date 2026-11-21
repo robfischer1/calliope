@@ -1,24 +1,3 @@
-/**
- * The tree (spec 040, master-plan F3) — the graph vocabulary that makes a
- * document a document instead of a bag of rows that remember their owner.
- *
- * A container (an existing graph node — a note, a plan) holds ordered
- * members. Each member is a SLOT: a node of kind `Block` carrying exactly
- * three facts in the container's tenant graph —
- *
- *   (container) --tree_member-->   (slot)
- *   (slot)      --tree_position--> "a0"          fractional key, bytewise order
- *   (slot)      --tree_content-->  blob #17      the F2 blob domain
- *
- * The slot is the durable identity: editing a block repoints its slot at a
- * new blob (the blob never changes — F1's immutability), reordering rewrites
- * its position fact, moving it re-homes its membership fact. `container +
- * position` is the durable address because there is nothing else to key on.
- *
- * This module is vocabulary + op-builders + the ordered read. The write
- * path that composes builders into saves is F4; the history read is F5.
- */
-
 import {
   type ChaosDial,
   type ChaosOp,
@@ -28,8 +7,6 @@ import {
   opRemove,
 } from "./chaos-client.js";
 import { type BlockFact, factsFromEdges } from "./slot-facts.js";
-
-// ── the vocabulary (the fan-out contract — five tenants read these) ──────────
 
 /** container → slot membership. */
 export const TREE_MEMBER = "tree_member";
@@ -44,8 +21,6 @@ export const TREE_CONTENT = "tree_content";
 export const TREE_REF = "tree_ref";
 /** The slot node's kind — declared in chaos's closed kind set (F3). */
 export const BLOCK_KIND = "Block";
-
-// ── op builders (each group is ONE admit batch — one graph transaction) ──────
 
 /**
  * Birth one slot: mint the Block node and attach all three facts, in one
@@ -153,8 +128,6 @@ export function slotRemoveOps(
     opRemove(slotToken, TREE_CONTENT, { toBlob: blobId }),
   ];
 }
-
-// ── the ordered read ─────────────────────────────────────────────────────────
 
 /** One resolved tree slot. */
 export interface TreeSlot {

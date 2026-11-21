@@ -1,10 +1,3 @@
-/**
- * calliope_read_containers — the batch read. nomos made ~96 serial
- * read_container calls per read; this verb answers them in one. Over the
- * fixture dial: parity with N single reads, the texts:false fence (no blob
- * fetch), unknown ids in `missing`, the 500 ceiling, and the revision.
- */
-
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -76,7 +69,6 @@ async function setup() {
     [opAdd(b, "frontmatter", { toLiteral: "tags: [x]" })],
     "notes",
   );
-  // c stays an empty (but existing) container with no members.
   return { dial, blobs, facet, a, b, c, mint };
 }
 
@@ -96,7 +88,6 @@ describe("calliope_read_containers", () => {
       ["a0", "a-one"],
       ["a1", "a-two"],
     ]);
-    // One batch = one blob fetch, and never the per-node edge walk.
     const before = blobs.fetches;
     dial.edgeCalls = 0;
     await readContainers(facet, [a, b], { texts: true });
@@ -130,7 +121,6 @@ describe("calliope_read_containers", () => {
       true,
     );
     expect(blocks.every((x) => !x.dangling)).toBe(true);
-    // Same structure and the same revision as the texts read.
     const full = await readContainers(facet, [a, b], { texts: true });
     expect(batch.containers.map((c) => [c.container, c.revision])).toEqual(
       full.containers.map((c) => [c.container, c.revision]),
@@ -163,9 +153,8 @@ describe("calliope_read_containers", () => {
     ]);
     const changed = await rev(a);
     expect(changed).not.toBe(first);
-    expect(await rev(b)).toBe(other); // the neighbour is untouched
+    expect(await rev(b)).toBe(other);
 
-    // Frontmatter is part of the revision.
     await facet.dial.admit(
       [opAdd(a, "frontmatter", { toLiteral: "title: t" })],
       "notes",

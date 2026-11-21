@@ -1,22 +1,4 @@
 #!/usr/bin/env bun
-/**
- * The gated drop (spec 047, master-plan F12) — remove the three tables the
- * migration replaced: `sections`, `supersessions`, `comments_on`.
- *
- * The gate is the PARITY REPORT (specs/043's artifact): a run of
- * migrate-tree over the whole store with zero refusals and zero parity
- * mismatches, every container accounted for. The drop additionally
- * verifies the old store is STILL the one the report described (frozen —
- * same distinct container count), because a write after the report would
- * be a write the migration never saw.
- *
- *   bun run src/mcp/drop-old-tables.ts --report <parity-report.json>            # dry run
- *   bun run src/mcp/drop-old-tables.ts --report <parity-report.json> --execute  # the cut
- *
- * Refuses loudly on: an unreadable/failed report, a container-count
- * mismatch against the live store, or a missing --report. Exit 0 only
- * when the requested action (gate check or drop) succeeded.
- */
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";

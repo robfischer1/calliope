@@ -1,10 +1,3 @@
-/**
- * aglaia's verbs (Charon parity rows 19 and 20), registered beside the note
- * verbs: `tag_seed_read` always, `writing_deltas_ingest` when the server
- * carries a telemetry producer. The behaviour and the refusal split live in
- * `../aglaia-ingest.ts`; this file only puts them on the wire.
- */
-
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
@@ -33,8 +26,6 @@ const JSON_TYPES = [
 const event = z
   .record(
     z.string(),
-    // One meta call: a later .describe() would register a fresh copy and
-    // drop the advertised type.
     z.unknown().meta({
       type: JSON_TYPES,
       description: "One field of the event, as theia minted it.",

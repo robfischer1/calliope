@@ -1,22 +1,3 @@
-/**
- * CALLIOPE_DIRECT_CAPTURE — calliope writes graph facts by chaos `capture` as
- * itself, not through themis `admit` (the strangler migration of the write
- * path; per-star flag, off by default, rollback = unset the flag).
- *
- * Two pure halves, both held to their oracles:
- *
- *  - {@link toDirectCaptureOps}: the capture batch themis WOULD have sent for
- *    the same friendly ops (themis `opsFromWire` + `ops.ToWire`). It is a
- *    sibling of local-admit's `toCaptureOps`, which the desktop sidecar keeps
- *    unchanged: that port ignores an addEdge graph pin (themis honours the
- *    `issues` graph), a pinned removeEdge by NAME, the per-fact `author` and
- *    the `naive` policy.
- *  - {@link classifyRefusal}: the reply contract of stellar-core's
- *    `admitcapture` package. A definite refusal is `admitted:false` with one
- *    violation; ANY OTHER failure is in doubt (the write may have landed) and
- *    must throw, never become a refusal.
- */
-
 import { createHash } from "node:crypto";
 
 import { ChaosClientError, type ChaosOp } from "./chaos-client.js";
@@ -123,7 +104,6 @@ export function toDirectCaptureOps(
         out.push({
           op: "createNode",
           label: str(op.label),
-          // themis reads node_type first, kind as the fallback.
           kind: str(op.node_type) !== "" ? str(op.node_type) : str(op.kind),
         });
         break;
@@ -206,8 +186,6 @@ function graphOf(op: ChaosOp, scope: string): string {
   }
   return scope;
 }
-
-// --- the reply contract ------------------------------------------------------
 
 /** capture's definite verdicts and the violation check each reports. */
 const DEFINITE: ReadonlyMap<string, string> = new Map([

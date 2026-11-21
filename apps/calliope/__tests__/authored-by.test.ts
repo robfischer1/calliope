@@ -1,12 +1,3 @@
-/**
- * F1 (024) — the widened AuthoredBy type family and its runtime guard.
- *
- * The union widens from "human" | "calliope" to also admit a SPIFFE session
- * principal (spiffe://{td}/session/{uuid}). The type's home moves to types.ts
- * (the import root); urania-client.ts re-exports it so existing import paths
- * keep compiling — both routes are asserted here.
- */
-
 import { describe, expect, it } from "vitest";
 import {
   SESSION_PRINCIPAL_RE,
@@ -60,7 +51,7 @@ describe("isAuthoredBy — the runtime guard", () => {
   it("narrows to AuthoredBy (type-level: guarded value assigns)", () => {
     const v: string = PRINCIPAL;
     if (isAuthoredBy(v)) {
-      const a: AuthoredBy = v; // compile-time proof of narrowing
+      const a: AuthoredBy = v;
       expect(a).toBe(PRINCIPAL);
     } else {
       expect.unreachable("guard rejected a valid principal");

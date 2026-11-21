@@ -1,9 +1,3 @@
-/**
- * A fake chaos REST door for tests: GET /openapi.json answers a document
- * carrying every verb the dial sends (all POST), and each /v1/<verb> call is
- * recorded and answered by the test's handler in the result envelope.
- */
-
 export const CHAOS_VERBS = [
   "admit",
   "capture",
@@ -85,8 +79,6 @@ export function installChaosDoor(answer: (c: WireCall) => unknown): {
     };
     calls.push(call);
     const out = answer(call);
-    // A Response (a refusal, say) goes out as built; anything else is the
-    // structured content of a 200 in the result envelope.
     if (out instanceof Response) return Promise.resolve(out);
     return Promise.resolve(
       new Response(JSON.stringify({ text: "", structuredContent: out }), {

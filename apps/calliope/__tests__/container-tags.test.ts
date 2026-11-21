@@ -1,16 +1,4 @@
-/**
- * A container save reconciles the note's inline tags.
- *
- * The removed body verbs (write_body / apply_section_ops) ran the C9
- * inline-tag reconcile after every write; write_container never did. Aglaia
- * saves through write_container (081 F9), so a `#tag` typed or deleted in
- * the editor never reached the note's hasTag edges or the note_tags mirror.
- * These pin every branch of the restored hook: add, retract, explicit rows
- * untouched, code never tags, and the cases where the hook must stay out
- * (noop, other tenants, non-notes, archived notes, no tag facet), plus a
- * reconcile failure that leaves the save standing. The body client THROWS
- * on every call, so each pass here proves the reconcile reads the tree.
- */
+/** A container save reconciles the note's inline tags. */
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -189,7 +177,6 @@ describe("write_container runs the inline-tag reconcile", () => {
     const { mcp, tags } = await rig();
     const n = await note(mcp, "Noop");
     await add(mcp, n, "#alpha");
-    // A tag row the prose does not carry: a reconcile would retract it.
     await tags.upsert(n, "#stray", "inline");
     const out = await update(mcp, n, "#alpha");
     expect(out.noop).toBe(true);
@@ -306,7 +293,6 @@ describe("write_container runs the inline-tag reconcile", () => {
     const mcp = new Client({ name: "test", version: "0" });
     await Promise.all([server.connect(st), mcp.connect(ct)]);
     const n = await note(mcp, "Blobless");
-    // create_note births its block through the store: break it after.
     blobs.mint = () => Promise.reject(new Error("blob store down"));
     const res = await mcp.callTool({
       name: "write_container",

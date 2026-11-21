@@ -2,8 +2,6 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { argsDigest, canonicalArgs, DigestError } from "../src/args-digest.js";
 
-// Vectors computed by stellar-core-go elevation.ArgsDigest (copied verbatim
-// from charon's __tests__/fixtures): the minting side binds these bytes.
 interface Vector {
   in: string;
   canon: string;

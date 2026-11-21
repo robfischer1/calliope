@@ -1,12 +1,3 @@
-// ── the focus register's consumer: the loop around the fold ─────────────────
-//
-// `handleTelemetryMessage` (the pure fold) is pinned in focus-register.test.ts.
-// This file pins what DRIVES it: the consumer seam, the stream loop, the
-// retry for the life of the process, the degradation on a broker fault, and
-// the stop. Every test injects doubles — nothing here can reach a broker —
-// and the one line that names the real client (`openFocusConsumer`) is
-// pinned by value in focus-consumer-wiring.test.ts.
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stringDeserializers } from "@platformatic/kafka";
 import {
@@ -149,7 +140,6 @@ function factory(...consumers: Fake[]): {
   return f;
 }
 
-/** Let the consumer loop run its queued microtasks and 0ms timers. */
 const settle = async (): Promise<void> => {
   await vi.advanceTimersByTimeAsync(0);
 };
@@ -232,7 +222,7 @@ describe("startFocusConsumer", () => {
     });
     await settle();
     consumer.feed.push("{not json");
-    consumer.feed.push(undefined); // a tombstone
+    consumer.feed.push(undefined);
     consumer.feed.push(selection("after"));
     await settle();
     expect(register.current()?.pointer.text).toBe("after");
@@ -258,7 +248,7 @@ describe("startFocusConsumer", () => {
     expect(refused.closeCalls).toBe(1);
     expect(f.opened).toBe(1);
     await vi.advanceTimersByTimeAsync(999);
-    expect(f.opened).toBe(1); // not before the delay
+    expect(f.opened).toBe(1);
     await vi.advanceTimersByTimeAsync(1);
     await settle();
     expect(f.opened).toBe(2);
@@ -341,8 +331,6 @@ describe("startFocusConsumer", () => {
     expect(
       lines.filter((l) => l.includes("unavailable") || l.includes("ended")),
     ).toEqual([]);
-    // Nothing armed after the stop: no retry was scheduled for a loop that
-    // is over, and nothing closes twice.
     expect(vi.getTimerCount()).toBe(0);
     expect(consumer.closeCalls).toBe(1);
   });
@@ -361,14 +349,14 @@ describe("startFocusConsumer", () => {
     });
     await settle();
     expect(f.opened).toBe(1);
-    expect(vi.getTimerCount()).toBe(1); // the retry, armed
+    expect(vi.getTimerCount()).toBe(1);
     await handle.stop();
-    expect(vi.getTimerCount()).toBe(0); // disarmed by the stop, not left to fire
+    expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(5000);
     await settle();
     expect(f.opened).toBe(1);
     expect(never.consumeCalls).toHaveLength(0);
-    expect(refused.closeCalls).toBe(1); // released once by the loop, not again by the stop
+    expect(refused.closeCalls).toBe(1);
   });
 
   it("a fault raised after stop() is not reported either — the star is going down anyway", async () => {
@@ -413,8 +401,6 @@ describe("startFocusConsumer", () => {
   });
 
   it("writes its diagnostics to stderr, one line each, when given no log", async () => {
-    // stdout is the MCP transport; the default sink must be stderr and must
-    // terminate the line, or the next diagnostic runs into it.
     const written: string[] = [];
     const spy = vi
       .spyOn(process.stderr, "write")

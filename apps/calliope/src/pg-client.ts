@@ -1,20 +1,3 @@
-/**
- * PgBodyClient — the sovereign-store {@link BodyClient} (C2, the facet carve).
- *
- * Bodies live in Calliope's own PostgreSQL (`calliope-db`), not as substrate
- * triples in Chaos: one `sections` table with copy-on-write lineage. Semantics
- * mirror the substrate client exactly as observed through the BodyClient
- * contract — reads sort by `order_key` COLLATE "C"; a coarse save mints a
- * fresh fractional key sequence and deactivates the prior version rows; a
- * single-section edit keeps its `order_key`, mints a fresh 64-hex id, and
- * records the superseded row (`supersedes`) with the old row kept inactive
- * as the prior version.
- *
- * Provenance: `authored_by` is persisted per section version. The default is
- * `"human"`, matching the live backends' historical default (the gateway
- * `SET ROLE human` seam); service-internal writers pass `"calliope"`.
- */
-
 import { createHash, randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
 import type {
@@ -279,9 +262,6 @@ export class PgBodyClient implements BodyClient {
           `editSection: section ${sectionId} is not part of node ${nodeId}.`,
         );
       }
-      // F4: a byte-identical re-submit is a no-op — no row, no lineage edge,
-      // no revision event, same id back. Decided in-transaction (under the
-      // FOR UPDATE lock), so a racing real edit cannot be swallowed.
       if (target.text === text) {
         await client.query("COMMIT");
         return { id: target.id, text: target.text, orderKey: target.order_key };
@@ -310,21 +290,6 @@ export class PgBodyClient implements BodyClient {
   /**
    * A11 block-grain transactional apply — ALL ops or none, one write-event
    * (`now()` is transaction-stable, so every row shares the event stamp).
-   *
-   * Per-op persistence in the sovereign store's lineage model:
-   * - `update`  — the {@link editSection} copy-on-write (fresh id, supersedes
-   *               the old row; key kept unless the op carries one);
-   * - `reorder` — copy-on-write re-placement (same prose, new key, fresh id —
-   *               a placement id names a placement, and a reorder IS one);
-   * - `add`     — a new row with `supersedes = ''` (a lineage row that is NOT
-   *               a generation marker, so as-of reconstruction keeps earlier
-   *               sections);
-   * - `delete`  — deactivate + a TOMBSTONE row superseding the removed id, so
-   *               reconstruction sees the removal at this event.
-   *
-   * A `sectionId` that is not currently active rejects the whole batch with
-   * a `stale_section` error; a duplicate `sectionId` in one batch rejects as
-   * malformed. Nothing is applied on either.
    */
   async applySectionOps(
     nodeId: string,
@@ -375,8 +340,6 @@ export class PgBodyClient implements BodyClient {
         }
         const target = byId.get(op.sectionId);
         if (target === undefined) {
-          // Unreachable (validated above); throwing keeps `applied` aligned
-          // and rolls the transaction back rather than misapplying.
           throw new Error(
             `stale_section: section ${op.sectionId} vanished mid-batch.`,
           );
@@ -611,9 +574,6 @@ export class PgBodyClient implements BodyClient {
     const client = await this.#pool.connect();
     try {
       await client.query("BEGIN");
-      // The target must be a block of this document's universe: its body,
-      // its history (commenting on a superseded row is legal — the thread
-      // resolves forward), or its comment container (a reply).
       const known = await client.query(
         `SELECT 1 FROM sections
           WHERE id = $1 AND node_id = ANY($2::text[]) LIMIT 1`,
@@ -827,7 +787,7 @@ export class PgBodyClient implements BodyClient {
         [e.comment_id, cc],
       );
       const first = orig.rows[0];
-      if (first === undefined) continue; // dangling edge — skip, never throw
+      if (first === undefined) continue;
       const current = await this.#pool.query<{ text: string }>(
         `WITH RECURSIVE succs AS (
            SELECT $1::text AS id
@@ -876,20 +836,6 @@ export class PgBodyClient implements BodyClient {
    * while predecessors are strictly newer than `sinceRevision`, collecting
    * removable intermediates; deletes them (rows + lineage edges) and rewires
    * the final row's lineage — column AND join table — to the walk's stop row.
-   *
-   * A predecessor is removable ONLY when every guard passes:
-   *  - it is inactive, not a tombstone, and newer than the arc start;
-   *  - it has exactly ONE predecessor edge and ONE successor edge (no
-   *    split/merge fan touches it);
-   *  - its creation event wrote exactly ONE row — a pause-edit. A row born
-   *    in a multi-row event (a split child, an ops batch) is a BOUNDARY:
-   *    deleting it would make its event reconstruct without its siblings.
-   *
-   * The rewired edge carries the FINAL row's `created_at`, so mid-arc
-   * moments reconstruct to the pre-arc state and the endpoints stay
-   * byte-exact. Returns `{removed, from, to}`; `removed: 0` when nothing
-   * qualifies. The first deliberate deletion in this store — which is why
-   * the verb above it ships flag-gated.
    */
   async coalesceArc(
     nodeId: string,
@@ -943,10 +889,6 @@ export class PgBodyClient implements BodyClient {
       }
       const since = new Date(sinceRevision).getTime();
 
-      // 027: a commented revision is an arc BOUNDARY — compaction never
-      // removes what a session reviewed, so comment anchors stay exact.
-      // Edges live under the DOCUMENT container id (026), which for a
-      // comment-container arc is this node id minus the suffix.
       const docId = nodeId.endsWith("#comments")
         ? nodeId.slice(0, -"#comments".length)
         : nodeId;
@@ -968,7 +910,7 @@ export class PgBodyClient implements BodyClient {
         const pid = preds[0] ?? "";
         const p = rows.get(pid);
         if (p === undefined) {
-          to = pid; // referenced but not stored under this node — endpoint
+          to = pid;
           break;
         }
         const isBoundary =
@@ -1008,7 +950,6 @@ export class PgBodyClient implements BodyClient {
           WHERE node_id = $1 AND id = $2`,
         [nodeId, blockId, to],
       );
-      // The rewired edge carries the FINAL row's stamp (see the doc above).
       await client.query(
         `INSERT INTO supersessions (successor_id, predecessor_id, node_id, created_at)
          SELECT $2, $3, $1, created_at FROM sections
@@ -1143,13 +1084,6 @@ export class PgBodyClient implements BodyClient {
    * before T (`supersedes IS NULL` rows), then let edit chains created at or
    * before T win over the rows they supersede. A revision predating the
    * body's first save yields `[]`.
-   *
-   * An OPS-ONLY body (grown entirely by block-grain adds, never coarse-saved)
-   * has no `supersedes IS NULL` generation anchor — its add rows carry
-   * `supersedes = ''`. The anchor coalesces to -infinity so the whole lineage
-   * is one generation and reconstruction works; before this, such a body
-   * reconstructed to `[]` at every timestamp (found live 2026-08-14 on the
-   * governance-blocks container, Law and the Receipts F1).
    */
   async readRevisionAt(nodeId: string, revision: string): Promise<Section[]> {
     const res = await this.#pool.query<SectionRow>(

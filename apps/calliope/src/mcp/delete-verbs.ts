@@ -1,20 +1,3 @@
-/**
- * The delete verbs: `delete_note` (suppress by default, `purge=true` to
- * retract) and `restore_note` (clear a suppression). Registered with the
- * chaos facet, beside the other note verbs.
- *
- * Rob's ruling (2026-10-06): a delete from the UI hides; nothing purges
- * unless asked, and nothing ever erases the log. So `purge` defaults to
- * false here and no caller sets it for him.
- *
- * GOVERNANCE NOTES. nomos keeps each prose law file as a `Governance` note,
- * and retires one when a deletion of that file lands. The suppress mode, and
- * restore, take a Governance note like any other hideable type: who may call
- * the verb is the session token's scope and the Cilium policy, not a check on
- * the caller here. Purge never takes one: a Governance note is hidden, never
- * erased.
- */
-
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ChaosDial } from "../chaos-client.js";
@@ -34,7 +17,6 @@ const ids = z
   .array(nodeToken("A Note node token."))
   .min(1)
   .max(DELETE_NOTE_MAX)
-  // The handler refuses a repeated id (bad_args "… is repeated").
   .meta({ uniqueItems: true })
   .describe("Note node tokens, each once.");
 

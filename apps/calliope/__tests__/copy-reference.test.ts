@@ -1,5 +1,3 @@
-// ── 024/F1: the compound copy-reference — `[[<title>]] (<id>)` ───────────────
-
 import { describe, expect, it } from "vitest";
 import { FixtureChaosDial } from "../src/chaos-client.js";
 import {
@@ -24,8 +22,6 @@ describe("formatCompoundReference — the one formatter", () => {
   it("strips newlines from the title, emits everything else verbatim", () => {
     const r = formatCompoundReference("line one\nline two", "x");
     expect(r.compound).toBe("[[line one line two]] (x)");
-    // wikilink-hostile characters pass through — the id half carries
-    // resolution; a strange title degrades recognition, never the address.
     const odd = formatCompoundReference("a|b ]] c", "y");
     expect(odd.wikilink).toBe("[[a|b ]] c]]");
   });

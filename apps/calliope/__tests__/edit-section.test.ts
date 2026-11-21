@@ -59,7 +59,7 @@ describe("FixtureBodyClient.editSection", () => {
     const edited = await client.editSection("n1", bId, "B!");
     expect(edited.text).toBe("B!");
     expect(edited.orderKey).toBe(bKey);
-    expect(edited.id).not.toBe(bId); // copy-on-write identity change
+    expect(edited.id).not.toBe(bId);
 
     const after = await client.readBody("n1");
     expect(after.map((s) => s.text)).toEqual(["a", "B!", "c"]);
@@ -100,13 +100,12 @@ describe("UraniaBodyClient.editSection (flag on)", () => {
 
     const edited = await client.editSection("note1", yId, "Y2");
     expect(edited.text).toBe("Y2");
-    expect(edited.orderKey).toBe(yKey); // position preserved
+    expect(edited.orderKey).toBe(yKey);
     expect(edited.id).not.toBe(yId);
 
     const after = await client.readBody("note1");
     expect(after.map((s) => s.text)).toEqual(["x", "Y2"]);
 
-    // old hasPart edge gone, old text node survives
     const oldLinked = fake.triples.some(
       (t) => t.from === "note1" && t.predicate === HAS_PART && t.to === yId,
     );

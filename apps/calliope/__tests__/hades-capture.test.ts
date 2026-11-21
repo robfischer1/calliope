@@ -189,20 +189,17 @@ describe("HadesCapture — read_body / resolve", () => {
     expect(calls[0]?.req.verb).toBe("read_body");
     expect(calls[0]?.req.node_id).toBe(note);
 
-    // hasPart edges
     expect(triples).toContainEqual({ from: note, predicate: HAS_PART, to: s0 });
     expect(triples).toContainEqual({ from: note, predicate: HAS_PART, to: s1 });
-    // text literals
     expect(triples).toContainEqual({ from: s0, predicate: TEXT, to: "First" });
     expect(triples).toContainEqual({ from: s1, predicate: TEXT, to: "Second" });
-    // order_key literals
     expect(triples).toContainEqual({ from: s0, predicate: ORDER_KEY, to: "N" });
     expect(triples).toContainEqual({
       from: s1,
       predicate: ORDER_KEY,
       to: "N:",
     });
-    expect(triples).toHaveLength(6); // 2 hasPart + 2 text + 2 order_key
+    expect(triples).toHaveLength(6);
 
     globalThis.fetch = original;
   });

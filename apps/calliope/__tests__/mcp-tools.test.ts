@@ -57,8 +57,6 @@ describe("calliope-mcp tools — over FixtureBodyClient", () => {
   });
 });
 
-// ── F3: the block-native verb surface ────────────────────────────────────────
-
 import { FixtureChaosDial as F11Dial } from "../src/chaos-client.js";
 import {
   createNote as f11CreateNote,
@@ -77,8 +75,6 @@ describe("create_note rejects hex-shaped tags (F11)", () => {
   });
 });
 
-// ── C8: create_note over the FixtureChaosDial ────────────────────────────────
-
 import {
   FixtureChaosDial,
   NOTE_ROOT_KIND,
@@ -96,8 +92,6 @@ describe("create_note — the note-native mint (C8)", () => {
     expect(isCreateNoteError(result)).toBe(false);
     if (isCreateNoteError(result)) return;
     expect(result.created).toBe(true);
-    // admits: root mint (2: create+edges), then the note mint (1: all of it).
-    // The Note floor (hasName) must ride the createNode (chaos#14929).
     expect(dial.admits).toHaveLength(3);
     const mint = dial.admits[2];
     expect(mint?.ops.map((o) => o.op)).toEqual([
@@ -132,13 +126,13 @@ describe("create_note — the note-native mint (C8)", () => {
     if (isCreateNoteError(second)) throw new Error("second create failed");
     expect(second.node_id).toBe(first.node_id);
     expect(second.created).toBe(false);
-    expect(dial.admits.length).toBe(before); // heal check read only, no writes
+    expect(dial.admits.length).toBe(before);
   });
 
   it("heals an interrupted mint: a dictionary row without edges gets them", async () => {
     const dial = new FixtureChaosDial();
     const orphan = "cd".repeat(32);
-    dial.seed("Note", "Broken", orphan); // row exists, edges never landed
+    dial.seed("Note", "Broken", orphan);
     const result = await createNote(dial, SCOPE, { title: "Broken" });
     if (isCreateNoteError(result)) throw new Error("heal path errored");
     expect(result.node_id).toBe(orphan);
@@ -162,7 +156,6 @@ describe("create_note — the note-native mint (C8)", () => {
     if (isCreateNoteError(result)) throw new Error("create failed");
     const edges = await dial.edges(result.node_id);
     expect(edges.find((e) => e.predicate === "parent")?.value).toBe(parent);
-    // no root ensure ran: only the seeded parent's seed and the note's one admit
     expect(dial.admits).toHaveLength(1);
   });
 
@@ -200,7 +193,6 @@ describe("create_note — the note-native mint (C8)", () => {
     const refuse = () =>
       Promise.resolve({ admitted: false, minted: [], violations: ["no"] });
 
-    // the mint itself
     dial.admit = refuse;
     const mint = await createNote(dial, SCOPE, {
       title: "M",
@@ -212,8 +204,6 @@ describe("create_note — the note-native mint (C8)", () => {
       violations: ["no"],
     });
 
-    // a refused admit is a refused mint even when it names a token; an admit
-    // that lands none, or two, is one too
     for (const [admitted, minted] of [
       [false, ["t".repeat(64)]],
       [true, []],
@@ -231,7 +221,6 @@ describe("create_note — the note-native mint (C8)", () => {
       });
     }
 
-    // the heal of a dictionary row that never got its edges
     dial.admit = real;
     const minted = await dial.admit([opCreate("Note", "H")], SCOPE);
     expect(minted.admitted).toBe(true);
@@ -258,8 +247,6 @@ describe("create_note — the note-native mint (C8)", () => {
     ]);
   });
 });
-
-// ── C9: the tag path over the fixtures ───────────────────────────────────────
 
 import { FixtureTagStore } from "../src/tag-store.js";
 import {
@@ -320,7 +307,6 @@ describe("the tag path (C9)", () => {
     const dial = new FixtureChaosDial();
     const store = new FixtureTagStore();
     const body = new FixtureBodyClient();
-    // a Note node
     const created = await createNote(dial, SCOPE, { title: "N" }, store);
     if (isCreateNoteError(created)) throw new Error("create failed");
     await body.saveBody(created.node_id, [{ text: "hello #tagme" }]);
@@ -330,7 +316,6 @@ describe("the tag path (C9)", () => {
         (e) => e.predicate === HAS_TAG && e.value === "#tagme",
       ),
     ).toBe(true);
-    // a non-Note node: same body content, no extraction
     const work = "ab".repeat(32);
     await body.saveBody(work, [{ text: "work prose #never" }]);
     await maybeReconcileInlineTags(body, dial, SCOPE, store, work);

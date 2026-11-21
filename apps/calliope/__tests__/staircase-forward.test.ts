@@ -6,10 +6,6 @@
  * stores it on the container node in that transaction. A write that carried
  * none sends none. Nothing leaves the process: the chaos door is a stubbed
  * fetch behind the real ChaosRest / RestClient.
- *
- * The dial tees: every admit goes out as a direct capture over the stubbed
- * door (the request under test) and is then applied to the fixture dial, so
- * the container tree the verb reads stays coherent.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -63,7 +59,6 @@ const CAPTURE_DOC = JSON.stringify({
   },
 });
 
-// Not re-marshalled: the spacing is what the signatures cover.
 const PRINCIPAL = `{"role":"principal", "sub":"spiffe://notusmi.com/human/rob"}`;
 const STAIR = Buffer.from(`[ ${PRINCIPAL} ]`, "utf8").toString("base64url");
 
@@ -105,7 +100,6 @@ class TeeDial extends FixtureChaosDial {
     scope: string,
     expect?: ChaosExpect[],
   ): Promise<AdmitResult> {
-    // The capture's reply is the stub's; only the request it sent is judged.
     await this.live.admit(ops, scope, expect).catch(() => undefined);
     return super.admit(ops, scope, expect);
   }
@@ -174,7 +168,6 @@ describe("write_container forwards the request's staircase to chaos", () => {
     for (const s of door.captures) {
       expect(s).not.toBeNull();
       const text = Buffer.from(s ?? "", "base64url").toString("utf8");
-      // The received step keeps its bytes (R22: the signatures cover them).
       expect(text.startsWith(`[${PRINCIPAL},{`)).toBe(true);
       const steps = JSON.parse(text) as Record<string, unknown>[];
       expect(steps).toHaveLength(2);

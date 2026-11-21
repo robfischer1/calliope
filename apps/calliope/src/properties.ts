@@ -1,35 +1,3 @@
-/**
- * Note properties — a note's frontmatter, landed as graph edges.
- *
- * The notes importer strips a vault note's YAML fence from the body (the
- * body is prose), so before this verb the metadata had nowhere to go: the
- * dissolve archive row keeps only `schema_type`/`subject`/`created`/
- * `updated`, and the importer's Journal/Brain Soup path kept nothing at all.
- * `set_properties` is the write half. The CALLER maps YAML to predicates and
- * resolves wikilinks to node tokens (it holds the vault and the extent);
- * Calliope validates and reconciles, so every frontmatter write rides one
- * gated, idempotent path, the same way `create_note` owns the mint.
- *
- * Semantics, per predicate NAMED in the call: the note's current values for
- * that predicate become exactly the given set (missing values asserted,
- * extra ones retracted). Predicates the call does not name are untouched.
- * One admit batch; zero ops is zero calls, so a re-run is a read and a no-op.
- *
- * - `tags` ride the C9 tag path (hasTag edge + mirror row, `explicit`
- *   provenance), so `list_tags` and the A21 `tag:` lens see them. Additive,
- *   like every explicit write. Junk (hex-colour-shaped) tags are skipped and
- *   reported, not fatal: one stray value must not cost a note its metadata.
- * - `frontmatter` is the source YAML verbatim, kept as one literal so the
- *   original stays recoverable byte-for-byte (`export_note` and
- *   `materialize_note` serve it back).
- * - `retract: true` is the revert form: it removes exactly the named values
- *   (and explicit-sourced tags) and asserts nothing.
- *
- * Reserved predicates are refused: identity, structure and the dissolve
- * provenance contract each have one writer already, and a second writer on
- * the same predicate would flap.
- */
-
 import { NODE_TOKEN_RE } from "./types.js";
 import {
   type ChaosDial,
@@ -85,8 +53,6 @@ export const RESERVED_PREDICATES: ReadonlySet<string> = new Set([
   "comments_on",
   "isArchived",
   "ownedBy",
-  // delete_note's hide marker: set and cleared only by delete_note /
-  // restore_note, so a frontmatter key can never hide a note by accident.
   "suppressed",
 ]);
 
@@ -138,8 +104,6 @@ const TOKEN_RE = NODE_TOKEN_RE;
 /** One edge's identity for set arithmetic: domain-tagged so a literal that
  *  happens to look like a token never equals a node edge. */
 function keyOf(predicate: string, isNode: boolean, value: string): string {
-  // A time fact reads back as its Eastern rendering, so two spellings of one
-  // instant are one value: key them by the parsed instant.
   const micros =
     !isNode && TIME_PREDICATES.has(predicate)
       ? parseInstantMicros(value)
@@ -303,12 +267,6 @@ export async function setProperties(
 
   const nodeId = input.container_id;
   const current = await dial.edges(nodeId);
-  // The permission check keys on the node's KIND (Note), never its hasType:
-  // create_note mints every node with kind Note whatever `type` it names
-  // (Note, Law, Governance, Memory, ...). The kind is read exactly, off the
-  // node dictionary (chaos resolve_node_refs), so a note whose hasName
-  // drifted or is absent is still a note. The row is the one echoing the ref
-  // as sent (a chaos that predates the echo is read by its token key).
   const refs = await dial.resolveNodeRefs([nodeId]);
   const row = Object.values(refs).find((r) => r.ref === nodeId) ?? refs[nodeId];
   if (row?.kind !== NOTE_KIND) {
@@ -317,10 +275,6 @@ export async function setProperties(
       detail: `${nodeId} is not a node of kind ${NOTE_KIND}`,
     };
   }
-  // The SIDE EFFECTS stay keyed on hasType=Note: the tag mirror feeds
-  // list_tags and the search lens, so a Governance/Law/Memory body must
-  // not be published to them as a note. Edges (frontmatter included) land
-  // for any hasType; tags only for a hasType=Note node.
   const isNoteType = current.some(
     (e) => e.predicate === "hasType" && e.value === NOTE_KIND,
   );
@@ -366,12 +320,7 @@ export async function setProperties(
   const normalized = (input.tags ?? [])
     .filter((t) => t.trim() !== "")
     .map(normalizeTag);
-  // Junk is reported here and kept out downstream: the C9 reconcile's F11
-  // chokepoint never admits it, and a retraction only ever finds rows that
-  // reconcile wrote.
   const tagsSkipped = normalized.filter(isJunkTag);
-  // A non-Note hasType takes no tag side effect; its tags are reported
-  // skipped rather than silently dropped.
   if (!isNoteType) tagsSkipped.push(...normalized.filter((t) => !isJunkTag(t)));
   let tagsAdded: string[] = [];
   let tagsRemoved: string[] = [];

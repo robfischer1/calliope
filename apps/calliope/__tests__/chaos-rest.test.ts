@@ -1,9 +1,6 @@
 /**
  * LiveChaosDial over chaos's openapi-http face (chaos-rest.ts): the REST
- * routes every read to /v1/<verb> on the plaintext door and shapes the
- * answer. The document is a slice of chaos's
- * live /openapi.json (2026-10-29); fetch is stubbed, nothing leaves the
- * process.
+ * routes every read to /v1/<verb> on the plaintext door and shapes the answer.
  */
 import { readFileSync } from "node:fs";
 

@@ -1,25 +1,4 @@
 #!/usr/bin/env bun
-/**
- * F6 migration tool — consolidate the documents store into notes.
- *
- * Every distinct `source_path` becomes ONE note (graph identity named by the
- * path, provenance as attributes) whose body is a one-block container; the
- * path's stored versions land as copy-on-write generations in stored order
- * (oldest first), so as-of reconstruction serves each version. The table
- * itself is untouched — reads stay on it until F7 cuts over and drops it.
- *
- * Modes (run from a checkout with reachability to calliope-db AND the graph
- * plane — `DATABASE_URL`, `CALLIOPE_CHAOS_URL`, `CALLIOPE_THEMIS_URL`):
- *
- *   bun run src/mcp/migrate-notes.ts            # migrate + parity (idempotent)
- *   bun run src/mcp/migrate-notes.ts --probe    # read-only counts
- *
- * The parity gate: after sinking a path, the note's active body must be
- * byte-identical to the path's newest stored version. Any mismatch exits
- * nonzero naming the path. A re-run of a converged store performs zero new
- * writes (the sink no-ops at every layer) — run it twice, prove the second
- * pass is silent.
- */
 
 import { pathToFileURL } from "node:url";
 import { Pool } from "pg";
@@ -55,16 +34,6 @@ export interface MigrateNotesReport {
   parity_mismatches: string[];
 }
 
-/**
- * The note identity a row belongs to (Rob's F7 decision, 2026-08-10).
- *
- * Vault-shaped rows keep `source_path` — the F6 model, unchanged. The
- * phdb-migration corpus used `source_path` as a source CONTAINER field
- * (`F:\OneDrive` = 1,900 distinct documents), so those rows key on
- * `source_path :: (file_path | title | raw_hash prefix)` and carry the
- * `isArchived` exclusion predicate. The ` :: ` joiner never appears in a
- * vault path, so the two families cannot collide.
- */
 /** Every predicate the sink family writes — the unwind's retraction set. */
 const SINK_PREDICATES = new Set([
   "hasName",
@@ -123,12 +92,8 @@ export async function migrateNotes(
   };
 
   for (const sourcePath of paths) {
-    // bySourcePath answers newest-first; versions land oldest-first so the
-    // newest ends as the active generation.
     const all = [...(await store.bySourcePath(sourcePath))].reverse();
 
-    // Group rows by note identity (first-seen order). Vault rows keep the
-    // bare path; archive rows split per document.
     const groups = new Map<
       string,
       { archived: boolean; rows: DocumentRow[] }
@@ -143,10 +108,6 @@ export async function migrateNotes(
       groups.set(id.name, group);
     }
 
-    // Unwind the F6-era mega-note: when EVERY row of this path is archive
-    // material, the bare-path name is a stale identity from the first
-    // migration — retract its edges (graph) and delete its rows (store).
-    // Idempotent: a re-run finds no edges and reports nothing.
     if (
       all.length > 0 &&
       all.every((r) => identityOf(r).archived) &&
@@ -154,11 +115,6 @@ export async function migrateNotes(
     ) {
       const [stale] = await dial.findByName("Note", sourcePath);
       if (stale !== undefined) {
-        // Retract ONLY the predicates the sink family wrote. System edges
-        // (ownedBy — the substrate's tenancy stamp) are not ours to
-        // retract, and the substrate re-asserts them: retracting them made
-        // every re-run "unwind" 442 phantom batches forever (measured on
-        // the first live run — the loop this allowlist ends).
         const edges = (await dial.edges(stale)).filter((e) =>
           SINK_PREDICATES.has(e.predicate),
         );
@@ -191,12 +147,6 @@ export async function migrateNotes(
         String(r.id),
       ]);
 
-      // Convergence check — a naive replay would THRASH a converged store
-      // (re-sinking v1 supersedes the active v2, then v2 supersedes v1
-      // again: two junk generations per run). An identity is converged iff
-      // the note exists, its active body is byte-identical to the newest
-      // version, and it carries at least one generation per stored version.
-      // Exact because (source_path, raw_hash) is UNIQUE within an identity.
       const newestRow = versions.at(-1);
       const [standing] = await dial.findByName("Note", name);
       if (standing !== undefined && newestRow !== undefined) {
@@ -213,8 +163,6 @@ export async function migrateNotes(
         ) {
           report.versions += versions.length;
           report.nooped += versions.length;
-          // The id-handle bridge must exist even on converged skips — the
-          // F6 run predates document_id edges.
           await assertAdditiveAttrs(dial, scope, standing, documentIds);
           continue;
         }
@@ -252,7 +200,6 @@ export async function migrateNotes(
         report[result.generation] += 1;
       }
 
-      // The parity gate: active body === newest stored version, byte-exact.
       const newest = versions.at(-1);
       if (nodeId !== null && newest !== undefined) {
         const body = await client.readBody(nodeId);

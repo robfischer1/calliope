@@ -72,7 +72,6 @@ describe("parseInstantMicros", () => {
     ["2026-10-17T18:11:45.188-04", 1792275105188000n],
     ["2026-01-05T09:00:00-05:00", 1767621600000000n],
     ["2026-01-05T14:00:00Z", 1767621600000000n],
-    // floored to the microsecond, never rounded
     ["1970-01-01T00:00:00.1234569Z", 123456n],
     ["1970-01-01T00:00:00.9999999Z", 999999n],
     ["2000-02-29T00:00:00Z", 951782400000000n],
@@ -98,7 +97,7 @@ describe("parseInstantMicros", () => {
     "2026-10-17T18:11:45+24:00",
     "2026-10-17T18:11:45+04:60",
     "0000-01-01T00:00:00Z",
-    "0001-01-01T00:00:00+01:00", // before year 1 as an instant
+    "0001-01-01T00:00:00+01:00",
     "2026-10-17T18:11:45Zjunk",
   ])("refuses %j", (text) => {
     expect(parseInstantMicros(text)).toBeNull();
@@ -260,17 +259,14 @@ describe("sameTime / sameValue / compareTimes", () => {
   });
 
   it("compareTimes orders by instant, not by string", () => {
-    // As strings the first sorts after the second; as instants, before.
-    const early = "2026-10-17T23:00:00+05:00"; // 18:00Z
-    const late = "2026-10-17T15:00:00-04:00"; // 19:00Z
+    const early = "2026-10-17T23:00:00+05:00";
+    const late = "2026-10-17T15:00:00-04:00";
     expect([late, early].sort()).toEqual([late, early]);
     expect(compareTimes(early, late)).toBe(-1);
     expect(compareTimes(late, early)).toBe(1);
-    // one instant, two spellings: ordered by text, antisymmetric
     const same = "2026-10-17T18:00:00Z";
     expect(compareTimes(early, same)).toBe(-compareTimes(same, early));
     expect(compareTimes(same, same)).toBe(0);
-    // across the DST fold
     expect(
       compareTimes("2026-11-01T01:30:00-04:00", "2026-11-01T01:15:00-05:00"),
     ).toBe(-1);

@@ -1,8 +1,3 @@
-/**
- * F7 — the notes-backed DocumentStore: the table's read contract served
- * from the merged store, writes as the sink alone.
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { FixtureChaosDial } from "../src/chaos-client.js";
@@ -31,7 +26,7 @@ describe("NotesDocumentStore (F7)", () => {
       subject: "Fresh",
     });
     expect(res.ok).toBe(true);
-    expect(res.id).toBeNull(); // no table sequence — ids are migration-legacy
+    expect(res.id).toBeNull();
     expect(res.deduped).toBe(false);
     expect(res.note.generation).toBe("minted");
     const [node] = await dial.findByName("Note", "Notes/fresh.md");
@@ -39,7 +34,6 @@ describe("NotesDocumentStore (F7)", () => {
     expect((await client.readBody(node)).map((s) => s.text)).toEqual([
       "fresh body",
     ]);
-    // Identical retry dedups; changed body supersedes.
     const retry = await store.write({
       source_path: "Notes/fresh.md",
       body_text: "fresh body",
@@ -57,7 +51,6 @@ describe("NotesDocumentStore (F7)", () => {
     });
     const [node] = await dial.findByName("Note", "Notes/handled.md");
     if (node === undefined) throw new Error("note missing");
-    // The migration's id bridge.
     await assertAdditiveAttrs(dial, SCOPE, node, [["document_id", "42"]]);
 
     const byId = await store.byId(42);
@@ -69,14 +62,12 @@ describe("NotesDocumentStore (F7)", () => {
 
     await store.write({ source_path: "Notes/handled.md", body_text: "v2" });
     const rows = await store.bySourcePath("Notes/handled.md");
-    expect(rows).toHaveLength(1); // newest state, not one row per version
+    expect(rows).toHaveLength(1);
     expect(rows[0]?.body_text).toBe("v2");
   });
 
   it("bySourcePath finds archive notes by attribute when no name matches", async () => {
     const { store, client, dial } = rig();
-    // Two composite-named archive notes sharing a truthful source_path attr
-    // (the prelude's shape) — seed through the sink with identity override.
     const { sinkNoteVersion } = await import("../src/notes-sink.js");
     for (const [disc, body] of [
       ["a.pdf", "body a"],

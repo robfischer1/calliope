@@ -1,13 +1,3 @@
-/**
- * F4 (026) — comments as blocks with a commentsOn edge: the fixture twin.
- *
- * A comment is an ordinary block in the derived comment container plus one
- * edge; creation is atomic and REQUIRES a session-principal author (TURN
- * 258: sessions comment with identity). Threads follow the target's
- * lineage so an edit never orphans its review trail, and the document's
- * own body reads are untouched by any amount of commentary.
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import { commentContainerOf } from "../src/types.js";
@@ -66,7 +56,6 @@ describe("FixtureBodyClient — 026 comments", () => {
     expect(c.kafkaOffset).toBe(42);
     expect(c.commentsOn).toBe(target);
 
-    // The other direction: every thread in the container.
     const all = await client.listComments("doc1");
     expect(all.map((t) => t.targetId)).toEqual([target]);
   });
@@ -79,7 +68,6 @@ describe("FixtureBodyClient — 026 comments", () => {
       client.createComment("doc2", target, "anon", "human", undefined),
     ).rejects.toThrow(/session/);
     expect(await client.listComments("doc2")).toEqual([]);
-    // The comment container gained no block either (atomicity).
     expect(await client.readBody(commentContainerOf("doc2"))).toEqual([]);
   });
 
@@ -125,7 +113,6 @@ describe("FixtureBodyClient — 026 comments", () => {
     const edited = await client.editSection("doc5", target, "v2 prose");
     expect(edited.id).not.toBe(target);
 
-    // The CURRENT block's thread includes the comment made on its predecessor.
     const threads = await client.listComments("doc5", edited.id);
     expect(threads[0]?.comments.map((c) => c.text)).toEqual(["about v1"]);
   });

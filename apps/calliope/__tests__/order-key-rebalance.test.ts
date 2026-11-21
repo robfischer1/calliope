@@ -1,11 +1,4 @@
-/**
- * Fractional keys must not grow without bound under repeated appends.
- *
- * Measured live (governance-blocks container): appending past "9" minted
- * 9, 95, 955, 9555, 95555 — one digit per append. keyAbove now steps the
- * remainder, and a write that would mint a key longer than MAX_KEY_LEN
- * re-lays the container with sequence() in the same admit.
- */
+/** Fractional keys must not grow without bound under repeated appends. */
 import { describe, expect, it } from "vitest";
 import { FixtureBlobStore } from "../src/blob-store.js";
 import { FixtureChaosDial, opCreate } from "../src/chaos-client.js";
@@ -34,7 +27,6 @@ describe("mintRun", () => {
 });
 
 describe("append through the write path", () => {
-  // 4 = the key-length cap (MAX_KEY_LEN): sequence() keys are 2 chars here.
   it("keeps key length bounded and order preserved over 50 one-block appends", async () => {
     const dial = new FixtureChaosDial();
     const blobs = new FixtureBlobStore();

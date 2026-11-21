@@ -1,9 +1,3 @@
-/**
- * The R-D15 converge witness (witness mode only): the shared aiws:converge
- * core runs beside notes-sink's reconcile and every difference is counted,
- * never acted on.
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 import {
@@ -321,7 +315,6 @@ describe("converge witness", () => {
 
   it("counts each real disagreement case against the real core, and logs it", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    // outcome: legacy wrote nothing where the held value is stale.
     observe(
       obs({
         holders: [NODE],
@@ -330,14 +323,12 @@ describe("converge witness", () => {
         legacyOutcome: "unchanged",
       }),
     );
-    // ops: same outcome, legacy sent an op the core did not.
     observe(
       obs({
         one: new Map([["a", "1"]]),
         legacyOps: [add("a", "1"), add("extra", "x")],
       }),
     );
-    // refusal: two holders, which the core refuses as ambiguous.
     observe(
       obs({
         holders: [NODE, "b".repeat(64)],

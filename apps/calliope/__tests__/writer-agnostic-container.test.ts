@@ -1,18 +1,6 @@
 /**
  * Stream of Consciousness pass 4, F3 (spec 050) — the container does not
  * care who is writing.
- *
- * mnemosyne (pass 3 F1) stores a memory's prose as an ordinary Calliope note
- * titled `memory:<scope>:<name>` holding one block, through the same three
- * verbs any writer uses. This pins that nothing in the container model is
- * note-specific: no frontmatter, no tags, no provenance attributes are
- * required; the prose round-trips byte-for-byte; the identity is the
- * container token; and a memory-shaped body (a retraction banner, a rule)
- * is treated as prose — no schema, no validation, no interpretation.
- *
- * The expectation was that nothing here fails. The value is in having
- * looked: an assumption nobody knew was there is the failure mode this test
- * rules out, and it costs one test.
  */
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -37,8 +25,6 @@ async function rig(): Promise<Client> {
   return mcp;
 }
 
-// A memory body exactly as mnemosyne's `_stamp_retraction` writes one: a
-// banner, a rule, the prose. Calliope must see prose and nothing else.
 const MEMORY_BODY =
   "> **SUPERSEDED 2026-09-05** by `probe_mem_v2` — the cutover landed.\n\n" +
   "---\n\n" +
@@ -81,8 +67,6 @@ describe("a non-note writer's container (pass 4 F3)", () => {
     expect(blocks[0]?.dangling).toBe(false);
     expect(blocks[0]?.text).toBe(MEMORY_BODY);
 
-    // The note-side read sees prose with NO tags and NO provenance — nothing
-    // it needed was ever required of the writer.
     const materialized = await mcp.callTool({
       name: "materialize_note",
       arguments: { container_id: node_id },
@@ -155,6 +139,6 @@ describe("a non-note writer's container (pass 4 F3)", () => {
       ).structuredContent as { blocks: { slot: string; text: string }[] }
     ).blocks;
     expect(after.map((x) => x.text)).toEqual(["v2"]);
-    expect(after[0]?.slot).toBe(slot.slot); // the slot is the stable handle
+    expect(after[0]?.slot).toBe(slot.slot);
   });
 });

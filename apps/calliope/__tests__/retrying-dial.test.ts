@@ -1,10 +1,3 @@
-/**
- * RetryingDial — the migration runner's blip armor. Reads retry on any
- * failure (idempotent); admit retries ONLY on connection-never-established
- * errors, because an admit whose response was lost may have landed and a
- * blind replay would double-apply the batch.
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureChaosDial, opCreate } from "../src/chaos-client.js";
 import { RetryingDial } from "../src/mcp/migrate-tree.js";

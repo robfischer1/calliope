@@ -1,21 +1,3 @@
-/**
- * The R-D15 witness for the shared aiws:converge core (only write what
- * changed), the TypeScript peer of mnemosyne's `internal/converge`.
- *
- * notes-sink's hand-written reconcile decides and writes; after it has, the
- * core is asked the same question over the held snapshot read BEFORE the
- * write, and every {legacy, core} difference is counted, never acted on. A
- * core that cannot answer is a counted fault, never a changed answer.
- *
- * CALLIOPE_CONVERGE_MODE is this star's own switch: `legacy` (the core is not
- * called) or `witness` (the default). `enforce` is the later flip; this slice
- * only witnesses, so a request for it runs as witness.
- *
- * Witnessed: the note's attribute slots (provenance, extra, additive). NOT
- * witnessed: the body (calliope's container, the declared carve-out) and
- * inline tags (their own reconcile).
- */
-
 import { decideFacts } from "@forge/stellar-core-ts/convergecore";
 import type { FactsQuery, Slot } from "@forge/stellar-core-ts/convergecore";
 
@@ -65,7 +47,6 @@ export function convergeMetrics(): Record<string, number> {
     calliope_converge_core_disagreements_outcome_total: counters.dis.outcome,
     calliope_converge_core_disagreements_ops_total: counters.dis.ops,
     calliope_converge_core_disagreements_refusal_total: counters.dis.refusal,
-    // This build only witnesses: legacy acts.
     calliope_converge_core_enforcing: 0,
   };
 }
@@ -166,7 +147,6 @@ export function buildQuery(o: Observation): FactsQuery {
         s: o.name,
         p: e.predicate,
         o: e.value,
-        // A placed read names the scope by token; the query names it by name.
         g:
           e.graph === undefined ||
           e.graph === "" ||
@@ -231,7 +211,6 @@ export function classify(
   const differ = differing(o.legacyOps, core);
   const sameOutcome = o.legacyOutcome === r.outcome;
   if (sameOutcome && differ.length === 0) return undefined;
-  // Kinds and predicates only: a value can be a title or a path.
   const preds = [...new Set(differ.map((d) => `${d.kind} ${d.p}`))]
     .sort()
     .join(", ");

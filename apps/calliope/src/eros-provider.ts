@@ -1,20 +1,3 @@
-/**
- * The pg backend's search arm (Findability F4) — Eros as a shape, routed,
- * never rebuilt: `search(query, scope)` on a store-backed server calls
- * eros's `search` verb over its openapi-http face (POST /v1/search on the
- * plaintext REST door, `CALLIOPE_EROS_URL` e.g. `http://eros`; the prime
- * waypoint verifies calliope's mesh principal and the mesh admits /v1/<verb>
- * only — eros's /mcp is not reachable in the mesh) with a source filter
- * pinning the dissolved-notes source, and maps the answer into the ruled
- * envelope. The envelope names the arm that was dialled — `eros` — not the
- * fts/semantic arms eros fuses inside itself.
- * The pg backend's architecture has ONE arm; unreachable degrades to
- * `armsDark: ["eros"]` — named, never thrown (docs/search-architecture.md).
- *
- * No FTS index, no embedding, no vectors anywhere in this file — routing
- * only. Eros's decay + engagement ranking rides through untouched.
- */
-
 import { RestClient } from "@forge/stellar-core-ts/rest";
 import type { SearchProvider, SearchResponse } from "./search-types.js";
 
@@ -67,8 +50,6 @@ export class ErosSearchProvider implements SearchProvider {
     scope?: string,
     k?: number,
   ): Promise<SearchResponse> {
-    // Remote hits carry no subtree paths — scope narrows nothing here (the
-    // note-path scoping question belongs to F8's note indexing).
     void scope;
     try {
       const raw = await this.#call(query, k ?? DEFAULT_K);
@@ -96,11 +77,6 @@ export class ErosSearchProvider implements SearchProvider {
       { query, k, source: EROS_NOTES_SOURCE, since: SINCE_ALL },
       { signal: AbortSignal.timeout(TIMEOUT_MS) },
     );
-    // eros's `search` text IS the JSON of its structured content, so the
-    // door serves a plain application/json body, not the result envelope:
-    // the client then leaves `structured` unset and the body in texts[0].
-    // Falling back to `{}` here answered zero hits for a live arm; an absent
-    // or unparsable body throws instead, which `search` reports as dark.
     if (reply.structured !== undefined && reply.structured !== null) {
       return reply.structured;
     }

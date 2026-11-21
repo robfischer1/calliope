@@ -1,39 +1,3 @@
-/**
- * Suppress and restore — delete_note's default mode, and its undo.
- *
- * Rob's ruling (2026-10-06): deleting a note HIDES it; it does not retract
- * it. A suppressed note keeps every fact it had (name, type, parent, tags,
- * properties, body, every inbound edge) and gains one: the literal
- * `suppressed = "true"`, asserted in the notes scope. Restore retracts that
- * one fact, so a round trip leaves the note's edges exactly as they were.
- * `purge=true` is the retraction (`note-delete.ts`); nothing here erases
- * the log, and restore cannot bring back a purged note.
- *
- * THE MARKER. `suppressed` is not new to the graph: mnemosyne's `bury`
- * writes the same literal (`suppressed = "true"`) on a memory to take it
- * off the surface while keeping it. The note marker reuses the predicate
- * and the value, scoped to the notes graph, so "hidden but kept" reads the
- * same across the graph. It is NOT `isArchived`: that is the phdb
- * migration's protection predicate, owned by another writer, and an
- * archived note is one delete_note refuses outright.
- *
- * WHETHER A NOTE IS SUPPRESSED is answered by the scoped index lookup
- * ({@link suppressedNotes}: `find_by_value(scope, suppressed, true)`), the
- * same read every listing filters by — never by the `graph` a placed edge
- * reports. MEASURED 2026-10-07: chaos's `materialize_edges full` answered
- * `graph: ""` for every fact on a live note, so a check comparing that
- * field to the notes scope read a just-suppressed note as not_suppressed
- * and restore could not clear it. A node's `suppressed` fact in any other
- * graph (a buried memory) is outside the lookup, so it is never read as a
- * suppressed note, and restore never retracts it.
- *
- * Every listing calliope serves (list_by_tag, list_tags counts, search,
- * look) drops the notes {@link suppressedNotes} answers. Reads by the
- * note's own id (read_container, materialize_note, export_note,
- * container_history) still answer, so a suppressed note can be inspected
- * and restored.
- */
-
 import {
   type ChaosDial,
   type ChaosOp,

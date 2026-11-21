@@ -1,15 +1,3 @@
-/**
- * The container write (spec 041, master-plan F4) — saving a document is one
- * transaction: mint the blobs it needs, then write the tree that names
- * them, in that order.
- *
- * Blob-first ordering is the consistency mechanism across the two logical
- * databases (no FK, no 2PC — the master plan's constraint): a failure after
- * the mint leaves orphan blobs (legal garbage, the F7 census reaps them)
- * and NO partial tree. Content-identical ops net out BEFORE the batch —
- * a save that nets to nothing opens no transaction at all.
- */
-
 import type { GcStore, ProseStore } from "./blob-store.js";
 import {
   ChaosClientError,
@@ -52,8 +40,6 @@ export type ContainerOp =
       facts?: SlotFact[];
       ref?: undefined;
     }
-  /** A PLACEMENT: the new slot references `ref` (an existing slot holding
-   *  content) instead of holding a blob. */
   | {
       op: "add";
       ref: string;
@@ -135,13 +121,6 @@ export interface ContainerWriteResult {
  * through the F3 builders into ONE admit batch at the tenant's scope.
  * A refused batch throws {@link ChaosClientError} carrying the gate's
  * violations verbatim; any blobs minted in phase 1 stay behind as orphans.
- *
- * Every update and remove is a real compare-and-set. `removeEdge` is ensure-absent and
- * the cardinality guard only warns, so remove-old + add-new alone, after
- * another writer moved the slot, would remove nothing and land a SECOND
- * `tree_content`. Each update therefore rides an `expect` that the slot
- * holds exactly its `oldBlobId`; a stale base refuses the whole batch as
- * `conflict` (code `conflict`, naming the slot), nothing written.
  */
 export async function writeContainer(
   facet: ContainerFacet,
@@ -149,7 +128,6 @@ export async function writeContainer(
   ops: ContainerOp[],
   tenant: Tenant = "notes",
 ): Promise<ContainerWriteResult> {
-  // Transclusion first: refuses (nothing minted) or says where each op lands.
   const routing = await planRouting(facet, containerToken, ops, tenant);
   const scope = (facet.scope ?? tenantScope)(routing.tenant);
   const blobIds: Record<number, string> = {};
@@ -163,8 +141,6 @@ export async function writeContainer(
     facts?: SlotFact[];
   }[] = [];
 
-  // Phase 0 — validate every op's facts before anything is minted: a
-  // disallowed predicate or a contentHash mismatch refuses the whole save.
   const checked = new Map<number, SlotFact[]>();
   for (const [index, op] of ops.entries()) {
     if (op.op === "add" && op.ref !== undefined) continue;
@@ -173,16 +149,12 @@ export async function writeContainer(
     }
   }
 
-  // Phase 1 — blob-first. Every needed blob is durable before any tree
-  // fact references it; identical content nets out here.
   for (const [index, op] of ops.entries()) {
     const place = routing.places.get(index);
     if (place !== undefined) {
-      // A placement mints nothing: it reads the origin's blob.
       blobIds[index] = place.blobId;
       surviving.push({ index, op, blobId: place.blobId });
     } else if (op.op === "add") {
-      // planRouting placed every ref add, so a text add is all that is left.
       const blobId = await facet.blobs.mint(op.text ?? "");
       blobIds[index] = blobId;
       surviving.push({ index, op, blobId, facts: checked.get(index) ?? [] });
@@ -191,7 +163,6 @@ export async function writeContainer(
       blobIds[index] = blobId;
       const facts = checked.get(index) ?? [];
       if (blobId === op.oldBlobId) {
-        // byte-identical — the text nets out; carried facts still land
         if (facts.length === 0) continue;
         surviving.push({ index, op, blobId, factsOnly: true, facts });
         continue;
@@ -205,7 +176,6 @@ export async function writeContainer(
     return { noop: true, applied: [], minted: {}, blobIds };
   }
 
-  // Phase 2 — one batch of tree facts, F3 builders only.
   const batch: ChaosOp[] = [];
   const expects: ChaosExpect[] = [];
   const addSlots: { index: number; mintOrdinal: number }[] = [];
@@ -213,8 +183,6 @@ export async function writeContainer(
   for (const { index, op, blobId, factsOnly, facts } of surviving) {
     const place = routing.places.get(index);
     if (place !== undefined) {
-      // The origin must still hold the blob it was read at: it cannot be
-      // removed (or turned into a placement) between the check and here.
       expects.push(expectHeldBlob(place.origin, TREE_CONTENT, place.blobId));
       batch.push(
         ...placementBirthOps(
@@ -246,8 +214,6 @@ export async function writeContainer(
       }
       case "update": {
         if (blobId === undefined) throw new Error("update without a blob id");
-        // An edit through a placement lands on its origin: the CAS is the
-        // ORIGIN's blob, and the placement must still name that origin.
         const origin = routing.routed.get(index);
         const target = origin ?? op.slot;
         if (origin !== undefined) {
@@ -261,10 +227,6 @@ export async function writeContainer(
           expects.push(expectHeldBlob(target, TREE_CONTENT, op.oldBlobId));
           batch.push(...repointOps(target, op.oldBlobId, blobId));
         }
-        // A rewrite replaces the slot's contentHash; the repeatable edges
-        // are added to. A caller that sent no contentHash (Aglaia's client
-        // sends none) still must not leave the old one standing: a slot that
-        // carries a hash gets the new text's hash, server-side, same batch.
         const sent = (facts ?? []).some((f) => f.predicate === "contentHash");
         let carried: SlotFact[] = facts ?? [];
         let heldHash = false;
@@ -287,8 +249,6 @@ export async function writeContainer(
             (f) => f.predicate === "spanFrom" || f.predicate === "spanTo",
           )
         ) {
-          // A new turn window replaces the held one (glaucus backfill-spans
-          // rewrites a wrong window; scotty43-003).
           const edges = await facet.dial.edges(target);
           batch.push(...retractSpanOps(target, edges, carried));
           const same = new Set(heldSpanFacts(edges, carried));
@@ -312,8 +272,6 @@ export async function writeContainer(
       case "remove": {
         const origin = routing.unplaces.get(index);
         if (origin !== undefined) {
-          // A placement goes alone; its origin is untouched. The CAS holds
-          // the reference, and (unless dangling) the content it read.
           expects.push({
             s: op.slot,
             predicate: TREE_REF,
@@ -327,8 +285,6 @@ export async function writeContainer(
           );
           break;
         }
-        // Same hole as an update: removeEdge is ensure-absent, so a stale
-        // blobId would remove nothing and report success.
         expects.push(expectHeldBlob(op.slot, TREE_CONTENT, op.blobId));
         batch.push(
           ...slotRemoveOps(op.slot, containerToken, op.position, op.blobId),
@@ -339,7 +295,6 @@ export async function writeContainer(
   }
 
   if (batch.length === 0) {
-    // Every op netted out (a window written again as it stands).
     return { noop: true, applied: [], minted: {}, blobIds };
   }
   let res;
@@ -365,8 +320,6 @@ export async function writeContainer(
     if (token !== undefined) minted[index] = token;
   }
   const routed = Object.fromEntries(routing.routed);
-  // Post-commit: an origin removed with placements leaves them dangling; the
-  // detector also finds any placed between the plan's read and the commit.
   const removedOrigins = ops.flatMap((op, i) =>
     op.op === "remove" && !routing.unplaces.has(i) ? [op.slot] : [],
   );

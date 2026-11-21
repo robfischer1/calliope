@@ -1,16 +1,3 @@
-/**
- * Compile the sidecar to single-file executables (Windows + Linux).
- *
- * `bun build --compile` from the CLI takes no plugins, and
- * @platformatic/wasm-utils (pulled in through @forge/stellar-core-ts →
- * @platformatic/kafka) reads `../dist/native.wasm` off disk at import, so a
- * CLI-compiled sidecar died at start with ENOENT for
- * `B:\~BUN\dist\native.wasm` (calliope#26571). The core's
- * `platformaticWasmBundled` plugin swaps that import for the package's
- * inlined twin — the same swap the image bundle (bundle.ts) makes.
- * `smoke-sidecar.ts` proves the result reaches its handshake.
- */
-
 import {
   type BundlerPlugin,
   platformaticWasmBundled,

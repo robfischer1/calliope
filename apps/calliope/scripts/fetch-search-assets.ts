@@ -1,24 +1,11 @@
-/**
- * Provision the semantic encoder's assets (Findability F2, plan Decision 4)
- * into `apps/calliope/models/` — the dev entry of the resolution order.
- * The model + tokenizer come from pinned upstream URLs with sha256
- * verification (a mismatch refuses loudly); the ORT wasm runtime files are
- * copied from the installed `onnxruntime-web` package, whose version the
- * lockfile already owns. Run: `bun run fetch-search-assets`.
- */
-
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 
-// This script runs under Bun only; the repo typechecks with @types/node, so
-// declare the one Bun surface it uses rather than adding bun-types globally.
 declare const Bun: { resolveSync(spec: string, from: string): string };
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const MODELS = path.join(HERE, "..", "models");
-// The runtime files live wherever the package manager linked the package —
-// resolve the module itself (its node entry sits inside dist/).
 const ORT_DIST = path.dirname(
   Bun.resolveSync("onnxruntime-web", path.join(HERE, "..")),
 );

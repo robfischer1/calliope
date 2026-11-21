@@ -1,39 +1,3 @@
-/**
- * aglaia's two backend reads and writes that used to live in charon (Charon
- * parity rows 19 and 20): the tag-style seed and the writing-telemetry ingest.
- * Ported from charon `routes/seed.ts`, `routes/telemetry.ts` and
- * `lib/broker.ts`; calliope is aglaia's backend and already the topic's
- * consumer (`focus-register.ts`), so both ends of the A15 stream now sit in
- * one star.
- *
- * THE SEED. A `tag_styles` list (the `tag=hue:icon` grammar `@forge/aglaia`
- * parses) that a browser merges UNDER the user's own setting. Its tag names
- * are personal, so it lives in OpenBao, not in theia's bundle: an
- * ExternalSecret renders it into this star's env as AGLAIA_TAG_SEED. Read per
- * call, so a rotated Secret reaches the answer the moment the pod restarts
- * with it, and a test sets it without re-importing anything. No seed is
- * `not_found`, charon's 404: the browser renders uncoloured pills.
- *
- * THE INGEST. A browser batch of typed events, produced onto
- * `aglaia.writing.deltas.v1`, one message per event, in ONE producer call.
- * THE REFUSAL SPLIT IS LOAD-BEARING: `bad_args` (malformed, or an event that
- * breaks the topic's contract) tells the client to DROP the batch;
- * `backend_unavailable` (the broker did not take it) tells the client to KEEP
- * it and replay. A contract violation answered as retryable would be replayed
- * forever and wedge the ingest path. Every record is built before any is sent,
- * so a refused batch produced nothing: the batch is all-or-nothing on the
- * contract, and at-least-once on the broker (a replay after a send that did
- * land is a duplicate the consumers already tolerate by eventId).
- *
- * THE KEY. The kit still declares the topic unkeyed (`record` answers
- * `key: null`), so this module keys on `nodeId` (one node's events keep their
- * order on one partition) and falls back to `eventId`; never `""`, which is a
- * real key every record would hash to one partition.
- *
- * Identity is not read here: who may call either verb is the edge's policy,
- * not a check in this star.
- */
-
 import { Producer, stringSerializers } from "@platformatic/kafka";
 import {
   KafkaTopicsError,

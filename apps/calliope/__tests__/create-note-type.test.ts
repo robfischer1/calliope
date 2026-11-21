@@ -48,7 +48,6 @@ describe("create_note type", () => {
     const { node_id, created } = await mint(dial, "memory:m:x", "Memory");
     expect(created).toBe(true);
     expect(typesOf(await dial.edges(node_id))).toEqual(["Memory"]);
-    // The mint's createNode carries kind Note: the reuse key finds it.
     const mintOp = dial.admits
       .flatMap((a) => a.ops)
       .find((o) => o.op === "createNode" && o.label === "memory:m:x");
@@ -170,7 +169,6 @@ describe("the create_note verb's type", () => {
         arguments: { title: "t", type },
       });
       expect(res.isError, type).toBe(true);
-      // At the schema, worded bad_args by the door (dispatch 283).
       expect(res.structuredContent, type).toMatchObject({
         code: "bad_args",
         detail: expect.stringContaining("at type") as string,

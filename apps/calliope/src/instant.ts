@@ -1,11 +1,3 @@
-/**
- * RFC 3339 instants on the wire. Several answer-schema fields are
- * `format: "date-time"`, and the MCP client validates them (Ajv with
- * ajv-formats): a date, `T`, a time and a REQUIRED `Z` or `±HH:MM` offset.
- * Anything else fails the whole tool call, so a value this star did not mint
- * itself is checked here before it is emitted.
- */
-
 import type { EdgeTarget } from "./chaos-client.js";
 
 const TEXT =
@@ -30,12 +22,7 @@ function calendarHolds(
   );
 }
 
-/**
- * The text as a date-time Ajv accepts, or null when it names no instant.
- * Postgres's text cast of a timestamptz (`2026-08-01 09:15:00.5-04`: a space,
- * and an offset of hours only) is normalised, keeping the instant and its
- * offset; an offset-less text is null, never assumed to be UTC.
- */
+/** The text as a date-time Ajv accepts, or null when it names no instant. */
 export function asDateTime(text: string | null | undefined): string | null {
   if (typeof text !== "string") return null;
   const m = TEXT.exec(text);
@@ -74,27 +61,6 @@ export function isDateTime(text: unknown): text is string {
   return typeof text === "string" && asDateTime(text) === text;
 }
 
-/**
- * Time facts in the notes graph (aiws:chaos-addressing@0.2.0, R-CA15..R-CA20).
- *
- * A time predicate's value is written with a dtype, never as bare text:
- *
- *  - an offset-bearing date-time (`Z`, `+00:00`, `-04:00`) is an INSTANT.
- *    chaos stores canonical epoch microseconds and answers every read
- *    rendered as America/New_York RFC 3339 with an explicit offset;
- *  - a naive date-time is a WALLCLOCK (the zone is unknown): stored and
- *    answered verbatim as `YYYY-MM-DDTHH:MM:SS[.ffffff]`;
- *  - a bare date (`YYYY-MM-DD`) and any non-time text stay untyped.
- *
- * {@link timeDtype} is the ONE place that decides. Everything else here is
- * the arithmetic a reader or a retractor needs, because a read answers only
- * the rendering: the stored form is not the text read back, so an
- * equality check, a sort or a retract must go through the parsed instant.
- *
- * stellar-core-ts 0.74.0 (calliope's pin) does not export `timefmt`, so the
- * small canonicalisation is inline: exact, floored to the microsecond.
- */
-
 /** Predicates whose value is a time fact when it is a date-time. */
 export const TIME_PREDICATES: ReadonlySet<string> = new Set([
   "mtime",
@@ -126,7 +92,6 @@ function monthDays(y: number, m: number): number {
   return [4, 6, 9, 11].includes(m) ? 30 : 31;
 }
 
-/** Days since 1970-01-01 of a proleptic-Gregorian civil date. */
 function daysFromCivil(y: number, m: number, d: number): number {
   const yy = m <= 2 ? y - 1 : y;
   const era = Math.floor(yy / 400);
@@ -138,9 +103,9 @@ function daysFromCivil(y: number, m: number, d: number): number {
 
 /** A date-time text, split: its offset (seconds) when it has one. */
 interface Scanned {
-  local: bigint; // microseconds of the local civil time, as if UTC
-  fraction: string; // the fraction digits cut to 6, "" when absent
-  stamp: string; // YYYY-MM-DDTHH:MM:SS (the naive canonical head)
+  local: bigint;
+  fraction: string;
+  stamp: string;
   offset: number | null;
 }
 

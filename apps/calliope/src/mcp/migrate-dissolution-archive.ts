@@ -1,20 +1,4 @@
 #!/usr/bin/env bun
-/**
- * C5 archival tool — copy the RETIRED dissolution-bridge's registries
- * (`history.dissolutions`, `history.file_revision_dissolutions`,
- * `history.materialization_events`) into Calliope as frozen historical
- * record (specs/005: the bridge's bookkeeping survives the machinery's
- * death). Row-count parity is the gate (the tables are id-preserved,
- * verbatim copies — `archive_*` prefixed).
- *
- * Run from a checkout where BOTH databases are reachable, e.g. `cd
- * apps/calliope`, then:
- *
- *   bun run src/mcp/migrate-dissolution-archive.ts           # copy + parity + export
- *   bun run src/mcp/migrate-dissolution-archive.ts --probe   # counts only
- *
- * Env: PHDB_DATABASE_URL (source), DATABASE_URL (calliope-db), EXPORT_PATH.
- */
 
 import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";

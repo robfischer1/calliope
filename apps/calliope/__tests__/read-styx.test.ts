@@ -1,14 +1,3 @@
-/**
- * calliope_read_container / calliope_read_containers accept a styx address
- * beside the 64-hex token. Chaos answers in addresses, so a caller that holds
- * only `able-frost-casual` reads by it; calliope resolves it to the token it
- * reads the tree with and never returns a token the caller did not send.
- *
- * A counting dial observes every claim: hex input never resolves, a styx
- * batch resolves in a fixed number of chaos calls whatever its size, and the
- * answer echoes the ref as sent.
- */
-
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -266,9 +255,6 @@ describe("read_containers by styx", () => {
   });
 
   it("indistinguishable rows are still mapped to the right node", async () => {
-    // Two nodes with the same label and kind: the dictionary rows match, so
-    // the join alone cannot tell them apart. Each ref must still read its
-    // own tree.
     const dial = new CountingDial();
     const blobs = new CountingBlobs();
     const facet = { blobs, dial };

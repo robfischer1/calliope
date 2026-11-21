@@ -1,10 +1,3 @@
-/**
- * C3 document-store contract tests — the dedup/idempotency semantics the
- * dissolve sink promises, over BOTH impls: the in-memory fixture and (when
- * docker is available) a REAL ephemeral postgres, mirroring the pg-client
- * suite's harness.
- */
-
 import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
@@ -97,7 +90,6 @@ function contractSuite(makeStore: () => Promise<DocumentStore>): void {
     expect(datasets.every((r) => r.schema_type === "Dataset")).toBe(true);
     const index = await store.list({ omit_body: true });
     expect(index.every((r) => r.body_text === "")).toBe(true);
-    // content_hash survives omit_body — the parity anchor stays readable.
     expect(index.every((r) => r.content_hash.length === 64)).toBe(true);
   });
 }
@@ -146,7 +138,6 @@ describe.skipIf(!HAVE_DOCKER)("PgDocumentStore (real postgres)", () => {
   });
 
   contractSuite(async () => {
-    // Fresh table per test — the contract suite assumes an empty store.
     await pool.query("DROP TABLE IF EXISTS documents");
     const store = new PgDocumentStore(pool);
     await store.ensureSchema();

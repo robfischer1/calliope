@@ -1,8 +1,3 @@
-// The bundle step, as a function a test can drive: everything bundle.ts
-// decides lives here, with the bundler and the error sink injected, so the
-// entry script is one line that cannot hide a branch. The mutation lane
-// scopes the whole diff, and a build script with no test is a script whose
-// wrong option (a dropped plugin, a wrong entry) ships to the image unseen.
 import type { BundlerPlugin } from "@forge/stellar-core-ts/bundle";
 import { platformaticWasmBundled } from "@forge/stellar-core-ts/bundle";
 

@@ -1,11 +1,3 @@
-/**
- * A segment's turn window is single-valued: an update carrying a new one
- * replaces the held one (scotty43-003). Before this a second write left two
- * spanFrom literals on the slot, and glaucus's backfill could not correct a
- * wrong window (thread 421: every later checkpoint of a session read
- * `a..a-1` because the first one's window had swallowed the session).
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBlobStore } from "../src/blob-store.js";
 import { FixtureChaosDial, opCreate } from "../src/chaos-client.js";

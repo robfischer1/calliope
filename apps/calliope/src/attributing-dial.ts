@@ -1,18 +1,3 @@
-/**
- * The write seam of the act assertion: every graph transaction a VERIFIED
- * request lands is recorded, in calliope's own store, as written for that
- * request's human via star/charon.
- *
- * A Proxy rather than a subclass so the dial keeps its class (tests read the
- * fixture's `admits`) and every other member passes straight through. Only
- * `admit` is intercepted; with no verified author on the async context (every
- * unattributed request, every background job) it is a pure pass-through.
- *
- * If the record cannot be written the write has ALREADY landed, so this throws
- * a wire_error naming the tx: the caller sees a failure, never a silent
- * unattributed success.
- */
-
 import { actAuthor } from "./act-assertion.js";
 import { ChaosClientError } from "./chaos-client.js";
 import type { AdmitResult, ChaosDial } from "./chaos-client.js";

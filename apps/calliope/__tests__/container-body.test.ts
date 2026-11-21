@@ -1,13 +1,4 @@
-/**
- * calliope#5290 — the note verbs read and write prose through the TREE.
- *
- * On the live star, after the F12 cut dropped `sections`, every
- * materialize_note(container_id) erred `relation "sections" does not exist`
- * while read_container on the same id answered the blocks. The regression
- * pin here: hand the server a body client that THROWS on any body call (the
- * post-cut pg client's behaviour) and prove dissolve / materialize / export
- * still work, because they never touch it.
- */
+/** calliope#5290 — the note verbs read and write prose through the TREE. */
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -82,7 +73,6 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
     ]);
     expect(mat.provenance.source_path).toBe("Brain Soup/Idea.md");
 
-    // The same blocks read_container answers — one tree, two doors.
     const tree = await mcp.callTool({
       name: "read_container",
       arguments: { container: node_id },
@@ -163,7 +153,6 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
       ).structuredContent as { blocks: Blocks }
     ).blocks;
     expect(after.map((b) => b.text)).toEqual(["a", "B", "c"]);
-    // Slot identity survives the edit: the shared prefix keeps its ids.
     expect(after.slice(0, 2).map((b) => b.id)).toEqual(before.map((b) => b.id));
   });
 
@@ -177,9 +166,6 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
     expect(miss.structuredContent).toMatchObject({
       code: "not_found",
     });
-    // export_note: an unknown path, an unknown id — every miss is the
-    // structured not_found, never a body-client call. (No handle at all is
-    // the schema's x-requiredAnyOf: bad_args, dispatch 283.)
     for (const args of [
       { source_path: "never/dissolved.md" },
       { container_id: "e".repeat(64) },
@@ -202,13 +188,10 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
     };
     const res = await mcp.callTool({ name: "export_note", arguments: {} });
     expect(res.isError).toBe(true);
-    // dispatch 283: no handle is an argument refusal (the advertised
-    // x-requiredAnyOf), not a miss; a handle sent empty is no handle.
     expect(res.structuredContent).toEqual({
       code: "bad_args",
       detail: "export_note needs a container_id or a source_path",
     });
-    // The text half carries the same miss, for a caller reading prose only.
     expect(res.content).toEqual([
       {
         type: "text",
@@ -216,7 +199,6 @@ describe("the note verbs over a dropped-table body client (calliope#5290)", () =
       },
     ]);
     expect(reads).toEqual([]);
-    // An unknown id reads the (empty) tree and misses with the id as detail.
     const unknown = "e".repeat(64);
     const res2 = await mcp.callTool({
       name: "export_note",

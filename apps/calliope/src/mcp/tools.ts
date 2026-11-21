@@ -1,19 +1,3 @@
-/**
- * Calliope-MCP tool handlers — the prose facet of the urania substrate.
- *
- * clotho's MCP is the *work/graph* facet (board CRUD over the same nodes);
- * Calliope-MCP is the *body/prose* facet: it writes the node *bodies*
- * (`note --hasPart--> section --text/order_key-->`). The two MCPs are peers
- * over one substrate — clotho builds the plan graph, Calliope writes the plan
- * prose on those same nodes.
- *
- * These handlers are pure functions of a {@link BodyClient}: every read/write
- * goes through the exact client (and body-model mapping) Tantalus and the editor
- * use, so the MCP cannot drift from the lib. Tests drive them over
- * {@link FixtureBodyClient}; production drives them over a wired
- * {@link UraniaBodyClient}. No model is reimplemented here.
- */
-
 import type {
   AuthoredBy,
   BodyClient,
@@ -226,8 +210,6 @@ export async function readBodyAt(
   return { revision, sections: sections.map(toToolSection) };
 }
 
-// ── F3: the block-native verb surface ────────────────────────────────────────
-
 /** A single-block result — the block verbs' common success shape. */
 export interface BlockResult {
   block: ToolSection;
@@ -270,8 +252,6 @@ export interface ListContainerBlocksResult {
   blocks: ContainerBlockRef[];
 }
 
-// ── 026: comments — a block plus a commentsOn edge ───────────────────────────
-
 /** `create_comment` result: the comment block + where it lives. */
 export interface CreateCommentResult {
   comment: ToolSection;
@@ -283,8 +263,6 @@ export interface CreateCommentResult {
 export interface ListCommentsResult {
   threads: CommentThread[];
 }
-
-// ── C8: the note-native mint ─────────────────────────────────────────────────
 
 /** `create_note` success: the note's identity (+ whether this call minted it). */
 export interface CreateNoteResult {
@@ -323,24 +301,6 @@ const BORN_BLOCK_LABEL = "b:a0";
 /**
  * create_note(title, parent?, tags?, type?) -> { node_id, created } — the
  * C8 mint.
- *
- * A title held only by SUPPRESSED notes refuses `suppressed_exists` with the
- * hidden note's id — `restore_note` is the way back; nothing is minted.
- *
- * Reuse-first (the F2 identity contract: `createNode` never dedups, so the
- * name is looked up before any mint — `(Note, title)` IS the idempotency key);
- * on a miss, the one-batch mint (createNode plus the edges `hasName`,
- * `hasType` (input.type, default "Note"), `parent`, the edges addressing the
- * node by its batch-local label) on the notes scope. A parentless note parents to the ensured "Notes" root —
- * orphan-safety
- * regardless of caller. `tags` is validated and otherwise inert (C9 wires the
- * `hasTag` write).
- *
- * A note is a container of one block by default (Rob's ruling; splitting and
- * merging blocks is a deliberate act). Given `blobs`, the mint batch births
- * that block too, empty, at position `a0`: the note and its block land in one
- * transaction, so no note is ever readable with nowhere to type. A reused
- * note is never given a block here; its writers own its body.
  */
 export async function createNote(
   dial: ChaosDial,
@@ -360,11 +320,6 @@ export async function createNote(
   blobs?: Pick<ProseStore, "mint">,
 ): Promise<CreateNoteResult | CreateNoteError> {
   const title = input.title.trim();
-  // The hasType edge only: the node's kind stays Note, because `(Note,
-  // title)` is the reuse key below — a different kind would mint a twin on
-  // the next call. A non-Note type (a mnemosyne body is "Memory") falls out
-  // of everything keyed on hasType=Note: the inline-tag reconcile,
-  // set_properties, and the notes DocumentStore listing.
   const hasType = input.type ?? NOTE_KIND;
   if (title.length === 0) {
     return { code: "bad_args", detail: "title must be non-empty" };
@@ -372,7 +327,6 @@ export async function createNote(
   if (input.tags?.some((t) => t.trim() === "")) {
     return { code: "bad_args", detail: "tags must be non-empty strings" };
   }
-  // F11: hex-color-shaped tokens are junk on the explicit path too.
   const junk = input.tags?.find((t) => isJunkTag(normalizeTag(t)));
   if (junk !== undefined) {
     return {
@@ -381,7 +335,6 @@ export async function createNote(
     };
   }
 
-  // Lazy parent resolve — shared by the mint and the heal-on-reuse paths.
   const resolveParent = async (): Promise<string | CreateNoteError> => {
     if (input.parent === undefined) {
       try {
@@ -421,16 +374,10 @@ export async function createNote(
 
   const standing = await dial.findByName(NOTE_KIND, title);
   if (standing.length > 0) {
-    // A SUPPRESSED note is never handed back: `(Note, title)` is the
-    // identity, so reusing it returned `created:false` for a note every
-    // listing hides, and minting a twin would break the key. A live holder
-    // of the title wins; a title held only by suppressed notes refuses and
-    // names the way back.
     const hidden = await suppressedNotes(dial, scope);
     const sorted = [...standing].sort();
     const node = sorted.find((t) => !hidden.has(t));
     if (node === undefined) {
-      // standing is non-empty, so every holder is hidden and [0] exists.
       const held = String(sorted[0]);
       return {
         code: "suppressed_exists",
@@ -440,9 +387,6 @@ export async function createNote(
         node_id: held,
       };
     }
-    // Heal an interrupted mint: a dictionary row whose edge admit never
-    // landed (the invisible-row trap) gets its edges re-asserted here, so
-    // idempotent re-runs converge instead of returning a broken node.
     const existing = await dial.edges(node);
     if (!existing.some((e) => e.predicate === "hasName")) {
       const parent = await resolveParent();
@@ -471,10 +415,6 @@ export async function createNote(
     return parent;
   }
 
-  // ONE batch: the createNode and its edges. The title is the batch-local
-  // mint reference (themis resolves a non-empty createNode label for later
-  // ops in the same batch, as tree.ts slotBirthOps does), so the Note floor
-  // (hasName) lands in the same transaction as the node (chaos#14929).
   const attrOps = [...(input.attrs ?? [])].map(([p, v]) =>
     opAdd(title, p, literalTarget(p, v)),
   );
@@ -496,7 +436,6 @@ export async function createNote(
     ],
     scope,
   );
-  // The note is the batch's first createNode, so its token is minted first.
   const token =
     mint.minted.length === (blobs === undefined ? 1 : 2)
       ? mint.minted[0]
@@ -517,8 +456,6 @@ export async function createNote(
 
   return { node_id: token, created: true, attrOps };
 }
-
-// ── C9: the tag path ─────────────────────────────────────────────────────────
 
 /** The graph predicate a note's tags ride. */
 export const HAS_TAG = "hasTag";
@@ -588,13 +525,6 @@ export async function maybeReconcileInlineTags(
   if (!isNote) {
     return undefined;
   }
-  // An ARCHIVED note carries no inline tags. The phdb-migration corpus
-  // (2,479 notes on 2026-07-05: OneDrive files, Takeout zips, the iPhone
-  // NoteStore, C source, spreadsheets, mail) was keyed `source_path ::
-  // file` and stamped isArchived=true as its exclusion predicate — and then
-  // this hook ran the tag grammar over every body, minting `#include`,
-  // `#ifdef`, `#div/0`, `#n/a`, `#inbox/<gmail label id>` … into the
-  // picker's chip row. The predicate means what it says here too.
   if (isArchived(edges)) {
     return undefined;
   }
@@ -759,16 +689,6 @@ export async function copyReference(
  * has ever arrived — an empty register is an answer, not an error. A
  * present focus carries the pointer, when this star received it, and an
  * HONEST drift verdict computed against the live block at read time:
- *
- *  - `none`    — the excerpt still exists in the block (exact at offsets,
- *                or present elsewhere — offsets are a hint, the TEXT is the
- *                witness; capture space is rendered plain text, storage is
- *                markdown source).
- *  - `drifted` — the block resolves but the excerpt is GONE from it;
- *                `current_text` carries the block's live text so the caller
- *                can compare or diff.
- *  - `gone`    — the block no longer resolves under its node (deleted, or
- *                superseded by a merge that did not preserve the id).
  */
 export interface LookResult {
   focus: null | ResolvedPointer;
@@ -804,8 +724,6 @@ async function resolvePointerAgainstBody(
   pointer: BodyPointer,
   receivedAt: string,
 ): Promise<ResolvedPointer> {
-  // The block read, inline since F12 retired the block verb family: one
-  // body read, the pointed-at section found by id (slots are durable).
   const sections = await client.readBody(pointer.node);
   const hit = sections.find((s) => s.id === pointer.section);
   if (hit === undefined) {
@@ -835,8 +753,6 @@ export async function look(
   register: FocusRegister,
   hidden: ReadonlySet<string> = new Set(),
 ): Promise<LookResult> {
-  // A suppressed note is off every listing, the attention pointer included:
-  // a focus on it reads as no focus, and its pins drop out.
   const entry = register.current();
   const focus =
     entry === null || hidden.has(entry.pointer.node)

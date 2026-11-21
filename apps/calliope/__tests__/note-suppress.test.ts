@@ -1,15 +1,4 @@
-/**
- * delete_note's default mode (suppress) and restore_note.
- *
- * Synthetic data only: a FixtureChaosDial, a FixtureBlobStore, a
- * FixtureTagStore, a canned search provider and a FocusRegister behind the
- * real MCP server. Pins: suppress hides the note from every listing
- * (list_by_tag, list_tags counts, search, look) and leaves read_container
- * by its own id answering; restore brings it back with its edges exactly
- * as they were; both are idempotent; purge still retracts, a suppressed
- * note included; dry runs write nothing; the protection rule refuses in
- * both modes.
- */
+/** delete_note's default mode (suppress) and restore_note. */
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -190,7 +179,6 @@ describe("delete_note (default: suppress) hides a note from every listing", () =
     expect(
       (looked.out.pins as { pin_id: string }[]).map((p) => p.pin_id),
     ).toEqual(["p2"]);
-    // The note is hidden, not gone: its tag rows and edges stay.
     expect((await r.tags.byNode(a)).map((t) => t.tag)).toEqual([
       "#only-a",
       "#shared",
@@ -246,7 +234,6 @@ describe("delete_note (default: suppress) hides a note from every listing", () =
         JSON.stringify([SUPPRESSED, SUPPRESSED_VALUE, scopeHash(SCOPE)]),
       ].sort(),
     );
-    // The marker is one add, asserted in the notes scope.
     expect(r.dial.admits.at(-1)).toEqual({
       ops: [opAdd(a, SUPPRESSED, { toLiteral: SUPPRESSED_VALUE })],
       scope: SCOPE,
@@ -386,7 +373,6 @@ describe("purge still retracts", () => {
       dry_run: false,
     });
     expect(res.isError).toBe(false);
-    // The 1 block is the note's born empty block (create_note mints one).
     expect(res.text).toBe(
       "purged 1 note(s), 0 not found, 1 block(s), 1 tag row(s).",
     );
@@ -616,8 +602,6 @@ describe("a door whose placed edges carry no graph (the live shape)", () => {
     const r = await rig();
     const a = await note(r.mcp, "A");
     const full = r.dial;
-    // MEASURED 2026-10-07: materialize_edges full answered graph "" for
-    // every fact on a live note.
     const live: ChaosDial = {
       admit: (o, s) => full.admit(o, s),
       findByName: (k, l) => full.findByName(k, l),
@@ -646,7 +630,6 @@ describe("a door whose placed edges carry no graph (the live shape)", () => {
       notes: [{ node_id: a, status: "restored" }],
     });
     expect(await suppressedNotes(full, SCOPE)).toEqual(new Set());
-    // The retraction is pinned to the notes scope, not to the empty graph.
     expect(full.admits.at(-1)?.ops).toEqual([
       opRemove(
         a,
@@ -864,7 +847,6 @@ describe("create_note never hands back a suppressed note", () => {
     expect(res.text).toContain("suppressed_exists");
     expect(res.text).toContain("restore_note");
     expect(res.text).toContain(a);
-    // Nothing minted, nothing healed: the identity stays the one node.
     expect(r.dial.admits.length).toBe(before);
     expect(await r.dial.findByName("Note", "Gone")).toEqual([a]);
   });
@@ -886,8 +868,6 @@ describe("create_note never hands back a suppressed note", () => {
     const { node_id } = live as { node_id: string };
     const hidden = "00".repeat(32);
     dial.seed("Note", "Twin", hidden);
-    // The fixture keeps one token per (kind, label); the door answers every
-    // holder, so the twin is answered here.
     const byName = dial.findByName.bind(dial);
     dial.findByName = async (kind, label) =>
       label === "Twin" ? [node_id, hidden] : byName(kind, label);

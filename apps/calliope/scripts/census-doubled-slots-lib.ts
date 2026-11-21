@@ -1,9 +1,3 @@
-// Read-only census of DOUBLED slots: a slot node holding more than one
-// `tree_content` fact. Before writeContainer carried a compare-and-set, a
-// stale update removed nothing (removeEdge is ensure-absent) and still
-// added, leaving two contents on the slot. Run this over the containers
-// you care about BEFORE landing the CAS; every reported slot is one the
-// old path corrupted. Nothing here writes: it reads edges and reports.
 import type { ChaosDial } from "../src/chaos-client.js";
 import { TREE_CONTENT, TREE_MEMBER } from "../src/tree.js";
 

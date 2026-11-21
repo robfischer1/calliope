@@ -1,10 +1,3 @@
-/**
- * PgBodyClient contract tests — run against a REAL ephemeral postgres
- * (docker-run in setup), not a simulator: COLLATE "C" ordering and
- * transaction semantics are exactly what the carve must not get wrong.
- * Skipped (with a visible reason) when docker is unavailable.
- */
-
 import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
@@ -44,7 +37,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       password: "test",
       database: "calliope",
     });
-    // Readiness: retry until postgres accepts a query (fresh container).
     for (let i = 0; ; i++) {
       try {
         await pool.query("SELECT 1");
@@ -92,7 +84,7 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     const all = await pool.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM sections WHERE node_id = 'node-b'",
     );
-    expect(all.rows[0]?.n).toBe(3); // v1 row retained inactive
+    expect(all.rows[0]?.n).toBe(3);
   });
 
   it("editSection copy-on-writes: new id, same orderKey, lineage recorded", async () => {
@@ -105,7 +97,7 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     expect(edited.orderKey).toBe(target.orderKey);
     const after = await client.readBody("node-c");
     expect(after.map((s) => s.text)).toEqual(["keep", "edited"]);
-    expect(after.at(0)?.id).toBe(before.at(0)?.id); // untouched sibling keeps identity
+    expect(after.at(0)?.id).toBe(before.at(0)?.id);
     const lineage = await pool.query<{ supersedes: string | null }>(
       "SELECT supersedes FROM sections WHERE id = $1",
       [edited.id],
@@ -135,7 +127,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     await client.importSection("twin-hash", shared);
     expect(await client.readBody("twin-ulid")).toEqual([shared]);
     expect(await client.readBody("twin-hash")).toEqual([shared]);
-    // Editing under ONE owner must not disturb the other's row.
     const edited = await client.editSection("twin-ulid", shared.id, "diverged");
     expect(edited.orderKey).toBe("01");
     expect(await client.readBody("twin-hash")).toEqual([shared]);
@@ -154,7 +145,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     expect(revs.map((r) => r.kind)).toEqual(["save", "edit", "save"]);
     expect(revs.map((r) => r.sections)).toEqual([1, 1, 2]);
     expect(revs.every((r) => r.authoredBy === "human")).toBe(true);
-    // Newest first, strictly descending.
     const stamps = revs.map((r) => r.revision);
     expect([...stamps].sort().reverse()).toEqual(stamps);
   });
@@ -186,21 +176,15 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
         (s) => s.text,
       ),
     ).toEqual(["s2-x", "s2-y"]);
-    // The latest revision reconstructs to the live body.
     expect(await client.readRevisionAt("node-s", atSave2.revision)).toEqual(
       await client.readBody("node-s"),
     );
-    // A moment before the body existed reconstructs to [].
     expect(
       await client.readRevisionAt("node-s", "2000-01-01T00:00:00.000000Z"),
     ).toEqual([]);
   });
 
   it("readRevisionAt reconstructs an OPS-ONLY body (no coarse-save anchor)", async () => {
-    // A container grown purely by block-grain adds has no `supersedes IS
-    // NULL` generation row — before the -infinity coalesce, every timestamp
-    // reconstructed to []. Found live 2026-08-14 on the governance-blocks
-    // container (Law and the Receipts F1).
     await client.applySectionOps("node-ops-only", [
       { op: "add", text: "rule-one", orderKey: "5" },
     ]);
@@ -249,7 +233,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       { op: "add", text: "wedged", orderKey: "015" },
       { op: "reorder", sectionId: gamma.id, orderKey: "005" },
     ]);
-    // Byte order: "005" < "01" (alpha) < "015" < "02" (beta's kept key).
     expect(sections.map((s) => s.text)).toEqual([
       "gamma",
       "alpha",
@@ -257,14 +240,12 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       "beta edited",
     ]);
     expect(applied).toHaveLength(3);
-    // Untouched alpha keeps id AND key; update/reorder remint (CoW placement).
     const alphaNow = sections.find((s) => s.text === "alpha");
     expect(alphaNow?.id).toBe(alpha.id);
     expect(alphaNow?.orderKey).toBe(alpha.orderKey);
     expect(applied.at(0)?.id).not.toBe(beta.id);
     expect(applied.at(0)?.orderKey).toBe(beta.orderKey);
 
-    // One "ops" revision event, sections = op count.
     const revs = await client.readRevisions("node-ops");
     expect(revs.at(0)).toMatchObject({ kind: "ops", sections: 3 });
   });
@@ -304,19 +285,16 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     const [atOps, atSave] = revs;
     if (!atOps || !atSave) throw new Error("missing revisions");
     expect(atOps.kind).toBe("ops");
-    // Before the ops batch: the original save.
     expect(
       (await client.readRevisionAt("node-mix", atSave.revision)).map(
         (s) => s.text,
       ),
     ).toEqual(["m1", "m2", "m3"]);
-    // At the ops batch: delete honored (tombstone), add included, edit applied.
     expect(
       (await client.readRevisionAt("node-mix", atOps.revision)).map(
         (s) => s.text,
       ),
     ).toEqual(["m1 edited", "m3", "m4"]);
-    // The latest revision reconstructs to the live body.
     expect(await client.readRevisionAt("node-mix", atOps.revision)).toEqual(
       await client.readBody("node-mix"),
     );
@@ -327,21 +305,17 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     const b = "b".repeat(64);
     const c = "c".repeat(64);
     await client.recordSupersession("node-sup", c, [a, b]);
-    // Successor -> both predecessors.
     expect(await client.lineageOf("node-sup", c)).toEqual({
       predecessors: [a, b],
       successors: [],
     });
-    // Each predecessor -> the successor.
     expect((await client.lineageOf("node-sup", a)).successors).toEqual([c]);
     expect((await client.lineageOf("node-sup", b)).successors).toEqual([c]);
-    // Idempotent re-apply: still exactly two edges.
     await client.recordSupersession("node-sup", c, [a, b]);
     const n = await pool.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM supersessions WHERE node_id = 'node-sup'",
     );
     expect(n.rows[0]?.n).toBe(2);
-    // Lineage is per owner: another node sees nothing.
     expect(await client.lineageOf("node-other", c)).toEqual({
       predecessors: [],
       successors: [],
@@ -354,7 +328,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     const [one, two] = body;
     if (!one || !two) throw new Error("fixture body missing");
 
-    // editSection: edge equals the row's supersedes value.
     const edited = await client.editSection("node-dw", two.id, "two edited");
     expect((await client.lineageOf("node-dw", edited.id)).predecessors).toEqual(
       [two.id],
@@ -363,8 +336,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       edited.id,
     ]);
 
-    // Ops batch: update + reorder + delete each write exactly one edge;
-    // add writes none.
     const { applied } = await client.applySectionOps("node-dw", [
       { op: "update", sectionId: one.id, text: "one edited" },
       { op: "add", text: "wedged", orderKey: "015" },
@@ -380,13 +351,11 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     expect(
       (await client.lineageOf("node-dw", reordered.id)).predecessors,
     ).toEqual([edited.id]);
-    // The add landed no edge: total edges = edit + update + reorder.
     const n = await pool.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM supersessions WHERE node_id = 'node-dw'",
     );
     expect(n.rows[0]?.n).toBe(3);
 
-    // Delete: the tombstone carries the edge (predecessor = removed id).
     const afterOps = await client.readBody("node-dw");
     const victim = afterOps.find((s) => s.text === "wedged");
     if (!victim) throw new Error("victim section missing");
@@ -403,7 +372,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
   });
 
   it("backfill reconstructs byte-identical history, and the read path really consults the join table (F1)", async () => {
-    // Mixed lineage: save -> edit -> ops (delete + add + update).
     await client.saveBody("node-bf", [
       { text: "b1" },
       { text: "b2" },
@@ -419,7 +387,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       { op: "update", sectionId: b3.id, text: "b3 edited" },
     ]);
 
-    // Snapshot everything the read surface serves.
     const revs = await client.readRevisions("node-bf");
     const snapshots = new Map<string, unknown>();
     for (const r of revs) {
@@ -430,9 +397,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     }
     const liveBody = await client.readBody("node-bf");
 
-    // Simulate a pre-F1 store: drop this node's edges. Reconstruction MUST
-    // now differ (the read path consults the join table, not the column) —
-    // the built-in non-vacuity guard.
     await pool.query("DELETE FROM supersessions WHERE node_id = 'node-bf'");
     const degraded = await Promise.all(
       revs.map((r) => client.readRevisionAt("node-bf", r.revision)),
@@ -445,7 +409,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       ),
     ).toBe(true);
 
-    // Backfill (ensureSchema is the migration seam) and compare byte-identically.
     await client.ensureSchema({ legacy: true });
     expect(await client.readRevisions("node-bf")).toEqual(revs);
     for (const r of revs) {
@@ -455,7 +418,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     }
     expect(await client.readBody("node-bf")).toEqual(liveBody);
 
-    // Backfill hygiene: tombstone edge present, no add-marker edges anywhere.
     const stoneEdge = await pool.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM supersessions WHERE node_id = 'node-bf' AND predecessor_id = $1",
       [b2.id],
@@ -485,12 +447,9 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     );
     expect(first.text).toBe("hello");
     expect(second.text).toBe(" world");
-    // First child keeps the original's key; second lands strictly between
-    // the original and its next neighbour.
     expect(first.orderKey).toBe(target.orderKey);
     expect(second.orderKey > first.orderKey).toBe(true);
     expect(second.orderKey < after.orderKey).toBe(true);
-    // Both children are fresh identities superseding the original.
     expect(first.id).not.toBe(target.id);
     expect(second.id).not.toBe(target.id);
     expect(
@@ -501,22 +460,18 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     ).toEqual([target.id]);
     const succ = (await client.lineageOf("node-split", target.id)).successors;
     expect([...succ].sort()).toEqual([first.id, second.id].sort());
-    // The body reads as four blocks in order.
     expect((await client.readBody("node-split")).map((s) => s.text)).toEqual([
       "before",
       "hello",
       " world",
       "after",
     ]);
-    // Boundary split: offset 0 yields an empty first child (legal).
     const [empty, rest] = await client.splitSection("node-split", first.id, 0);
     expect(empty.text).toBe("");
     expect(rest.text).toBe("hello");
-    // Stale id rejects.
     await expect(
       client.splitSection("node-split", target.id, 1),
     ).rejects.toThrow(/stale_section/);
-    // Bad offset rejects.
     await expect(
       client.splitSection("node-split", rest.id, 999),
     ).rejects.toThrow(/bad_offset/);
@@ -531,11 +486,9 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     const [alpha, beta, gamma] = await client.readBody("node-merge");
     if (!alpha || !beta || !gamma) throw new Error("fixture body missing");
 
-    // Non-adjacent rejects untouched.
     await expect(
       client.mergeSections("node-merge", alpha.id, gamma.id),
     ).rejects.toThrow(/not_adjacent/);
-    // Wrong order rejects.
     await expect(
       client.mergeSections("node-merge", beta.id, alpha.id),
     ).rejects.toThrow(/not_adjacent/);
@@ -553,8 +506,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     );
     expect(merged.text).toBe("alpha + beta");
     expect(merged.orderKey).toBe(alpha.orderKey);
-    // The join table carries BOTH predecessors (the op the single column
-    // cannot express); the column names the first.
     const lin = await client.lineageOf("node-merge", merged.id);
     expect([...lin.predecessors].sort()).toEqual([alpha.id, beta.id].sort());
     expect((await client.lineageOf("node-merge", alpha.id)).successors).toEqual(
@@ -572,7 +523,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       "alpha + beta",
       "gamma",
     ]);
-    // Stale id rejects.
     await expect(
       client.mergeSections("node-merge", alpha.id, gamma.id),
     ).rejects.toThrow(/stale_section/);
@@ -610,7 +560,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
         (s) => s.text,
       ),
     ).toEqual(["one", " two/three"]);
-    // The latest revision reconstructs to the live body.
     expect(await client.readRevisionAt("node-sm", atMerge.revision)).toEqual(
       await client.readBody("node-sm"),
     );
@@ -639,7 +588,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     const target = before.at(1);
     if (!target) throw new Error("fixture body missing");
 
-    // SC-001: one real edit = exactly one new row; siblings reused.
     const rows0 = await rowCount();
     const edited = await client.editSection("node-noop", target.id, "b2");
     expect((await rowCount()) - rows0).toBe(1);
@@ -647,15 +595,12 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     expect(after.at(0)?.id).toBe(before.at(0)?.id);
     expect(after.at(2)?.id).toBe(before.at(2)?.id);
 
-    // SC-003: provenance rides the superseding row.
     const prov = await pool.query<{ authored_by: string }>(
       "SELECT authored_by FROM sections WHERE node_id = 'node-noop' AND id = $1",
       [edited.id],
     );
     expect(prov.rows[0]?.authored_by).toBe("human");
 
-    // SC-002: byte-identical re-submit is a no-op — zero row/edge/revision
-    // deltas, same id back.
     const rows1 = await rowCount();
     const edges1 = await edgeCount();
     const revs1 = await client.readRevisions("node-noop");
@@ -680,7 +625,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       );
       return r.rows[0]?.n ?? -1;
     };
-    // Pre-arc state: a saved body with two blocks.
     await client.saveBody("node-arc", [{ text: "stable" }, { text: "draft" }]);
     const preArc = await client.readBody("node-arc");
     const target = preArc.at(1);
@@ -689,7 +633,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     const arcStart = arcStartRevs.at(0);
     if (!arcStart) throw new Error("missing arc-start revision");
 
-    // The arc: four pause-writes on one block.
     let cur = target.id;
     for (const text of ["d1", "d2", "d3", "d4 final"]) {
       cur = (await client.editSection("node-arc", cur, text)).id;
@@ -703,40 +646,32 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     const liveBody = await client.readBody("node-arc");
 
     const result = await client.coalesceArc("node-arc", cur, arcStart.revision);
-    // Three intermediates (d1, d2, d3) removed; their three edges replaced
-    // by one (final -> pre-arc): edges drop by 3+1-1 = 3... precisely:
-    // 4 chain edges before, 1 after.
     expect(result.removed).toBe(3);
     expect(result.from).toBe(cur);
     expect(result.to).toBe(target.id);
     expect(rowsBefore - (await rowCount())).toBe(3);
     expect(edgesBefore - (await edgeCount())).toBe(3);
 
-    // Lineage rewired across the gap, both directions.
     expect((await client.lineageOf("node-arc", cur)).predecessors).toEqual([
       target.id,
     ]);
     expect((await client.lineageOf("node-arc", target.id)).successors).toEqual([
       cur,
     ]);
-    // Column follows the join table.
     const col = await pool.query<{ supersedes: string | null }>(
       "SELECT supersedes FROM sections WHERE node_id = 'node-arc' AND id = $1",
       [cur],
     );
     expect(col.rows[0]?.supersedes).toBe(target.id);
 
-    // Endpoint reconstructions are byte-identical.
     expect(await client.readRevisionAt("node-arc", arcStart.revision)).toEqual(
       preArcBody,
     );
     expect(await client.readBody("node-arc")).toEqual(liveBody);
 
-    // Idempotent-ish: nothing left to collapse.
     const again = await client.coalesceArc("node-arc", cur, arcStart.revision);
     expect(again.removed).toBe(0);
 
-    // Stale block id rejects.
     await expect(
       client.coalesceArc("node-arc", "0".repeat(64), arcStart.revision),
     ).rejects.toThrow(/stale_section/);
@@ -751,18 +686,12 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     const start = revs0.at(0);
     if (!start) throw new Error("missing revision");
 
-    // Edit, then SPLIT (a structural event), then edit the second child.
     const e1 = await client.editSection("node-arc2", orig.id, "one two edited");
     const [, second] = await client.splitSection("node-arc2", e1.id, 3);
     const e2 = await client.editSection("node-arc2", second.id, "tail edited");
 
     const result = await client.coalesceArc("node-arc2", e2.id, start.revision);
-    // The walk collapses e2's chain back only as far as the split child —
-    // the split row has a predecessor with TWO successors (the boundary),
-    // so nothing before it is touched... and the chain e2<-second is only
-    // one link, so nothing is removable at all.
     expect(result.removed).toBe(0);
-    // The split lineage is intact: both children still trace to e1's row.
     expect(
       (await client.lineageOf("node-arc2", second.id)).predecessors,
     ).toEqual([e1.id]);
@@ -771,7 +700,7 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
   it("importSection preserves ids and is idempotent; retainOnly converges", async () => {
     const sec = { id: "f".repeat(64), text: "migrated", orderKey: "01" };
     await client.importSection("node-m", sec);
-    await client.importSection("node-m", sec); // idempotent
+    await client.importSection("node-m", sec);
     const body = await client.readBody("node-m");
     expect(body).toEqual([sec]);
     await client.retainOnly("node-m", [sec.id]);
@@ -868,7 +797,7 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     });
 
     it("readRevisions reports each event's author verbatim — principal and legacy in one history", async () => {
-      await client.saveBody("node-p5", [{ text: "v1" }]); // instance default: human
+      await client.saveBody("node-p5", [{ text: "v1" }]);
       const body = await client.readBody("node-p5");
       const target = body.at(0);
       if (!target) throw new Error("fixture body missing");
@@ -893,7 +822,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
     it("ensureSchema is idempotent over a populated table (the ALTER re-runs)", async () => {
       await client.ensureSchema({ legacy: true });
       await client.ensureSchema({ legacy: true });
-      // Pre-025-style rows (written before any offset was supplied) read NULL.
       const anyRow = await pool.query<{ kafka_offset: string | null }>(
         "SELECT kafka_offset FROM sections LIMIT 1",
       );
@@ -910,7 +838,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       const added = result.applied.at(0);
       if (!added) throw new Error("no applied op");
       expect(await offsetsOf("node-o1")).toEqual(["42"]);
-      // A delete under a later offset stamps the tombstone too.
       await client.applySectionOps(
         "node-o1",
         [{ op: "delete", sectionId: added.id }],
@@ -968,7 +895,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
           42,
         ),
       ).rejects.toThrow(/session-principal/);
-      // Nothing landed.
       expect(await offsetsOf("node-o4")).toEqual([]);
     });
 
@@ -1046,13 +972,11 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       const target = await seedBlock("cdoc3", "v1");
       await client.createComment("cdoc3", target, "about v1", PRINCIPAL);
 
-      // Edit supersedes: the CURRENT block inherits the thread.
       const edited = await client.editSection("cdoc3", target, "v2");
       let threads = await client.listComments("cdoc3", edited.id);
       expect(threads[0]?.comments.map((c) => c.text)).toEqual(["about v1"]);
       expect(threads[0]?.targetState).toBe("active");
 
-      // Merge with a sibling: the survivor still inherits.
       const sibling = await client.applySectionOps("cdoc3", [
         { op: "add", text: "sibling", orderKey: "b0" },
       ]);
@@ -1062,7 +986,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       threads = await client.listComments("cdoc3", merged.id);
       expect(threads[0]?.comments.map((c) => c.text)).toEqual(["about v1"]);
 
-      // Delete the survivor: the thread reports deleted, not silence.
       await client.applySectionOps("cdoc3", [
         { op: "delete", sectionId: merged.id },
       ]);
@@ -1122,7 +1045,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       expect(onV2?.comments[0]?.currentText).toBe("v2 prose");
       expect(onV2?.comments[0]?.drift).toBe(false);
 
-      // Flag absent: byte-identical 026 records (no anchor fields).
       const plain = await client.listComments("cdoc6");
       for (const t of plain) {
         for (const c of t.comments) {
@@ -1142,9 +1064,6 @@ describe.skipIf(!HAVE_DOCKER)("PgBodyClient (real postgres)", () => {
       await client.createComment("cdoc7", b1.id, "mid-arc note", PRINCIPAL);
       const b2 = await client.editSection("cdoc7", b1.id, "one two three");
 
-      // Without the comment, b1 would be a removable pause-write. With it,
-      // the arc has no removable interior — compaction refuses the row a
-      // session reviewed.
       const result = await client.coalesceArc("cdoc7", b2.id, start.revision);
       expect(result.removed).toBe(0);
 

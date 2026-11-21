@@ -1,17 +1,3 @@
-/**
- * Smoke the compiled sidecar: run the host-platform binary and wait for the
- * handshake line `{"event":"listening","port":N}` on a redirected stdout —
- * the exact read Grace's Rust shell does. A binary that dies at import
- * (calliope#26571: ENOENT for an unembedded native.wasm) or buffers the
- * handshake fails here instead of on a desktop.
- *
- * The engine payload is a stub (empty `initdb` + `chaosstore` files):
- * the listener answers before the engine boots, so the handshake proves the
- * binary, not the payload.
- *
- *   bun run scripts/smoke-sidecar.ts [path/to/calliope-sidecar]
- */
-
 import { spawn } from "node:child_process";
 import {
   chmodSync,

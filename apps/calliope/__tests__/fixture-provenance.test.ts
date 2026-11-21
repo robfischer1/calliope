@@ -1,11 +1,3 @@
-/**
- * F1 (024) — fixture-client parity for per-call author threading.
- *
- * The fixture mirrors the sovereign store's provenance surface as far as the
- * A8 history observes it: each write-event records the author that made it,
- * and `readRevisions` reports it verbatim (it hard-coded "human" before 024).
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBodyClient } from "../src/fixture-client.js";
 
@@ -42,7 +34,6 @@ describe("FixtureBodyClient — 024 per-call author threading", () => {
     );
 
     const revs = await client.readRevisions("n3");
-    // Newest first: ops (principal), edit (principal), save (default human).
     expect(revs.map((r) => r.authoredBy)).toEqual([
       PRINCIPAL,
       PRINCIPAL,
@@ -85,7 +76,6 @@ describe("FixtureBodyClient — 024 per-call author threading", () => {
       );
       await client.saveBody("n5", [{ text: "three" }], PRINCIPAL);
       const revs = await client.readRevisions("n5");
-      // Newest first.
       expect(revs.map((r) => r.kafkaOffset)).toEqual([null, 43, 42]);
     });
 

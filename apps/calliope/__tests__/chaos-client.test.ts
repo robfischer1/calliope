@@ -84,13 +84,11 @@ describe("ensureNotesRoot", () => {
 
 describe("shapeFromTextBlocks — a door that sends no structuredContent", () => {
   it("one text block is the payload", () => {
-    // The exact live wire shape of find_by_value on the Go door.
     const content = [{ type: "text", text: '["019ff961"]' }];
     expect(shapeFromTextBlocks(content)).toEqual(["019ff961"]);
   });
 
   it("several text blocks are one JSON document each", () => {
-    // The SDK emits one block per item; concatenating is not valid JSON.
     const content = [
       { type: "text", text: '{"a":1}' },
       { type: "text", text: '{"b":2}' },

@@ -1,9 +1,3 @@
-/**
- * The container write and the coarse-save diff, pinned at the contract:
- * what a save returns, what it asks the gate to hold, and what it refuses
- * before anything is minted. Synthetic fixtures only.
- */
-
 import { describe, expect, it } from "vitest";
 import { FixtureBlobStore } from "../src/blob-store.js";
 import {

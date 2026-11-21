@@ -1,27 +1,3 @@
-/**
- * Backend selection for Calliope-MCP: pick the {@link BodyClient} the tool
- * handlers run against, from the environment.
- *
- *  - default / `"pg"`: the sovereign store (C2/F2) — `DATABASE_URL` is
- *    required and its absence fails the boot loudly.
- *  - `"urania"` (explicit-only since F2): a wired {@link UraniaBodyClient}
- *    over {@link LiveUraniaCapture}, writing the chaos substrate directly
- *    (env: `CHAOS_URL`; legacy `URANIA_URL` honored). Post-D1-cut, urania is
- *    a lens and serves no capture — the substrate is chaos. Kept as the
- *    migration-era hatch until the strangle completes.
- *  - `"hades"`: a wired {@link UraniaBodyClient} over {@link HadesCapture} —
- *    the F2 gateway-auth path (Charon → Hades → calliope-mcp). Selected
- *    automatically when `CALLIOPE_WRITE_VIA_HADES=1` / `CHARON_URL` is set, or
- *    explicitly via `CALLIOPE_MCP_BACKEND=hades`. Writes carry
- *    `authored_by = human` via the gateway `SET ROLE human` seam.
- *  - `"fixture"`: an in-memory {@link FixtureBodyClient} — for a safe
- *    standalone/dev server and for the tool tests.
- *
- * The live wire is gated by `CALLIOPE_URANIA_WIRED` inside
- * {@link UraniaBodyClient} (the lib's existing seam) — this factory sets it on
- * for the live backends so the injected transport is honored.
- */
-
 import { Client, Pool } from "pg";
 import { dbLogin } from "@forge/stellar-core-ts";
 import type { DbLogin, DbLoginOptions } from "@forge/stellar-core-ts";
@@ -70,17 +46,12 @@ export function backendKind(env: NodeJS.ProcessEnv = process.env): BackendKind {
   if (explicit === "hades") return "hades";
   if (explicit === "urania") return "urania";
   if (explicit === "pg") return "pg";
-  // Auto-select the sovereign store when configured (C2 — the facet carve).
   if (env.DATABASE_URL !== undefined && env.DATABASE_URL !== "") return "pg";
-  // Auto-select hades when the env flag is set (CALLIOPE_WRITE_VIA_HADES or CHARON_URL).
   if (
     hadesEnabled(env) ||
     (env.CHARON_URL !== undefined && env.CHARON_URL !== "")
   )
     return "hades";
-  // F2: the bare-env default is pg. A missing DATABASE_URL then FAILS the
-  // boot (see pgConnectionString) instead of silently reverting prose writes
-  // to chaos triples — the store the migration explicitly emptied.
   return "pg";
 }
 
@@ -130,13 +101,6 @@ function indexUrl(env: NodeJS.ProcessEnv): string | undefined {
  * assembled prose to the configured projections — urania's similarity index.
  * A no-op wrap when none is configured, so tests and the fixture backend stay
  * push-free.
- *
- * The eros stream no longer rides here. Findability F8's `calliope-notes`
- * emit decorated THIS client, but the fleet writes notes through the container
- * tree (F12), which never passed through it — so the emit was an opt-in nobody
- * set, on a path the writes did not take, to a topic that did not exist
- * (measured 2026-09-05). Stream of Consciousness pass 4 publishes from the
- * container write verbs instead (`consciousness-emit.ts`, `server.ts`).
  */
 function withIndexPush(client: BodyClient, env: NodeJS.ProcessEnv): BodyClient {
   const pushers: IndexPusher[] = [];
@@ -147,17 +111,7 @@ function withIndexPush(client: BodyClient, env: NodeJS.ProcessEnv): BodyClient {
   return pusher === undefined ? client : new IndexingBodyClient(client, pusher);
 }
 
-/**
- * Build the {@link BodyClient} for the configured backend.
- *
- * - `"urania"`: direct engine-service via {@link LiveUraniaCapture} (clotho-parity).
- * - `"hades"`: gateway-auth path via {@link HadesCapture} (F2; `CHARON_URL`).
- * - `"fixture"`: in-memory {@link FixtureBodyClient} (dev/test).
- *
- * The directly-persisting backends (`pg`, `urania`) are wrapped with
- * {@link withIndexPush}; `hades` is not — its write is delegated over the
- * gateway to the server-side calliope-mcp, which performs the push itself.
- */
+/** Build the {@link BodyClient} for the configured backend. */
 export function makeBodyClient(
   kind: BackendKind = backendKind(),
   env: NodeJS.ProcessEnv = process.env,
@@ -166,22 +120,15 @@ export function makeBodyClient(
     return new FixtureBodyClient();
   }
   if (kind === "pg") {
-    // The sovereign store (C2). Schema bootstrap is async — the entrypoints
-    // await initBodyClient() before serving (fail-fast on an unreachable db).
     return withIndexPush(
       new PgBodyClient(new Pool({ connectionString: pgConnectionString(env) })),
       env,
     );
   }
-  // The UraniaBodyClient guards its transport behind CALLIOPE_URANIA_WIRED; the
-  // live server opts in for both live backends.
   env.CALLIOPE_URANIA_WIRED = "1";
   if (kind === "hades") {
-    // Gateway path: the write routes to the server-side calliope-mcp, which
-    // does the index push as part of its own persistence — no push here.
     return new UraniaBodyClient(new HadesCapture(env.CHARON_URL, env));
   }
-  // Default: clotho-parity direct urania engine-service.
   return withIndexPush(
     new UraniaBodyClient(
       new LiveUraniaCapture(env.CHAOS_URL ?? env.URANIA_URL),
@@ -197,9 +144,6 @@ export function makeBodyClient(
  * fails the boot loudly instead of failing the first request.
  */
 export async function initBodyClient(client: BodyClient): Promise<void> {
-  // Unwrap the index-push decorator: the production pg client is ALWAYS
-  // wrapped, and the schema bootstrap must reach the bare store (found live
-  // 2026-07-12 — the A11 tombstone migration never applied at boot).
   if (client instanceof IndexingBodyClient) {
     await initBodyClient(client.inner);
     return;
@@ -236,9 +180,6 @@ export function makeBackend(
   login?: DbLogin<typeof Client>,
 ): Backend {
   if (kind === "fixture") {
-    // F7: the fixture backend serves documents NOTES-BACKED, exactly like
-    // production — one model, so the fixture cannot drift from the store
-    // the fleet actually runs.
     const client = new FixtureBodyClient();
     const revisions = new FixtureRevisionStore();
     const dial = attributing(new FixtureChaosDial(), revisions);
@@ -249,8 +190,6 @@ export function makeBackend(
       documents: new NotesDocumentStore(client, dial, scope, tags),
       revisions,
       chaos: { dial, scope },
-      // The SAME dial instance as the chaos facet, so containers minted via
-      // create_note are addressable by the container write.
       containers: (() => {
         const blobs = new FixtureBlobStore();
         return { blobs, dial, gc: new FixtureBlobGc(blobs) };
@@ -259,7 +198,6 @@ export function makeBackend(
     };
   }
   if (kind === "pg") {
-    // ONE pool for every facet — the sovereign store is one database.
     const pool = pgPool(env, login);
     const client = withIndexPush(new PgBodyClient(pool), env);
     const revisions = new PgRevisionStore(pool);
@@ -268,13 +206,9 @@ export function makeBackend(
     const tags = new PgTagStore(pool);
     return {
       client,
-      // F7: documents serve from the merged note store; the table-backed
-      // PgDocumentStore leaves the backend (its ensureSchema no longer
-      // runs, so a post-drop boot cannot resurrect the table).
       documents: new NotesDocumentStore(client, dial, scope, tags),
       revisions,
       chaos: { dial, scope },
-      // ONE pool (the sovereign store is one database), one dial.
       containers: { blobs: new BlobStore(pool), dial, gc: new PgBlobGc(pool) },
       tags,
     };
@@ -317,5 +251,3 @@ export async function initBackend(backend: Backend): Promise<void> {
   }
 }
 
-// CI rake (2026-07-12): build.yml paths-ignore means an EMPTY commit spawns
-// no run — a rebuild trigger needs a real diff outside md/infra.

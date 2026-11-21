@@ -1,26 +1,3 @@
-/**
- * The note-native dissolve sink (F6 — the store consolidation).
- *
- * A dissolved document stops being a row in a second store and becomes a
- * NOTE: a graph identity (named by its `source_path` — the unique, stable
- * vault identity; human titles collide) carrying its provenance as
- * ATTRIBUTES, whose body is a one-block container in the sovereign store.
- * Version history becomes copy-on-write generations — the insert-only →
- * CoW reconciliation the master-plan surfaced.
- *
- * Provenance attribute contract (what B6's notes-indexing reads):
- * `source_path` · `raw_hash` (newest) · `source_kind` · `mtime` · `ctime` ·
- * `title` · `schema_type` · `file_path` · `dissolved_at` — literal edges on
- * the note, absent when the source column is NULL. Never a second table.
- *
- * Everything here is idempotent: the mint is reuse-first (createNote's
- * (Note, name) key), the body save no-ops on an identical active body
- * (container-grain dedup, the F4 no-op's coarse sibling), and the attribute
- * reconcile diffs current edges before writing (changed values retract the
- * old literal). A retried or re-run dissolve converges instead of inflating
- * history.
- */
-
 import type { NoteBodies } from "./types.js";
 import type { WriteDocumentInput } from "./document-store.js";
 import { sha256 } from "./document-store.js";
@@ -107,12 +84,6 @@ async function readHeld(dial: ChaosDial, nodeId: string): Promise<HeldAttr[]> {
 /**
  * The ops that bring the note's provenance attribute edges to `next`: assert
  * missing values, retract superseded ones.
- *
- * A slot is converged only when it holds EXACTLY {want}, as a literal
- * (aiws:converge R-E3): a stale sibling beside want is retracted, never kept.
- * Every stale value is retracted in its own form — a node-form value as a
- * node — and pinned to the scope it was read in when the read names one
- * (retract-in-own-graph); want, when held, stays.
  */
 function reconcileOps(
   nodeId: string,
@@ -128,11 +99,6 @@ function reconcileOps(
         kept = true;
         continue;
       }
-      // A time fact reads back as its rendering, not its stored form, so a
-      // literal is retracted in both: as read (a legacy fact) and typed (an
-      // instant fact). A node-form value retracts as a node.
-      // The exception is a duplicate of the instant being kept: its typed
-      // retract would normalise to the kept fact and take it too.
       const targets = held.isNode
         ? [{ toNode: held.value }]
         : kept && sameValue(predicate, held.value, value)
@@ -268,14 +234,11 @@ async function landContainer(
   attrs: Map<string, string>,
   additive: readonly (readonly [string, string])[],
 ): Promise<SinkResult> {
-  // A NEW note is born whole: its attributes ride the mint batch, so a
-  // refusal leaves no note without provenance (one logical write, one
-  // batch). The body is the declared carve-out: calliope's container.
   const minted = await createNote(
     dial,
     scope,
     { title: sourcePath, attrs: [...attrs, ...additive] },
-    undefined, // tags ride the inline reconcile below, not the mint
+    undefined,
   );
   if (isCreateNoteError(minted)) {
     throw new NotesSinkError(
@@ -284,8 +247,6 @@ async function landContainer(
     );
   }
 
-  // Container-grain dedup: an elementwise-identical active body writes
-  // nothing — a retried or re-run dissolve converges.
   const active = await client.readBody(minted.node_id);
   const same =
     active.length === blocks.length &&
@@ -313,9 +274,6 @@ async function landContainer(
         minted.node_id,
       );
     } catch (err) {
-      // Tag reconcile failures do not fail the sink (the C9 stance: a tag
-      // failure never fails the body write it rides behind) — but they are
-      // loud, because silence is how junk survives.
       const detail =
         err instanceof ChaosClientError || err instanceof Error
           ? err.message
@@ -331,12 +289,7 @@ async function landContainer(
 
 /** Per-call sink options (the F7-prelude archive seam). */
 export interface SinkOptions {
-  /**
-   * Override the note's GRAPH NAME (identity). Provenance attributes stay
-   * truthful — `source_path` always carries the real path; the composite
-   * identity exists only so distinct archive documents sharing a container
-   * path cannot collapse into one note (Rob's F7 decision, 2026-08-10).
-   */
+  /** Override the note's GRAPH NAME (identity). */
   identity?: string;
   /** Extra single-valued attributes, reconciled like provenance
    *  (`isArchived: "true"` is the archive-exclusion predicate). */
@@ -369,11 +322,6 @@ export async function assertAdditiveAttrs(
  * Land ONE dissolved document version as its note — mint/reuse the identity,
  * write the body as the next one-block generation (or no-op), reconcile the
  * provenance attributes and the inline tags.
- *
- * `dissolvedAt` is the version's original store timestamp when known (the
- * migration passes the newest row's `created_at`; the live bridge passes
- * nothing and the attribute records the write's own moment downstream of the
- * table row until F7 retires it).
  */
 export async function sinkNoteVersion(
   client: NoteBodies,

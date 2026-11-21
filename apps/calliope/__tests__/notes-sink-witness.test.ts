@@ -1,10 +1,3 @@
-/**
- * What notes-sink hands the converge witness, pinned exactly: the ops the
- * legacy path SENT (the mint batch's attribute ops on a create, the one
- * reconcile batch on an update), the held snapshot read before the write, and
- * the refusal path of the single attribute admit.
- */
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Observation } from "../src/converge-witness.js";

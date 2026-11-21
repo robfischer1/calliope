@@ -1,11 +1,3 @@
-/**
- * The blob store's SQL contract and the fixture's search, pinned without a
- * database: a recording pool captures each statement and its bind values, so
- * what the Pg classes ASK the database (the statement, the parameters, the
- * order) is asserted next to what they answer. Also the census's report of a
- * reporter that failed.
- */
-
 import type { Pool } from "pg";
 import { describe, expect, it } from "vitest";
 import { runBlobCensus } from "../src/blob-census.js";

@@ -84,8 +84,6 @@ const full: NoteProjection = {
 };
 
 describe("the row identity is eros's", () => {
-  // Computed 2026-09-05 with eros.keys.record_source_id (blake2b-8 of the
-  // styx ref, masked to 63 bits) — the SAME vectors on both sides of the seam.
   it.each([
     ["ab".repeat(32), "3541846425442797356"],
     ["cd".repeat(32), "2341581022270581932"],
@@ -135,7 +133,6 @@ describe("noteEvent — the vocabulary", () => {
       "container",
       "date_sent",
     ]);
-    // No local timestamp: the publish instant stands in for the date arm.
     expect(event.metadata.date_sent).toBe(NOW.toISOString());
   });
 
@@ -164,8 +161,6 @@ describe("the wire — contract-encoded", () => {
     const event = noteEvent(full, NOW);
     const value = wireValueString(event);
     expect(value).toContain('"source_id":3541846425442797356,');
-    // Round-trips as a document (the id is the only field a JS number would
-    // round, and the consumer reads it as an int).
     const parsed = JSON.parse(value) as Record<string, unknown>;
     expect(parsed.source_table).toBe("calliope_notes");
     expect(parsed.content).toBe("# Idea\n\nfirst");
@@ -176,10 +171,6 @@ describe("the wire — contract-encoded", () => {
   });
 
   it("passes the contract's schema validation and producer checks — never a refusal for a value this producer builds", () => {
-    // `check`/`record` throw on a schema or producer-check refusal; a note
-    // this producer's own vocabulary can build must never trip one — a
-    // refusal here would be a real bug (see the module doc), not something
-    // this test tolerates.
     expect(() => wireValue(noteEvent(full, NOW))).not.toThrow();
     expect(() =>
       wireValue(noteEvent({ node: NODE, body: "" }, NOW)),
@@ -230,8 +221,6 @@ describe("ConsciousnessPublisher", () => {
         value: null,
       },
     ]);
-    // The key a publish writes is the key a tombstone forgets — eros reaps
-    // by it (TombstoneIdentity), so drift here would orphan the row.
     expect(noteKey(NODE)).toBe(wireKey(noteEvent(full, NOW)));
     expect(consciousnessMetrics()).toEqual({
       calliope_consciousness_published_total: 0,
@@ -261,8 +250,6 @@ describe("ConsciousnessPublisher", () => {
   it("defaults `now` to the wall clock when the caller supplies none", async () => {
     const transport = new FakeTransport();
     const publisher = new ConsciousnessPublisher(transport);
-    // No `updatedAt`: `noteEvent` falls through to `now().toISOString()`, so
-    // a broken default (never called, or not a function) surfaces here.
     expect(await publisher.publish({ node: NODE, body: "prose" })).toBe(true);
     expect(transport.produced).toHaveLength(1);
     expect(
@@ -337,9 +324,9 @@ describe("ConsciousnessPublisher", () => {
         now: () => NOW,
       });
 
-      await publisher.publish(full); // failure 1 — escalates(1): logs
-      await publisher.publish(full); // failure 2 — escalates(2): logs
-      await publisher.publish(full); // failure 3 — escalates(3) is false: silent
+      await publisher.publish(full);
+      await publisher.publish(full);
+      await publisher.publish(full);
       expect(
         consciousnessMetrics().calliope_consciousness_publish_failed_total,
       ).toBe(3);

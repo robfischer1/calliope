@@ -4,12 +4,6 @@
  * contract and from themis's ToWire/opsFromWire (origin/main), not from any
  * implementation. Golden ops are spelled out by hand; hashes are computed here
  * with node:crypto (sha256 value 0x1f dtype 0x1f lang), never via calliope.
- *
- * Seams the builder must match:
- *   - `new LiveChaosDial({ directCapture: boolean })` overrides the env flag;
- *     absent, `CALLIOPE_DIRECT_CAPTURE === "on"` (read only when no themisUrl /
- *     chaosUrl was passed, like CALLIOPE_THEMIS_REST_URL) decides.
- *   - the capture rides the dial's `chaosRest` (a ChaosRest) as POST /v1/capture.
  */
 import { createHash } from "node:crypto";
 
@@ -118,7 +112,6 @@ const refuse =
       headers: { "Content-Type": "application/json", "X-Star": "chaos" },
     });
 
-// Everything that is NOT the chaos door: themis REST / MCP ride globalThis.fetch.
 interface Themis {
   url: string;
   body: string;
@@ -295,7 +288,7 @@ describe("flag on — one chaos capture per admit (contract 2)", () => {
       "author",
       "ops",
     ]);
-    expect(themis).toHaveLength(0); // no admit on REST, none on MCP, no openapi probe
+    expect(themis).toHaveLength(0);
     expect(out).toEqual({
       admitted: true,
       minted: [NODE],
@@ -561,7 +554,7 @@ describe("the admit reply for callers (contract 3)", () => {
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ChaosClientError);
     expect((err as ChaosClientError).code).toBe("conflict");
-    expect(door.seen).toHaveLength(1); // nothing retries
+    expect(door.seen).toHaveLength(1);
   });
 
   it("a transport failure throws (never admitted:false) and RetryingDial's pattern would match a refused dial", async () => {
@@ -622,7 +615,6 @@ describe("LocalChaosDial is unchanged (contract 5)", () => {
     const door = chaosDoor(
       ok({ tx: 4, results: [{ op: "createNode", id: NODE }] }),
     );
-    // The sidecar dial builds its own ChaosRest; reach it by pointing fetch.
     globalThis.fetch = ((input: string, init?: RequestInit) =>
       Promise.resolve(
         new URL(input).pathname === "/openapi.json"

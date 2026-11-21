@@ -4,12 +4,6 @@ import { makeWitness } from "../src/mcp/witness.js";
 import { bareClient } from "./helpers/bare-client.js";
 import { recordingWitness, serveDoor, toolRecords } from "./rest-door.js";
 
-/**
- * The witness, end to end: a verb called on the SERVED door (the REST door,
- * calliope's only listener) leaves exactly one tool record, and the spec
- * leaves none.
- */
-
 const closers: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const c of closers.splice(0)) await c();

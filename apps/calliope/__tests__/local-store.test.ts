@@ -1,10 +1,3 @@
-/**
- * The local engine store (046 F14) — the desktop's one backend, on
- * fixtures: the engine is a FixtureChaosDial + FixtureBlobStore, the
- * working tree is a real temp directory. What's pinned here is the MODEL:
- * engine as store, markdown as projection, external edits as ingestion.
- */
-
 import { readFile, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -39,8 +32,6 @@ afterEach(async () => {
 
 describe("the store over the engine", () => {
   it("refuses a container name two nodes answer to (refuse-ambiguous-identity)", async () => {
-    // The fixture door never mints a second node under one name, so the
-    // split is stood in at the read the store resolves through.
     dial.findByName = () => Promise.resolve(["a".repeat(64), "b".repeat(64)]);
     const admits = dial.admits.length;
     await expect(store.readBody("split.md")).rejects.toThrow(
@@ -73,11 +64,9 @@ describe("the store over the engine", () => {
     await store.saveBody("note.md", [{ text: "alpha" }, { text: "beta" }]);
     const body = await store.readBody("note.md");
     expect(body.map((s) => s.text)).toEqual(["alpha", "beta"]);
-    // Two blocks project joined by the block separator.
     expect(await readFile(path.join(root, "note.md"), "utf8")).toBe(
       "alpha\n\nbeta",
     );
-    // Slot identity is durable: a second identical save changes nothing.
     const before = body.map((s) => s.id);
     await store.saveBody("note.md", [{ text: "alpha" }, { text: "beta" }]);
     const after = (await store.readBody("note.md")).map((s) => s.id);
@@ -102,7 +91,6 @@ describe("the store over the engine", () => {
     const revs = await store.readRevisions("note.md");
     await unlink(path.join(root, "note.md"));
     expect(await store.readBody("note.md")).toEqual([]);
-    // The pre-deletion state is still an as-of read away.
     const last = revs[0];
     if (last === undefined) throw new Error("no revision");
     const at = await store.readRevisionAt("note.md", last.revision);
@@ -138,7 +126,7 @@ describe("the store over the engine", () => {
     ]);
     expect(result.applied).toHaveLength(3);
     expect(result.applied[0]?.id).toBe(keep.id);
-    expect(result.applied[2]?.id).toBeTruthy(); // the minted slot
+    expect(result.applied[2]?.id).toBeTruthy();
     expect(await readFile(path.join(root, "note.md"), "utf8")).toBe(
       "kept, edited\n\nfresh tail",
     );

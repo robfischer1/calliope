@@ -1,17 +1,3 @@
-/**
- * The REST door's act-assertion gate: a `wrap` for the adapter (rest.ts).
- *
- * It is the only caller of {@link withActAuthor}. Behaviour:
- *  - no waypoint assertion claims: a write verb whose waypoint-verified
- *    caller is a human (caller-author.ts) runs with that human on its async
- *    context, one that is a session or star with that subject (chaos's
- *    on_behalf_of only); any other request passes untouched;
- *  - the waypoint's `x-kairos-assertion-*` claims present (waypoint-assertion.ts):
- *    the request is refused unless the act is this verb, args_sha256 is the
- *    digest of the received arguments and the jti is unspent; then it runs
- *    with the human the claims name.
- */
-
 import type {
   RestHandler,
   RestRequest,
@@ -71,7 +57,6 @@ function assembledArgs(path: string, body: string): Record<string, unknown> {
   return args;
 }
 
-/** Seconds a spent jti is kept: past mesh-opa's 120s exp-iat window and its 30s skew. */
 const SPENT_JTI_TTL_S = 300;
 
 /**
@@ -200,8 +185,6 @@ export function actGate(o: ActGateOptions): (next: RestHandler) => RestHandler {
       verbOf(req.target),
     );
     if (author !== undefined) return withActAuthor(author, () => next(req));
-    // A session or star the waypoint verified: no authorship row, but its
-    // chaos writes say who they were for.
     const subject = callerSubject(req.headers, config.trustDomain);
     return subject === undefined
       ? next(req)

@@ -1,38 +1,3 @@
-/**
- * Plan block-addressing — the C7 projection scheme.
- *
- * A dissolved plan lives in the document store as one `documents` row whose
- * `body_text` is the plan's markdown. A plan's prose is a sequence of *feature
- * blocks* under a `# Feature list` — each block a heading of the form
- * `### FN — <title> · <Size>` (the grammar athena's `orchestrate_plan` parses).
- * C7 makes those blocks *addressable*: athena carries a block handle (a Calliope
- * reference), and Calliope moves the bytes — the projecting session never loads
- * the whole `plan_text`, and the projecter's conflict payload can name a single
- * colliding feature by its block ref.
- *
- * This module is the pure block-addressing core: it parses a plan body into
- * {@link PlanBlock}s and slices one block by its id. No I/O, no store — the
- * verb layer ({@link ./mcp/plan-ingest}) resolves the document, this addresses
- * the blocks. Pure so it is unit-tested directly and cannot drift from the wire.
- *
- * ## The block-addressing scheme
- *
- * - **Feature-head grammar** (a superset of the conventions in the wild —
- *   `### FN —`, `## FN —`, `#### FN —`, `### Feature N —`): a heading at depth
- *   2–4, an optional `Feature ` word, then a **feature-id token** — one to six
- *   letters immediately followed by digits (`C7`, `F25`, `H1`, `E1`) — then a
- *   dash separator (`—`, `–`, or `-`). The id token is the block's **address**;
- *   it is normalized to upper-case for the canonical handle, and looked up
- *   case-insensitively.
- * - **Block extent**: a block runs from its heading line to the next heading
- *   whose depth is `<=` the block heading's depth (the next sibling feature, or
- *   a structural section such as `## Cross-feature DAG` that ends the list), or
- *   to end-of-document. Deeper sub-headings stay inside the block.
- * - **Size**: the trailing `· <token>` of the heading, when `<token>` is a size
- *   (`XS` `S` `M` `L` `XL`); otherwise `null`. The title is the heading text
- *   between the dash and that size marker.
- */
-
 /** One addressable feature block within a plan document. */
 export interface PlanBlock {
   /** The canonical block address — the feature-id token, upper-cased (`C7`). */
@@ -98,7 +63,6 @@ function splitTitleAndSize(remainder: string): {
 export function parsePlanBlocks(body: string): PlanBlock[] {
   const lines = body.split("\n");
 
-  // Every ATX heading, with its depth — the boundary set.
   const headings: HeadingLine[] = [];
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
@@ -124,7 +88,6 @@ export function parsePlanBlocks(body: string): PlanBlock[] {
     const id = idToken.toUpperCase();
     const { title, size } = splitTitleAndSize(remainder ?? "");
 
-    // The block ends at the next heading of depth <= this block's depth.
     const boundary = headings.find((h) => h.line > i && h.level <= level);
     const lineEnd = boundary === undefined ? lines.length : boundary.line;
     const text = lines.slice(i, lineEnd).join("\n").trim();

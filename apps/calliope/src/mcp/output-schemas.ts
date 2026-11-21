@@ -1,14 +1,4 @@
-/**
- * The output schemas of calliope's fleet verbs (stellar-core F17).
- *
- * foundry-dies/schema/tool-output/calliope_<verb>.schema.json is the authority;
- * the files beside this module are its byte-identical copies, digest-gated by
- * the tool_output_calliope_* contracts. A schema describes the SUCCESSFUL
- * answer only: a refusal is an isError result, which the SDK never validates.
- *
- * The MCP SDK registers a zod schema, so each document is compiled once with
- * z.fromJSONSchema and the server advertises what the SDK renders from it.
- */
+/** The output schemas of calliope's fleet verbs (stellar-core F17). */
 import { z } from "zod";
 import blob_census from "./output-schema/blob_census.schema.json" with { type: "json" };
 import container_history from "./output-schema/container_history.schema.json" with { type: "json" };
@@ -75,9 +65,6 @@ const compiled = new Map<SchemaVerb, z.ZodType>();
  * sees them and puts them back, verbatim, as annotations on the compiled
  * node: zod then accepts the string and advertises exactly what the authority
  * says.
- *
- *   {"format": "date-time"}                                  (beside its type)
- *   "anyOf": [{"format": "date-time"}, {"maxLength": 0}]     (an instant, or "")
  */
 const KEEP = "x-advertised";
 const INSTANT_OR_EMPTY = JSON.stringify([
@@ -93,7 +80,6 @@ function liftDateTime(node: unknown): unknown {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(src)) {
     if (instantOrEmpty && key === "anyOf") continue;
-    // A literal is data, not a schema: never walk into one.
     out[key] =
       key === "enum" || key === "const" || key === "default"
         ? value

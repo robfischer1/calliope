@@ -13,10 +13,6 @@ import {
 import { recordingWitness, serveDoor } from "./rest-door.js";
 import { TD } from "./act-fixtures.js";
 
-/**
- * The act-assertion gate on the SERVED door; everything is the real door.
- */
-
 const closers: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const c of closers.splice(0)) await c();
@@ -27,9 +23,6 @@ const ENV = {
   CALLIOPE_ACT_ISSUER: "https://kairos.notusmi.com",
   CALLIOPE_ACT_TRUST_DOMAIN: TD,
 };
-// The adapter's method per verb: a destructiveHint verb is DELETE, else POST
-// (stellar-core rest/table.ts methodFor; the hints are in server.ts and
-// delete-verbs.ts).
 const METHOD: Record<string, string> = {
   write_container: "DELETE",
   delete_note: "DELETE",
@@ -52,8 +45,6 @@ async function door(env: Record<string, string> = ENV) {
     rows.push(r);
     return orig(r);
   };
-  // The subject each chaos admit runs under: what a direct capture forwards
-  // as on_behalf_of (direct-capture.test.ts pins that hop).
   const subjects: string[] = [];
   const dial = backend.chaos?.dial;
   if (dial === undefined) throw new Error("fixture backend has no chaos dial");
@@ -84,7 +75,6 @@ async function door(env: Record<string, string> = ENV) {
       "Content-Type": "application/json",
     };
     Object.assign(headers, o.extra ?? {});
-    // dry_run:false rides the path as /live (rest/table.ts DANGEROUS).
     const live = verb === "delete_note" && args.dry_run === false;
     const r = await fetch(`${base}/v1/${verb}${live ? "/live" : ""}`, {
       method: METHOD[verb] ?? "POST",

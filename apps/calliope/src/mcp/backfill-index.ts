@@ -1,31 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Backfill urania's similarity index with EXISTING body prose (B).
- *
- * The write-side push ({@link IndexingBodyClient}) only fires on NEW writes, so
- * bodies that already exist when the push ships stay invisible to
- * suggest_parent / search until they are re-written. This one-off sweep closes
- * that gap: it enumerates every body-bearing node in calliope's sovereign
- * store, reads each body, and pushes the assembled prose to urania's
- * `index_document` verb.
- *
- * Run from a checkout where BOTH the sovereign store and urania are
- * reachable — e.g. `cd apps/calliope && bun install`, then:
- *
- *   bun run src/mcp/backfill-index.ts           # push every body (idempotent)
- *   bun run src/mcp/backfill-index.ts --probe   # count body-bearing nodes only
- *
- * NOT the deployed runtime image: it ships only the bundled `server.js`, no
- * source tree, no `bun install` — there is nothing to `bun run` inside it.
- *
- * Env:
- *   DATABASE_URL          calliope-db (the sovereign body store; read)
- *   CALLIOPE_INDEX_URL    urania's MCP endpoint (else URANIA_URL / CHAOS_URL)
- *
- * Idempotent: a re-run re-pushes the same prose and urania's `set_body` upserts,
- * so a repeat is a no-op change. A per-node push failure is tallied and the
- * sweep continues — the projection self-heals on the next write or a re-run.
- */
 
 import { pathToFileURL } from "node:url";
 import { Pool } from "pg";

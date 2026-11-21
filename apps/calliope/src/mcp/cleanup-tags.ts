@@ -1,30 +1,4 @@
 #!/usr/bin/env bun
-/**
- * F11 cleanup tool — sweep the persisted tag junk from the STORE, not the
- * render. Junk (hex-color-shaped) tags lose their mirror rows AND their
- * carrier `hasTag` edges on the graph; malformed trailing-slash variants
- * merge into their normalized form (edge re-pointed, row rewritten).
- *
- * Modes (env: `DATABASE_URL`, `CALLIOPE_CHAOS_URL`, `CALLIOPE_THEMIS_URL`):
- *
- *   bun run src/mcp/cleanup-tags.ts            # apply (idempotent)
- *   bun run src/mcp/cleanup-tags.ts --probe    # read-only plan
- *   bun run src/mcp/cleanup-tags.ts --archived [--probe]
- *       sweep the INLINE tags off every isArchived note (the phdb-migration
- *       corpus — C source, spreadsheets, mail — whose bodies the reconcile
- *       tagged before it learned to skip them); explicit rows stay.
- *   bun run src/mcp/cleanup-tags.ts --heal <tag>... [--probe]
- *       drop the mirror rows for those tags whose carrier no longer holds
- *       the `hasTag` edge on the graph — the follow-up to a retraction made
- *       through the graph verbs, which never touch this mirror. The graph is
- *       the truth; this only ever deletes rows, never edges.
- *
- * Reversibility: chaos is append-only — the retractions are logged ops on
- * the substrate, so the sweep is reversible at the substrate level; no undo
- * verb ships. The sweep covers what the mirror enumerates (the mirror is
- * `list_tags`' source); a graph edge with no mirror row is invisible to
- * enumeration and heals on its note's next reconcile.
- */
 
 import { pathToFileURL } from "node:url";
 import { Pool } from "pg";
