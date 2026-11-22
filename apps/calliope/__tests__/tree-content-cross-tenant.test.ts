@@ -26,17 +26,12 @@ async function bornNote() {
   if (isCreateNoteError(res)) throw new Error(res.detail);
   const facet = { blobs, dial };
   const { blocks } = await readContainer(facet, res.node_id);
-  const block = blocks[0];
-  if (block === undefined || block.blobId === null) {
+  const slot = blocks[0]?.slot;
+  const born = blocks[0]?.blobId ?? null;
+  if (slot === undefined || born === null) {
     throw new Error("create_note birthed no block");
   }
-  return {
-    dial,
-    facet,
-    note: res.node_id,
-    slot: block.slot,
-    born: block.blobId,
-  };
+  return { dial, facet, note: res.node_id, slot, born };
 }
 
 async function contentEdges(dial: FixtureChaosDial, slot: string) {
