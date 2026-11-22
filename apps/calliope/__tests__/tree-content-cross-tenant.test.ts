@@ -119,7 +119,7 @@ describe("update across tenants (capture 32501)", () => {
     if (isCreateNoteError(box)) throw new Error(box.detail);
     const tree = await readContainer(facet, box.node_id);
     const empty = tree.blocks[0];
-    if (empty === undefined || empty.blobId === null) {
+    if (empty?.blobId === undefined || empty.blobId === null) {
       throw new Error("create_note birthed no block");
     }
     await writeContainer(
