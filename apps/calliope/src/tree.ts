@@ -109,11 +109,7 @@ function graphsHolding(
 ): HeldIn {
   const graphs = new Set<string | undefined>();
   for (const e of edges) {
-    if (
-      e.predicate === predicate &&
-      e.domain === domain &&
-      e.value === value
-    ) {
+    if (e.predicate === predicate && e.domain === domain && e.value === value) {
       graphs.add(e.graph === "" ? undefined : e.graph);
     }
   }
