@@ -64,18 +64,26 @@ export function placementBirthOps(
   ];
 }
 
-/** Retract a placement's three facts (membership, position, reference).
- *  The origin is untouched. */
+/** Retract a placement's three facts (membership, position, reference), each
+ *  in the graphs `held` names for it ({@link placementHeldGraphs}). The origin
+ *  is untouched. */
 export function placementRemoveOps(
   slotToken: string,
   containerToken: string,
   position: string,
   originSlot: string,
+  held: PlacementHeldIn = PLACEMENT_OWN_SCOPE,
 ): ChaosOp[] {
   return [
-    opRemove(containerToken, TREE_MEMBER, { toNode: slotToken }),
-    opRemove(slotToken, TREE_POSITION, { toLiteral: position }),
-    opRemove(slotToken, TREE_REF, { toNode: originSlot }),
+    ...held.member.map((g) =>
+      opRemove(containerToken, TREE_MEMBER, { toNode: slotToken }, g),
+    ),
+    ...held.position.map((g) =>
+      opRemove(slotToken, TREE_POSITION, { toLiteral: position }, g),
+    ),
+    ...held.ref.map((g) =>
+      opRemove(slotToken, TREE_REF, { toNode: originSlot }, g),
+    ),
   ];
 }
 
@@ -162,6 +170,38 @@ export async function slotHeldGraphs(
     member: graphsHolding(box, TREE_MEMBER, "node", slotToken),
     position: graphsHolding(own, TREE_POSITION, "scalar", position),
     content: graphsHolding(own, TREE_CONTENT, "blob", blobId),
+  };
+}
+
+/** Where each of a placement's three tree facts is held. */
+export interface PlacementHeldIn {
+  member: HeldIn;
+  position: HeldIn;
+  ref: HeldIn;
+}
+
+const PLACEMENT_OWN_SCOPE: PlacementHeldIn = {
+  member: OWN_SCOPE,
+  position: OWN_SCOPE,
+  ref: OWN_SCOPE,
+};
+
+/** {@link heldGraphs} for a placement's membership in `containerToken`, its
+ *  `position` and its `tree_ref` to `originSlot`. */
+export async function placementHeldGraphs(
+  dial: ChaosDial,
+  slotToken: string,
+  containerToken: string,
+  position: string,
+  originSlot: string,
+): Promise<PlacementHeldIn> {
+  if (dial.placedEdges === undefined) return PLACEMENT_OWN_SCOPE;
+  const own = await dial.placedEdges(slotToken);
+  const box = await dial.placedEdges(containerToken);
+  return {
+    member: graphsHolding(box, TREE_MEMBER, "node", slotToken),
+    position: graphsHolding(own, TREE_POSITION, "scalar", position),
+    ref: graphsHolding(own, TREE_REF, "node", originSlot),
   };
 }
 
