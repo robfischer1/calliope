@@ -23,6 +23,7 @@ import { planRouting } from "./transclusion-write.js";
 import {
   TREE_CONTENT,
   TREE_REF,
+  heldGraphs,
   placementBirthOps,
   placementRemoveOps,
   repointOps,
@@ -225,7 +226,14 @@ export async function writeContainer(
         }
         if (factsOnly !== true) {
           expects.push(expectHeldBlob(target, TREE_CONTENT, op.oldBlobId));
-          batch.push(...repointOps(target, op.oldBlobId, blobId));
+          batch.push(
+            ...repointOps(
+              target,
+              op.oldBlobId,
+              blobId,
+              await heldGraphs(facet.dial, target, op.oldBlobId),
+            ),
+          );
         }
         const sent = (facts ?? []).some((f) => f.predicate === "contentHash");
         let carried: SlotFact[] = facts ?? [];
@@ -233,7 +241,9 @@ export async function writeContainer(
         if (sent || factsOnly !== true) {
           const old = retractContentHashOps(
             target,
-            await facet.dial.edges(target),
+            facet.dial.placedEdges !== undefined
+              ? await facet.dial.placedEdges(target)
+              : await facet.dial.edges(target),
           );
           heldHash = old.length > 0;
           if (sent || heldHash) batch.push(...old);
