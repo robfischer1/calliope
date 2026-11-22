@@ -15,7 +15,7 @@ import {
   type NodeRefRow,
   opAdd,
   opCreate,
-  opRemove,
+  type PlacedEdge,
   type QuadRow,
   type RefsEcho,
   type Tenant,
@@ -24,12 +24,12 @@ import {
 import { readContainer } from "../container-read.js";
 import { PgBodyClient } from "../pg-client.js";
 import {
+  heldGraphs,
   repointOps,
   repositionOps,
   slotBirthOps,
+  slotHeldGraphs,
   slotRemoveOps,
-  TREE_MEMBER,
-  TREE_POSITION,
 } from "../tree.js";
 import { COMMENT_CONTAINER_SUFFIX } from "../types.js";
 import type { Section } from "../types.js";
@@ -78,7 +78,7 @@ export interface MigrateTreeReport {
   per_container: ContainerRecord[];
 }
 
-interface SlotState {
+export interface SlotState {
   slot: string;
   position: string;
   blobId: string;
@@ -226,6 +226,16 @@ export class RetryingDial implements ChaosDial {
       "read",
     );
   }
+  placedEdges(token: string): Promise<PlacedEdge[]> {
+    const inner = this.#inner;
+    if (inner.placedEdges === undefined) return Promise.resolve([]);
+    const read = inner.placedEdges.bind(inner);
+    return withRetry(
+      () => read(token),
+      () => true,
+      "read",
+    );
+  }
 }
 
 /** The old store's per-container revision list, oldest first. */
@@ -340,8 +350,10 @@ export function throwIfMissingSubject(res: AdmitResult, node: string): void {
 }
 
 /** Diff one revision step into tree ops. Mutates `slots` to the new state
- *  once the admit lands (the caller applies `next` after success). */
-function diffRevision(
+ *  once the admit lands (the caller applies `next` after success). Each
+ *  retraction pins to the graph `dial` says its fact is held in. */
+export function diffRevision(
+  dial: ChaosDial,
   container: string,
   slots: Map<string, SlotState>,
   target: Section[],
@@ -370,7 +382,14 @@ function diffRevision(
           if (existing.text !== section.text) {
             const blobId = await mintBlob(section.text);
             if (blobId !== existing.blobId) {
-              batch.push(...repointOps(existing.slot, existing.blobId, blobId));
+              batch.push(
+                ...repointOps(
+                  existing.slot,
+                  existing.blobId,
+                  blobId,
+                  await heldGraphs(dial, existing.slot, existing.blobId),
+                ),
+              );
               state = { ...state, blobId, text: section.text };
             }
           }
@@ -400,7 +419,14 @@ function diffRevision(
           if (prev.text !== section.text) {
             const blobId = await mintBlob(section.text);
             if (blobId !== prev.blobId) {
-              batch.push(...repointOps(prev.slot, prev.blobId, blobId));
+              batch.push(
+                ...repointOps(
+                  prev.slot,
+                  prev.blobId,
+                  blobId,
+                  await heldGraphs(dial, prev.slot, prev.blobId),
+                ),
+              );
               state = { ...state, blobId, text: section.text };
             }
           }
@@ -431,7 +457,19 @@ function diffRevision(
       for (const [id, state] of slots) {
         if (targetIds.has(id) || consumed.has(id)) continue;
         batch.push(
-          ...slotRemoveOps(state.slot, container, state.position, state.blobId),
+          ...slotRemoveOps(
+            state.slot,
+            container,
+            state.position,
+            state.blobId,
+            await slotHeldGraphs(
+              dial,
+              state.slot,
+              container,
+              state.position,
+              state.blobId,
+            ),
+          ),
         );
       }
 
@@ -568,14 +606,23 @@ export async function migrateTree(
         if (dirty.blocks.length > 0) {
           const cleanup: ChaosOp[] = [];
           for (const b of dirty.blocks) {
+            const held = await slotHeldGraphs(
+              dial,
+              b.slot,
+              container,
+              b.position,
+              b.blobId ?? "",
+            );
             if (b.blobId !== null) {
               cleanup.push(
-                ...slotRemoveOps(b.slot, container, b.position, b.blobId),
+                ...slotRemoveOps(b.slot, container, b.position, b.blobId, held),
               );
             } else {
               cleanup.push(
-                opRemove(container, TREE_MEMBER, { toNode: b.slot }),
-                opRemove(b.slot, TREE_POSITION, { toLiteral: b.position }),
+                ...slotRemoveOps(b.slot, container, b.position, "", {
+                  ...held,
+                  content: [],
+                }),
               );
             }
           }
@@ -604,6 +651,7 @@ export async function migrateTree(
             await pg.readRevisionAt(node, rev.revision),
           );
           const { build } = diffRevision(
+            dial,
             container,
             slots,
             target,
@@ -643,6 +691,7 @@ export async function migrateTree(
 
         const headTarget = canonicalizePositions(await pg.readBody(node));
         const headDiff = await diffRevision(
+          dial,
           container,
           slots,
           headTarget,

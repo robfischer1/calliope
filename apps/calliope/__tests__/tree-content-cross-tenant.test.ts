@@ -6,11 +6,18 @@
  */
 import { describe, expect, it } from "vitest";
 import { FixtureBlobStore } from "../src/blob-store.js";
-import { FixtureChaosDial } from "../src/chaos-client.js";
+import { FixtureChaosDial, opCreate } from "../src/chaos-client.js";
 import { readContainer, readContainers } from "../src/container-read.js";
 import { writeContainer } from "../src/container-write.js";
+import { diffRevision, type SlotState } from "../src/mcp/migrate-tree.js";
 import { createNote, isCreateNoteError } from "../src/mcp/tools.js";
-import { TREE_CONTENT, repointOps } from "../src/tree.js";
+import {
+  TREE_CONTENT,
+  TREE_MEMBER,
+  readTree,
+  repointOps,
+  slotBirthOps,
+} from "../src/tree.js";
 
 async function bornNote() {
   const dial = new FixtureChaosDial();
@@ -74,5 +81,58 @@ describe("update across tenants (capture 32501)", () => {
     );
     expect((await readContainer(facet, note)).blocks[0]?.text).toBe("second");
     expect(await contentEdges(dial, slot)).toHaveLength(1);
+  });
+
+  it("a governance remove of a notes-born block retracts all three facts where they are held", async () => {
+    const { dial, facet, note, slot, born } = await bornNote();
+    await writeContainer(
+      facet,
+      note,
+      [{ op: "remove", slot, position: "a0", blobId: born }],
+      "governance",
+    );
+    expect(await readTree(dial, note)).toEqual([]);
+    expect(await dial.placedEdges(slot)).toEqual([]);
+    const members = (await dial.placedEdges(note)).filter(
+      (e) => e.predicate === TREE_MEMBER,
+    );
+    expect(members).toEqual([]);
+  });
+
+  it("migrate-tree's diff, admitted in another scope, repoints and removes notes-held slots", async () => {
+    const dial = new FixtureChaosDial();
+    dial.graphScoped = true;
+    const blobs = new FixtureBlobStore();
+    const minted = async (res: Promise<{ minted: string[] }>) => {
+      const token = (await res).minted[0];
+      if (token === undefined) throw new Error("fixture minted nothing");
+      return token;
+    };
+    const doc = await minted(dial.admit([opCreate("Note", "doc")], "notes"));
+    const birth = (pos: string, blobId: string): Promise<string> =>
+      minted(dial.admit(slotBirthOps(doc, "b", pos, blobId), "notes"));
+    const one = await blobs.mint("one");
+    const two = await blobs.mint("two");
+    const kept = await birth("a0", one);
+    const dropped = await birth("a1", two);
+    const slots = new Map<string, SlotState>([
+      ["s1", { slot: kept, position: "a0", blobId: one, text: "one" }],
+      ["s2", { slot: dropped, position: "a1", blobId: two, text: "two" }],
+    ]);
+    const { batch } = await diffRevision(
+      dial,
+      doc,
+      slots,
+      [{ id: "s1", text: "ONE", orderKey: "a0" }],
+      new Map(),
+      (text) => blobs.mint(text),
+    ).build();
+    await dial.admit(batch, "governance");
+
+    const tree = await readTree(dial, doc);
+    expect(tree.map((t) => t.slot)).toEqual([kept]);
+    expect(tree[0]?.blobId).toBe(await blobs.mint("ONE"));
+    expect(await contentEdges(dial, kept)).toHaveLength(1);
+    expect(await dial.placedEdges(dropped)).toEqual([]);
   });
 });
