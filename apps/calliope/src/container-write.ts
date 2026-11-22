@@ -29,6 +29,7 @@ import {
   repointOps,
   repositionOps,
   slotBirthOps,
+  slotHeldGraphs,
   slotRemoveOps,
 } from "./tree.js";
 
@@ -297,7 +298,19 @@ export async function writeContainer(
         }
         expects.push(expectHeldBlob(op.slot, TREE_CONTENT, op.blobId));
         batch.push(
-          ...slotRemoveOps(op.slot, containerToken, op.position, op.blobId),
+          ...slotRemoveOps(
+            op.slot,
+            containerToken,
+            op.position,
+            op.blobId,
+            await slotHeldGraphs(
+              facet.dial,
+              op.slot,
+              containerToken,
+              op.position,
+              op.blobId,
+            ),
+          ),
         );
         break;
       }

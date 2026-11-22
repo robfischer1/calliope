@@ -2,6 +2,7 @@ import {
   type ChaosDial,
   type ChaosOp,
   type NodeEdge,
+  type PlacedEdge,
   opAdd,
   opCreate,
   opRemove,
@@ -85,7 +86,7 @@ export function repointOps(
   slotToken: string,
   oldBlobId: string,
   newBlobId: string,
-  heldIn: readonly (string | undefined)[] = [undefined],
+  heldIn: HeldIn = OWN_SCOPE,
 ): ChaosOp[] {
   return [
     ...heldIn.map((g) =>
@@ -95,6 +96,30 @@ export function repointOps(
   ];
 }
 
+/** The graphs a retraction pins to; `undefined` is the batch's own scope. */
+export type HeldIn = readonly (string | undefined)[];
+
+const OWN_SCOPE: HeldIn = [undefined];
+
+function graphsHolding(
+  edges: readonly PlacedEdge[],
+  predicate: string,
+  domain: PlacedEdge["domain"],
+  value: string,
+): HeldIn {
+  const graphs = new Set<string | undefined>();
+  for (const e of edges) {
+    if (
+      e.predicate === predicate &&
+      e.domain === domain &&
+      e.value === value
+    ) {
+      graphs.add(e.graph === "" ? undefined : e.graph);
+    }
+  }
+  return graphs.size === 0 ? OWN_SCOPE : [...graphs];
+}
+
 /** The graphs `slot`'s `tree_content` → `blobId` fact is held in, for a
  *  retraction to pin to. A dial that cannot say, a fact the door placed in no
  *  named scope, or a fact not held at all answers the batch's own scope. */
@@ -102,19 +127,46 @@ export async function heldGraphs(
   dial: ChaosDial,
   slot: string,
   blobId: string,
-): Promise<(string | undefined)[]> {
-  if (dial.placedEdges === undefined) return [undefined];
-  const graphs = new Set<string | undefined>();
-  for (const e of await dial.placedEdges(slot)) {
-    if (
-      e.predicate === TREE_CONTENT &&
-      e.domain === "blob" &&
-      e.value === blobId
-    ) {
-      graphs.add(e.graph === "" ? undefined : e.graph);
-    }
-  }
-  return graphs.size === 0 ? [undefined] : [...graphs];
+): Promise<HeldIn> {
+  if (dial.placedEdges === undefined) return OWN_SCOPE;
+  return graphsHolding(
+    await dial.placedEdges(slot),
+    TREE_CONTENT,
+    "blob",
+    blobId,
+  );
+}
+
+/** Where each of a slot's three tree facts is held. */
+export interface SlotHeldIn {
+  member: HeldIn;
+  position: HeldIn;
+  content: HeldIn;
+}
+
+const SLOT_OWN_SCOPE: SlotHeldIn = {
+  member: OWN_SCOPE,
+  position: OWN_SCOPE,
+  content: OWN_SCOPE,
+};
+
+/** {@link heldGraphs} for all three of a slot's tree facts: its membership
+ *  in `containerToken`, its `position` and its content `blobId`. */
+export async function slotHeldGraphs(
+  dial: ChaosDial,
+  slotToken: string,
+  containerToken: string,
+  position: string,
+  blobId: string,
+): Promise<SlotHeldIn> {
+  if (dial.placedEdges === undefined) return SLOT_OWN_SCOPE;
+  const own = await dial.placedEdges(slotToken);
+  const box = await dial.placedEdges(containerToken);
+  return {
+    member: graphsHolding(box, TREE_MEMBER, "node", slotToken),
+    position: graphsHolding(own, TREE_POSITION, "scalar", position),
+    content: graphsHolding(own, TREE_CONTENT, "blob", blobId),
+  };
 }
 
 /** Reposition a slot: the reorder. Touches ONLY the position fact. */
@@ -141,18 +193,26 @@ export function moveOps(
   ];
 }
 
-/** Retract a slot's three facts. (Tombstoning the node itself is F4's
- *  writer concern; the facts are what structure reads consult.) */
+/** Retract a slot's three facts, each in the graphs `held` names for it
+ *  ({@link slotHeldGraphs}). (Tombstoning the node itself is F4's writer
+ *  concern; the facts are what structure reads consult.) */
 export function slotRemoveOps(
   slotToken: string,
   containerToken: string,
   position: string,
   blobId: string,
+  held: SlotHeldIn = SLOT_OWN_SCOPE,
 ): ChaosOp[] {
   return [
-    opRemove(containerToken, TREE_MEMBER, { toNode: slotToken }),
-    opRemove(slotToken, TREE_POSITION, { toLiteral: position }),
-    opRemove(slotToken, TREE_CONTENT, { toBlob: blobId }),
+    ...held.member.map((g) =>
+      opRemove(containerToken, TREE_MEMBER, { toNode: slotToken }, g),
+    ),
+    ...held.position.map((g) =>
+      opRemove(slotToken, TREE_POSITION, { toLiteral: position }, g),
+    ),
+    ...held.content.map((g) =>
+      opRemove(slotToken, TREE_CONTENT, { toBlob: blobId }, g),
+    ),
   ];
 }
 
