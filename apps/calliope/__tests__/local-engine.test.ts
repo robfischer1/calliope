@@ -1,14 +1,3 @@
-/**
- * Baby chaos end-to-end (spec 045 F13): the REAL engine, locally — a plain
- * postgres (no pgvector: the desktop payload's soft-vector case), the real
- * chaosstore binary, the themis-free LocalChaosDial, and the container
- * surface on top. This is the fleet's write/read model running with zero
- * fleet infrastructure.
- *
- * Gated on CALLIOPE_CHAOSSTORE_BIN (a locally built chaos `cmd/chaos`)
- * plus docker; skips visibly otherwise.
- */
-
 import { spawn, execSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -41,8 +30,6 @@ describe.skipIf(!RUN)("baby chaos: the local engine end to end", () => {
   let blobs: BlobStore;
 
   beforeAll(async () => {
-    // A PLAIN postgres — no pgvector. The desktop payload's honest case:
-    // soft-vector Migrate must carry the engine anyway.
     containerId = execSync(
       "docker run -d --rm -e POSTGRES_PASSWORD=test -e POSTGRES_DB=chaos" +
         " -p 127.0.0.1:0:5432 postgres:17-alpine",

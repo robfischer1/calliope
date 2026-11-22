@@ -78,16 +78,43 @@ export function placementRemoveOps(
   ];
 }
 
-/** Repoint a slot's content: the edit. Touches ONLY the content fact. */
+/** Repoint a slot's content: the edit. Touches ONLY the content fact. The
+ *  old fact is retracted in each of `heldIn` (the graphs it is held in, as
+ *  {@link heldGraphs} reads them); `undefined` is the batch's own scope. */
 export function repointOps(
   slotToken: string,
   oldBlobId: string,
   newBlobId: string,
+  heldIn: readonly (string | undefined)[] = [undefined],
 ): ChaosOp[] {
   return [
-    opRemove(slotToken, TREE_CONTENT, { toBlob: oldBlobId }),
+    ...heldIn.map((g) =>
+      opRemove(slotToken, TREE_CONTENT, { toBlob: oldBlobId }, g),
+    ),
     opAdd(slotToken, TREE_CONTENT, { toBlob: newBlobId }),
   ];
+}
+
+/** The graphs `slot`'s `tree_content` → `blobId` fact is held in, for a
+ *  retraction to pin to. A dial that cannot say, a fact the door placed in no
+ *  named scope, or a fact not held at all answers the batch's own scope. */
+export async function heldGraphs(
+  dial: ChaosDial,
+  slot: string,
+  blobId: string,
+): Promise<(string | undefined)[]> {
+  if (dial.placedEdges === undefined) return [undefined];
+  const graphs = new Set<string | undefined>();
+  for (const e of await dial.placedEdges(slot)) {
+    if (
+      e.predicate === TREE_CONTENT &&
+      e.domain === "blob" &&
+      e.value === blobId
+    ) {
+      graphs.add(e.graph === "" ? undefined : e.graph);
+    }
+  }
+  return graphs.size === 0 ? [undefined] : [...graphs];
 }
 
 /** Reposition a slot: the reorder. Touches ONLY the position fact. */

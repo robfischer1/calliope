@@ -231,14 +231,22 @@ export function slotFactOps(
   );
 }
 
-/** Retract a slot's current `contentHash` literals (the edit replaces it). */
+/** Retract a slot's current `contentHash` literals (the edit replaces it),
+ *  each in the graph it is held in when the edge carries one. */
 export function retractContentHashOps(
   slot: string,
-  edges: readonly NodeEdge[],
+  edges: readonly (NodeEdge & { graph?: string })[],
 ): ChaosOp[] {
   return edges
     .filter((e) => e.predicate === "contentHash" && e.domain === "scalar")
-    .map((e) => opRemove(slot, "contentHash", { toLiteral: e.value }));
+    .map((e) =>
+      opRemove(
+        slot,
+        "contentHash",
+        { toLiteral: e.value },
+        e.graph === undefined || e.graph === "" ? undefined : e.graph,
+      ),
+    );
 }
 
 /** A segment's turn window: one value each, replaced as a whole. */

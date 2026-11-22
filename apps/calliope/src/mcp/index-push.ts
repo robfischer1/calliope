@@ -1,17 +1,3 @@
-/**
- * The write-side body push (B): after any body write, the assembled prose is
- * pushed to urania's similarity index (`index_document`) so the embedded
- * document (name + body) reflects the write and body-topic queries retrieve the
- * node. calliope owns the body semantics; urania stores the prose and re-embeds
- * WITHOUT decoding the section model — the sovereignty boundary.
- *
- * {@link IndexingBodyClient} decorates ANY {@link BodyClient} — the pg sovereign
- * store, the substrate-direct urania client, the fixture — so the push fires
- * wherever the body itself persists. The push is best-effort: the index is
- * derived state that re-syncs on the next write or a rebuild, so a push failure
- * NEVER fails the body write.
- */
-
 import { createHash } from "node:crypto";
 import { RestClient, ToolError } from "@forge/stellar-core-ts/rest";
 import type {
@@ -98,11 +84,6 @@ export class IndexingBodyClient implements BodyClient {
     readonly inner: BodyClient,
     private readonly index: IndexPusher,
   ) {
-    // Bind to `inner` so the extracted method keeps its receiver. Every
-    // write forwards its FULL parameter list — the decorator dropping the
-    // trailing provenance pair (authoredBy, kafkaOffset) is how every
-    // production write stored 'human' while the bare-client tests passed
-    // (found live 2026-08-14: the deployed pg client is ALWAYS wrapped).
     const edit = inner.editSection.bind(inner);
     this.editSection = async (
       nodeId,
@@ -168,7 +149,6 @@ export function fanOutPushers(pushers: readonly IndexPusher[]): IndexPusher {
       );
       const failed = results.filter((r) => r.status === "rejected");
       if (failed.length === pushers.length && pushers.length > 0) {
-        // Every projection failed — let the decorator log/swallow it.
         throw new Error("all index pushes failed");
       }
     },

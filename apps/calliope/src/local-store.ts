@@ -1,27 +1,3 @@
-/**
- * The local engine store (spec 046, master-plan F14) — the desktop's ONE
- * body backend, replacing the fs backend and everything built to
- * compensate for it (file-derived sections, the computed tag module, the
- * revlog, the sqlite search index).
- *
- * The model: the ENGINE (baby chaos, F13) is the store; the markdown
- * directory is the WORKING TREE — a projection the store writes and other
- * apps may edit. Sections come from the graph's tree (slot tokens are the
- * durable identity the fs grain never had); history is the graph read
- * as-of a transaction; search is the engine's own postgres (tsvector —
- * Rob's decision: Eros stays local via tsvector + pgvector); tags remain
- * a computed walk of the working tree (the desktop mints no hasTag facts —
- * extraction reads file text only and derives no sections).
- *
- * External edits reconcile like `git add`: a file whose text differs from
- * its projection INGESTS on read (lazy capture — the fs revlog's own
- * invalidation model, inherited), and a watcher sweeps the tree so search
- * stays fresh between reads. An externally edited body lands as ONE block:
- * the block grain is user-determined and a foreign editor states no
- * boundaries — a note is one block until the user splits it (the 0.14
- * de-inference rule, outliving the backend it was written for).
- */
-
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import type { FSWatcher } from "node:fs";
@@ -117,10 +93,10 @@ async function walkTree(
   try {
     entries = await fs.readdir(dir, { withFileTypes: true });
   } catch {
-    return; // a vanished subdirectory mid-scan is not an error
+    return;
   }
   for (const entry of entries) {
-    if (entry.name.startsWith(".")) continue; // .obsidian, .grace, .git …
+    if (entry.name.startsWith(".")) continue;
     const abs = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       await walkTree(root, abs, out);
@@ -179,7 +155,7 @@ export class LocalEngineStore implements BodyClient {
           },
         );
         this.#watcher.on("error", () => {
-          this.#watcher = null; // reads still ingest lazily
+          this.#watcher = null;
         });
       } catch {
         this.#watcher = null;
@@ -217,8 +193,6 @@ export class LocalEngineStore implements BodyClient {
     }
   }
 
-  // ── path discipline (the fs backend's rules, verbatim) ─────────────────
-
   #resolve(nodeId: string): string {
     if (nodeId === "" || nodeId.includes("\0")) {
       throw new Error(`invalid_path: empty or malformed node id.`);
@@ -247,14 +221,10 @@ export class LocalEngineStore implements BodyClient {
     return next;
   }
 
-  // ── container resolution ───────────────────────────────────────────────
-
   async #container(nodeId: string): Promise<string> {
     const cached = this.#containers.get(nodeId);
     if (cached !== undefined) return cached;
     const existing = await this.#facet.dial.findByName("node", nodeId);
-    // refuse-ambiguous-identity (aiws:converge R-E1): a name two containers
-    // answer to is a split; writing through either deepens it.
     if (existing.length > 1) {
       throw new Error(
         `ambiguous_identity: ${nodeId} resolves to ${String(existing.length)} containers — reconcile them first.`,
@@ -279,8 +249,6 @@ export class LocalEngineStore implements BodyClient {
     const container = await this.#container(nodeId);
     return (await readContainer(this.#facet, container)).blocks;
   }
-
-  // ── the working tree: projection + ingestion ───────────────────────────
 
   #projectionOf(blocks: ContainerBlock[]): string {
     return blocks.map((b) => b.text ?? "").join(SECTION_SEP);
@@ -340,8 +308,6 @@ export class LocalEngineStore implements BodyClient {
     if (fileText === "" && blocks.length === 0) return blocks;
     if (fileText === projected) return blocks;
 
-    // Drift: the outside edit lands as ONE block (boundaries are
-    // user-stated; a foreign editor states none).
     const container = await this.#container(nodeId);
     const ops: ContainerOp[] = [];
     const first = blocks[0];
@@ -403,13 +369,11 @@ export class LocalEngineStore implements BodyClient {
         this.#pending.delete(nodeId);
         const abs = path.resolve(this.#root, nodeId);
         void this.#serialized(abs, () => this.#ingest(nodeId, abs)).catch(
-          () => undefined, // the next read retries; darkness is not fatal
+          () => undefined,
         );
       }, this.#debounceMs),
     );
   }
-
-  // ── BodyClient ─────────────────────────────────────────────────────────
 
   async readBody(nodeId: string): Promise<Section[]> {
     const abs = this.#resolve(nodeId);
@@ -496,7 +460,6 @@ export class LocalEngineStore implements BodyClient {
       };
       const container = await this.#container(nodeId);
       const containerOps: ContainerOp[] = [];
-      // section-op index → {container-op index (for adds), id, orderKey}.
       const plan: { addAt?: number; id: string; orderKey: string }[] = [];
       for (const op of ops) {
         switch (op.op) {
@@ -588,8 +551,6 @@ export class LocalEngineStore implements BodyClient {
 
   async readRevisions(nodeId: string, limit = 50): Promise<RevisionMeta[]> {
     const abs = this.#resolve(nodeId);
-    // Lazy capture first — an outside edit becomes a transaction the
-    // moment history is asked for (the fs revlog's exact model).
     await this.#serialized(abs, () => this.#ingest(nodeId, abs));
     const container = await this.#container(nodeId);
     const entries = await containerHistory(this.#facet, container);
@@ -607,7 +568,7 @@ export class LocalEngineStore implements BodyClient {
   }
 
   async readRevisionAt(nodeId: string, revision: string): Promise<Section[]> {
-    this.#resolve(nodeId); // path validation, same refusals as every verb
+    this.#resolve(nodeId);
     const tx = Number.parseInt(revision, 10);
     if (!Number.isFinite(tx)) return [];
     const container = await this.#container(nodeId);
@@ -635,8 +596,6 @@ export class LocalEngineStore implements BodyClient {
     return out;
   }
 
-  // ── tags: the computed walk (extraction only — no sections derived) ────
-
   async listTags(): Promise<{ tags: TagCount[] }> {
     const index = await this.#tagIndex();
     return { tags: index.tags };
@@ -660,7 +619,7 @@ export class LocalEngineStore implements BodyClient {
       try {
         text = await fs.readFile(abs, "utf8");
       } catch {
-        continue; // vanished mid-scan
+        continue;
       }
       const nodeId = path.relative(this.#root, abs).split(path.sep).join("/");
       for (const tag of extractInlineTags(text)) {
@@ -672,9 +631,6 @@ export class LocalEngineStore implements BodyClient {
       .sort((a, b) => a.tag.localeCompare(b.tag));
     return { tags, byTag };
   }
-
-  // ── search: the engine's own postgres (tsvector; semantic arm follows
-  //    pgvector into the payload — dark until then, and NAMED dark) ───────
 
   async #ensureSearch(): Promise<Pool> {
     const pool = this.#pool;
@@ -727,7 +683,7 @@ export class LocalEngineStore implements BodyClient {
     if (trimmed === "") throw new Error("bad_request: empty query.");
     const limit = k ?? DEFAULT_K;
     const armsQueried: SearchArm[] = [];
-    const armsDark: SearchArm[] = ["semantic"]; // follows pgvector's payload
+    const armsDark: SearchArm[] = ["semantic"];
     let hits: SearchHit[] = [];
     if (this.#pool === null) {
       armsDark.unshift("fts");

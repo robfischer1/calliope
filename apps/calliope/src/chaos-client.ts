@@ -998,6 +998,10 @@ export class FixtureChaosDial implements ChaosDial {
   private seq = 0;
   /** When set, every admit refuses with these violations. */
   refuseWith: unknown[] | null = null;
+  /** When set, a removeEdge retracts only a fact held in its own graph (the
+   *  op's `graph`, else the batch scope), as chaos does. */
+  graphScoped = false;
+  readonly #graphOf = new WeakMap<NodeEdge, string>();
 
   private key(kind: string, label: string): string {
     return `${kind}${label.trim().toLowerCase()}`;
@@ -1102,6 +1106,7 @@ export class FixtureChaosDial implements ChaosDial {
             dtype === "instant" ? renderEastern(BigInt(stored)) : stored;
         }
         list.push(edge);
+        this.#graphOf.set(edge, scopeHash(scope));
         this.nodeEdges.set(from, list);
         this.factLog.push({
           tx,
@@ -1122,8 +1127,13 @@ export class FixtureChaosDial implements ChaosDial {
         const rdtype = typeof op.dtype === "string" ? op.dtype : "";
         const rstored =
           rdtype === "" || hasBlob ? "" : storedLiteral(value, rdtype);
+        const inGraph =
+          typeof op.graph === "string" ? op.graph : scopeHash(scope);
         const hits = (e: NodeEdge): boolean => {
           if (e.predicate !== asStr(op.predicate)) return false;
+          if (this.graphScoped && this.#graphOf.get(e) !== inGraph) {
+            return false;
+          }
           const t = this.#typed.get(e);
           return rdtype === ""
             ? t === undefined && e.value === value
@@ -1140,7 +1150,7 @@ export class FixtureChaosDial implements ChaosDial {
             value: removed.value,
             domain: removed.domain,
             added: false,
-            graph: scopeHash(scope),
+            graph: this.#graphOf.get(removed) ?? scopeHash(scope),
           });
         }
       }
