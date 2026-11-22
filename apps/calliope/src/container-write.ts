@@ -25,6 +25,7 @@ import {
   TREE_REF,
   heldGraphs,
   placementBirthOps,
+  placementHeldGraphs,
   placementRemoveOps,
   repointOps,
   repositionOps,
@@ -292,7 +293,19 @@ export async function writeContainer(
             expects.push(expectHeldBlob(origin, TREE_CONTENT, op.blobId));
           }
           batch.push(
-            ...placementRemoveOps(op.slot, containerToken, op.position, origin),
+            ...placementRemoveOps(
+              op.slot,
+              containerToken,
+              op.position,
+              origin,
+              await placementHeldGraphs(
+                facet.dial,
+                op.slot,
+                containerToken,
+                op.position,
+                origin,
+              ),
+            ),
           );
           break;
         }

@@ -14,6 +14,7 @@ import { createNote, isCreateNoteError } from "../src/mcp/tools.js";
 import {
   TREE_CONTENT,
   TREE_MEMBER,
+  TREE_REF,
   readTree,
   repointOps,
   slotBirthOps,
@@ -94,6 +95,77 @@ describe("update across tenants (capture 32501)", () => {
     expect(await readTree(dial, note)).toEqual([]);
     expect(await dial.placedEdges(slot)).toEqual([]);
     const members = (await dial.placedEdges(note)).filter(
+      (e) => e.predicate === TREE_MEMBER,
+    );
+    expect(members).toEqual([]);
+  });
+
+  it("a governance remove of a notes-born placement retracts membership, position and reference where they are held", async () => {
+    const origin = await bornNote();
+    await writeContainer(
+      origin.facet,
+      origin.note,
+      [{ op: "update", slot: origin.slot, oldBlobId: origin.born, text: "x" }],
+      "notes",
+    );
+    const { dial, facet, slot: bornSlot } = origin;
+    const box = await createNote(
+      dial,
+      "notes",
+      { title: "Box" },
+      undefined,
+      facet.blobs,
+    );
+    if (isCreateNoteError(box)) throw new Error(box.detail);
+    const tree = await readContainer(facet, box.node_id);
+    const empty = tree.blocks[0];
+    if (empty?.blobId === undefined || empty.blobId === null) {
+      throw new Error("create_note birthed no block");
+    }
+    await writeContainer(
+      facet,
+      box.node_id,
+      [
+        {
+          op: "remove",
+          slot: empty.slot,
+          position: empty.position,
+          blobId: empty.blobId,
+        },
+      ],
+      "notes",
+    );
+    const placed = await writeContainer(
+      facet,
+      box.node_id,
+      [{ op: "add", ref: bornSlot, position: "b0" }],
+      "notes",
+    );
+    const placement = placed.minted[0] ?? "";
+    expect(placement).not.toBe("");
+    const placementSlot = (await readTree(dial, box.node_id))[0];
+    expect(placementSlot?.ref).toBe(bornSlot);
+
+    await writeContainer(
+      facet,
+      box.node_id,
+      [
+        {
+          op: "remove",
+          slot: placement,
+          position: "b0",
+          blobId: "",
+        },
+      ],
+      "governance",
+    );
+    expect(await readTree(dial, box.node_id)).toEqual([]);
+    const refs = (await dial.placedEdges(placement)).filter(
+      (e) => e.predicate === TREE_REF,
+    );
+    expect(refs).toEqual([]);
+    expect(await dial.placedEdges(placement)).toEqual([]);
+    const members = (await dial.placedEdges(box.node_id)).filter(
       (e) => e.predicate === TREE_MEMBER,
     );
     expect(members).toEqual([]);
