@@ -111,11 +111,13 @@ describe("update across tenants (capture 32501)", () => {
     const doc = await minted(dial.admit([opCreate("Note", "doc")], "notes"));
     const birth = (pos: string, blobId: string): Promise<string> =>
       minted(dial.admit(slotBirthOps(doc, "b", pos, blobId), "notes"));
-    const kept = await birth("a0", "1");
-    const dropped = await birth("a1", "2");
+    const one = await blobs.mint("one");
+    const two = await blobs.mint("two");
+    const kept = await birth("a0", one);
+    const dropped = await birth("a1", two);
     const slots = new Map<string, SlotState>([
-      ["s1", { slot: kept, position: "a0", blobId: "1", text: "one" }],
-      ["s2", { slot: dropped, position: "a1", blobId: "2", text: "two" }],
+      ["s1", { slot: kept, position: "a0", blobId: one, text: "one" }],
+      ["s2", { slot: dropped, position: "a1", blobId: two, text: "two" }],
     ]);
     const { batch } = await diffRevision(
       dial,
@@ -129,7 +131,7 @@ describe("update across tenants (capture 32501)", () => {
 
     const tree = await readTree(dial, doc);
     expect(tree.map((t) => t.slot)).toEqual([kept]);
-    expect(tree[0]?.blobId).not.toBe("1");
+    expect(tree[0]?.blobId).toBe(await blobs.mint("ONE"));
     expect(await contentEdges(dial, kept)).toHaveLength(1);
     expect(await dial.placedEdges(dropped)).toEqual([]);
   });
