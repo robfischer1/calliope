@@ -1,0 +1,16 @@
+apiVersion: ouranos.notusmi.com/v1
+kind: ProviderContractClaim
+metadata:
+  name: urania
+  namespace: calliope
+  annotations:
+    ouranos.notusmi.com/seed: l4-parity
+spec:
+  workload:
+    serviceAccountName: calliope
+  contractRef:
+    name: urania
+    namespace: urania
+  legacyVerbs:
+  - "*"
+  purpose: "L4 parity: logged by ztunnel with no seam record"
