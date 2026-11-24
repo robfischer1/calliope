@@ -1,0 +1,16 @@
+apiVersion: ouranos.notusmi.com/v1
+kind: ProviderContractClaim
+metadata:
+  name: eros
+  namespace: calliope
+  annotations:
+    ouranos.notusmi.com/seed: seam
+spec:
+  workload:
+    serviceAccountName: calliope
+  contractRef:
+    name: eros
+    namespace: eros
+  legacyVerbs:
+  - search
+  purpose: "grant row: witnessed 8 calls 2026-10-30..2026-11-06 (nyx_orbits shadow edge); every verb served by eros"

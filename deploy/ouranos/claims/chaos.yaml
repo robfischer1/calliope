@@ -1,0 +1,26 @@
+apiVersion: ouranos.notusmi.com/v1
+kind: ProviderContractClaim
+metadata:
+  name: chaos
+  namespace: calliope
+  annotations:
+    ouranos.notusmi.com/seed: seam
+spec:
+  workload:
+    serviceAccountName: calliope
+  contractRef:
+    name: chaos
+    namespace: chaos
+  legacyVerbs:
+  - capture
+  - find_by_name
+  - find_by_value
+  - held_blobs
+  - history
+  - materialize_edges
+  - quads_from
+  - quads_to
+  - resolve_node_refs
+  - resolve_nodes
+  - resolve_scalars
+  purpose: "grant row: orbits[chaos][calliope]"

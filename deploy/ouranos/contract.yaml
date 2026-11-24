@@ -1,0 +1,100 @@
+apiVersion: ouranos.notusmi.com/v1
+kind: ProviderContract
+metadata:
+  name: calliope
+  namespace: calliope
+spec:
+  workload:
+    serviceAccountName: calliope
+  targets:
+  - service: calliope
+    ports:
+    - port: 8207
+      protocol: OpenAPI
+    - port: 80
+      protocol: MCP
+  surface:
+    source: ImageReferrer
+  defaultRestriction:
+    mode: Open
+  restrictions:
+  - match:
+      kind: LegacyVerb
+      name: create_note
+    restriction:
+      mode: Audience
+      audience:
+      - namespace: charon
+        serviceAccountName: charon
+      - namespace: demeter
+        serviceAccountName: demeter
+      - namespace: hades
+        serviceAccountName: hades
+      - namespace: mnemosyne
+        serviceAccountName: mnemosyne
+      - namespace: nomos
+        serviceAccountName: nomos
+  - match:
+      kind: LegacyVerb
+      name: delete_note
+    restriction:
+      mode: Audience
+      audience:
+      - namespace: charon
+        serviceAccountName: charon
+      - namespace: hades
+        serviceAccountName: hades
+  - match:
+      kind: LegacyVerb
+      name: move_blocks
+    restriction:
+      mode: Audience
+      audience:
+      - namespace: charon
+        serviceAccountName: charon
+      - namespace: glaucus
+        serviceAccountName: glaucus
+      - namespace: hades
+        serviceAccountName: hades
+  - match:
+      kind: LegacyVerb
+      name: restore_note
+    restriction:
+      mode: Audience
+      audience:
+      - namespace: charon
+        serviceAccountName: charon
+      - namespace: hades
+        serviceAccountName: hades
+  - match:
+      kind: LegacyVerb
+      name: set_properties
+    restriction:
+      mode: Audience
+      audience:
+      - namespace: charon
+        serviceAccountName: charon
+      - namespace: hades
+        serviceAccountName: hades
+  - match:
+      kind: LegacyVerb
+      name: write_container
+    restriction:
+      mode: Audience
+      audience:
+      - namespace: charon
+        serviceAccountName: charon
+      - namespace: demeter
+        serviceAccountName: demeter
+      - namespace: glaucus
+        serviceAccountName: glaucus
+      - namespace: hades
+        serviceAccountName: hades
+      - namespace: mnemosyne
+        serviceAccountName: mnemosyne
+      - namespace: nomos
+        serviceAccountName: nomos
+      - namespace: ourea
+        serviceAccountName: ourea
+      - namespace: proteus
+        serviceAccountName: proteus
