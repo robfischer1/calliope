@@ -1,0 +1,63 @@
+# Seeded once from foundry-dies (fleet/repos, capabilities/served, orbits) and
+# the live cluster by rob/backstage scripts/migrate; this file is the record
+# now. Backstage reads it from every repo on ourea (catalog-info.yaml).
+apiVersion: "backstage.io/v1alpha1"
+kind: "Component"
+metadata:
+  name: "calliope"
+  description: "The Notes & Prose Muse's wire: the MCP body service over the section body model."
+  annotations:
+    backstage.io/source-location: "url:https://git.notusmi.com/rob/calliope"
+    backstage.io/kubernetes-id: "calliope"
+    backstage.io/kubernetes-namespace: "prime"
+    backstage.io/kubernetes-label-selector: "app=calliope"
+    forge.notusmi.com/openapi: "http://calliope.prime.svc.cluster.local:8207/openapi.json"
+    forge.notusmi.com/verb-prefix: "calliope"
+  tags:
+    - "typescript"
+spec:
+  type: "service"
+  lifecycle: "production"
+  owner: "group:default/rob"
+  system: "forge-fleet"
+  providesApis:
+    - "calliope-verbs"
+  consumesApis:
+    - "chaos-verbs"
+  dependsOn:
+    - "component:default/chaos"
+---
+apiVersion: "backstage.io/v1alpha1"
+kind: "API"
+metadata:
+  name: "calliope-verbs"
+  description: "The verbs calliope serves through the Hades gateway."
+  tags:
+    - "mcp"
+spec:
+  type: "mcp-verbs"
+  lifecycle: "production"
+  owner: "group:default/rob"
+  system: "forge-fleet"
+  definition: |
+    - calliope_blob_census
+    - calliope_container_history
+    - calliope_copy_reference
+    - calliope_create_note
+    - calliope_delete_note
+    - calliope_dissolve_note
+    - calliope_export_note
+    - calliope_file_revisions
+    - calliope_list_by_tag
+    - calliope_list_tags
+    - calliope_look
+    - calliope_materialize_note
+    - calliope_move_blocks
+    - calliope_read_container
+    - calliope_read_containers
+    - calliope_restore_note
+    - calliope_revision_deltas
+    - calliope_search
+    - calliope_set_properties
+    - calliope_unpin
+    - calliope_write_container
