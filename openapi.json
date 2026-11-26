@@ -1,0 +1,3260 @@
+{
+  "info": {
+    "title": "calliope",
+    "version": "v1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/_ops/{id}": {
+      "delete": {
+        "operationId": "_ops_cancel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the operation, cancelled"
+          },
+          "404": {
+            "description": "no such operation"
+          }
+        },
+        "summary": "Cancels the handler's context."
+      },
+      "get": {
+        "operationId": "_ops_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{id, state, progress, message, result?}"
+          },
+          "404": {
+            "description": "no such operation"
+          }
+        },
+        "summary": "The state of an asynchronous call; Prefer: wait=N long-polls."
+      }
+    },
+    "/v1/blob_census": {
+      "delete": {
+        "operationId": "blob_census",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/blob_census/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "blob_census"
+      }
+    },
+    "/v1/container_history": {
+      "get": {
+        "operationId": "container_history",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "container",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "The container node's 64-hex token."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "container_history"
+      }
+    },
+    "/v1/copy_reference": {
+      "get": {
+        "operationId": "copy_reference",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "node_id",
+            "schema": {
+              "type": "string",
+              "description": "The note whose compound reference to mint."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "copy_reference"
+      }
+    },
+    "/v1/create_note": {
+      "post": {
+        "operationId": "create_note",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/create_note/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "create_note"
+      }
+    },
+    "/v1/delete_note": {
+      "delete": {
+        "operationId": "delete_note",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/delete_note/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "delete_note"
+      }
+    },
+    "/v1/delete_note/live": {
+      "delete": {
+        "operationId": "delete_note_live",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/delete_note/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {
+          "dry_run": false
+        },
+        "x-mcp-tool": "delete_note"
+      }
+    },
+    "/v1/dissolve_note": {
+      "post": {
+        "operationId": "dissolve_note",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/dissolve_note/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "dissolve_note"
+      }
+    },
+    "/v1/export_note": {
+      "get": {
+        "operationId": "export_note",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "container_id",
+            "schema": {
+              "description": "The note's node id; this or source_path.",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_path",
+            "schema": {
+              "description": "The note's identity path (resolves by name).",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "export_note"
+      }
+    },
+    "/v1/file_revisions": {
+      "get": {
+        "operationId": "file_revisions",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "file_path",
+            "schema": {
+              "description": "Vault-relative path filter.",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "id",
+            "schema": {
+              "description": "A single revision id.",
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "Row cap (default 50).",
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "file_revisions"
+      }
+    },
+    "/v1/file_revisions/repo/{repo}": {
+      "get": {
+        "operationId": "file_revisions_repo",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "file_path",
+            "schema": {
+              "description": "Vault-relative path filter.",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "id",
+            "schema": {
+              "description": "A single revision id.",
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "Row cap (default 50).",
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "file_revisions"
+      }
+    },
+    "/v1/list_by_tag": {
+      "get": {
+        "operationId": "list_by_tag",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_suppressed",
+            "schema": {
+              "description": "Default false. true also lists suppressed notes (a tag rename must reach them).",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The tag (with or without the leading #)."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "list_by_tag"
+      }
+    },
+    "/v1/list_tags": {
+      "get": {
+        "operationId": "list_tags",
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "list_tags"
+      }
+    },
+    "/v1/look": {
+      "get": {
+        "operationId": "look",
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "look"
+      }
+    },
+    "/v1/materialize_note": {
+      "get": {
+        "operationId": "materialize_note",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "container_id",
+            "schema": {
+              "description": "The note's node id; this or source_path.",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source_path",
+            "schema": {
+              "description": "The note's identity path (resolves by name).",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "materialize_note"
+      }
+    },
+    "/v1/move_blocks": {
+      "delete": {
+        "operationId": "move_blocks",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/move_blocks/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "move_blocks"
+      }
+    },
+    "/v1/read_container": {
+      "get": {
+        "operationId": "read_container",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "as_of_tx",
+            "schema": {
+              "description": "Read the container as it stood at this transaction.",
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          {
+            "in": "query",
+            "name": "container",
+            "schema": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{64}|(?:styx:\\/\\/)?[a-z]{3,6}-[a-z]{3,6}-[a-z]{3,6})$",
+              "description": "The container node's 64-hex token, or its styx address (able-frost-casual, bare or styx://). An address that names no node refuses not_found."
+            }
+          },
+          {
+            "in": "query",
+            "name": "facts",
+            "schema": {
+              "default": false,
+              "description": "Also answer each block's slot facts, each with its form (node or literal).",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "placements",
+            "schema": {
+              "default": false,
+              "description": "Also answer each block's placements: the slots (and their containers) that reference it \u2014 the reverse index of ref.",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "read_container"
+      }
+    },
+    "/v1/read_containers": {
+      "post": {
+        "operationId": "read_containers",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/read_containers/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-safe": true,
+        "x-mcp-tool": "read_containers"
+      }
+    },
+    "/v1/restore_note": {
+      "post": {
+        "operationId": "restore_note",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/restore_note/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "restore_note"
+      }
+    },
+    "/v1/revision_deltas": {
+      "get": {
+        "operationId": "revision_deltas",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "revision_id",
+            "schema": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991,
+              "description": "The revision whose deltas to read."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "revision_deltas"
+      }
+    },
+    "/v1/search": {
+      "get": {
+        "operationId": "search",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "k",
+            "schema": {
+              "description": "Max hits to return (default 20).",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The search phrase."
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "description": "Root-relative subtree prefix to restrict to; absent = everything.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "search"
+      }
+    },
+    "/v1/set_properties": {
+      "delete": {
+        "operationId": "set_properties",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/set_properties/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "set_properties"
+      }
+    },
+    "/v1/tag_seed_read": {
+      "get": {
+        "operationId": "tag_seed_read",
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "tag_seed_read"
+      }
+    },
+    "/v1/unpin": {
+      "delete": {
+        "operationId": "unpin",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/unpin/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "unpin"
+      }
+    },
+    "/v1/write_container": {
+      "delete": {
+        "operationId": "write_container",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/write_container/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "write_container"
+      }
+    },
+    "/v1/writing_deltas_ingest": {
+      "post": {
+        "operationId": "writing_deltas_ingest",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/x-mcp-tools/writing_deltas_ingest/inputSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the tool result's text, verbatim"
+          },
+          "202": {
+            "description": "still running: Location is /v1/_ops/{id}"
+          },
+          "4XX": {
+            "description": "an isError result (X-Star set) or a bad_args refusal"
+          }
+        },
+        "x-mcp-match": {},
+        "x-mcp-tool": "writing_deltas_ingest"
+      }
+    }
+  },
+  "x-mcp-tools": {
+    "blob_census": {
+      "name": "blob_census",
+      "title": "The blob census (mark-and-sweep GC)",
+      "description": "F7 (Git for Ideas): the reachability census with the roles swapped \u2014 the blob store asks, each tenant graph reports the blob ids its LOG holds. A census with ANY reporter missing is incomplete and reaps nothing. Mark-and-sweep: a complete census marks the unheld; execute=true reaps only ids a PREVIOUS complete census already marked and that are still unheld (the grace window for saves in flight). Facts naming absent blobs are reported dangling, never fixed. Held is the log, so only never-referenced orphans ever reap.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "execute": {
+            "description": "Reap previously-marked, still-unheld blobs.",
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "reporters": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "graph": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "error": {
+                  "type": "string"
+                }
+              },
+              "required": ["graph", "ok", "count"],
+              "additionalProperties": {}
+            }
+          },
+          "held": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "dangling": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "marked": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reaped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "executed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "complete",
+          "reporters",
+          "held",
+          "dangling",
+          "marked",
+          "reaped",
+          "executed"
+        ],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_blob_census/v1",
+        "title": "calliope_blob_census \u2014 the answer",
+        "description": "The blob census report: whether every rostered tenant graph reported, how many blob ids the logs hold, and the ids newly marked, reaped or dangling. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "container_history": {
+      "name": "container_history",
+      "title": "A container's history (the graph's transactions)",
+      "description": "042 F5 (Git for Ideas): every transaction that touched the container or any slot it EVER held (the door's log closure over tree_member \u2014 removed members' edits stay reachable), ascending, with authors and timestamps. No revision table: history IS the graph. Reconstruct any moment with read_container(as_of_tx).",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "container": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "The container node's 64-hex token."
+          }
+        },
+        "required": ["container"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "transactions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tx": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "at": {
+                  "format": "date-time",
+                  "type": ["string", "null"]
+                },
+                "author": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": ["tx", "at", "author", "note"],
+              "additionalProperties": {}
+            }
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["transactions", "count"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_container_history/v1",
+        "title": "calliope_container_history \u2014 the answer",
+        "description": "A container's graph transactions, ascending, with the count. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "copy_reference": {
+      "name": "copy_reference",
+      "title": "Compound copy-reference",
+      "description": "024/F1: the compound reference for a note \u2014 a human-readable wikilink plus the resolvable address, `[[<title>]] (<node id>)`. The title is the node's graph name; the id half is the full node token (the address of record \u2014 resolvable by read_body et al.). Unknown node \u2192 a not_found refusal.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "description": "The note whose compound reference to mint."
+          }
+        },
+        "required": ["node_id"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "compound": {
+            "type": "string"
+          },
+          "wikilink": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "address_form": {
+            "type": "string",
+            "enum": ["node", "path"]
+          }
+        },
+        "required": ["compound", "wikilink", "id", "title", "address_form"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_copy_reference/v1",
+        "title": "calliope_copy_reference \u2014 the answer",
+        "description": "The compound reference for a note: the wikilink, the resolvable id and both joined as `[[title]] (id)`. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "create_note": {
+      "name": "create_note",
+      "title": "Create a note (the note-native mint)",
+      "description": "C8: mint a Note-kind identity node on the notes graph through the gated two-admit path (createNode, then hasName/hasType/parent edges), auto-parenting to the invisible 'Notes' root when no parent is named \u2014 orphan-safe, idempotent on (Note, title), with heal-on-reuse for interrupted mints. tags[] is accepted and forward-carried (the hasTag write is C9's). Returns {node_id, created}; refusals (bad_args / admit_refused / suppressed_exists \u2014 the title belongs to a suppressed note, whose id it names; restore_note brings it back).",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The note's title \u2014 its graph name AND idempotency key."
+          },
+          "parent": {
+            "description": "Parent node token; omitted, the note parents to the ensured 'Notes' root.",
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "tags": {
+            "description": "Explicit tags (e.g. folder-derived) \u2014 validated here, written as hasTag edges by C9.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "One tag."
+            }
+          },
+          "type": {
+            "default": "Note",
+            "description": "The hasType edge; the node kind stays Note.",
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+          }
+        },
+        "required": ["title"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "created": {
+            "type": "boolean"
+          }
+        },
+        "required": ["node_id", "created"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_create_note/v1",
+        "title": "calliope_create_note \u2014 the answer",
+        "description": "The note's identity and whether this call minted it. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "delete_note": {
+      "name": "delete_note",
+      "title": "Delete notes (suppress; purge on request)",
+      "description": "Take Note nodes off every listing. By default (purge=false) a note is SUPPRESSED: it keeps every fact and gains the literal suppressed=true, which hides it from list_by_tag, list_tags, search and look; read_container by its own id still answers, and restore_note undoes it. A note already suppressed answers already_suppressed. purge=true instead retracts every current outbound and inbound fact, each block slot's facts, and the tag-mirror rows; history keeps the retracted facts and blobs are left to the census. dry_run defaults to TRUE and reports what would change. Takes up to 100 ids. In both modes the whole call refuses, writing nothing, on a non-Note, a protected note (archived, or claimed by another star) or a parent of a note outside the call. A purge also refuses (has_placements) a note holding a block that slots outside the call place, unless placements is \"orphan\". A note with no current facts answers not_found.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "A Note node token."
+            },
+            "uniqueItems": true,
+            "description": "Note node tokens, each once."
+          },
+          "dry_run": {
+            "description": "Default true. false writes.",
+            "type": "boolean"
+          },
+          "purge": {
+            "description": "Default false (suppress). true retracts every fact; restore cannot undo it.",
+            "type": "boolean"
+          },
+          "placements": {
+            "description": "Purge only: a note whose blocks are placed by slots outside the call is purged anyway, those placements left dangling (each keeps its ref). Absent, such a note refuses has_placements.",
+            "type": "string",
+            "const": "orphan"
+          }
+        },
+        "required": ["ids"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["suppress", "purge"]
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "node_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "would_suppress",
+                        "suppressed",
+                        "already_suppressed",
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": ["node_id", "status"],
+                  "additionalProperties": {}
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "node_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": ["would_delete", "deleted", "not_found"]
+                    },
+                    "edges_out": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "edges_in": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "blocks": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "shared_blocks": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "blobs": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "tx": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "orphaned": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "slot": {
+                            "type": "string"
+                          },
+                          "container": {
+                            "type": "string"
+                          },
+                          "origin": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["slot", "origin"],
+                        "additionalProperties": {}
+                      },
+                      "description": "Placements this call left dangling (each keeps its ref), with the origin they placed. Present only when an origin that had placements was removed or purged with placements \"orphan\"."
+                    }
+                  },
+                  "required": [
+                    "node_id",
+                    "status",
+                    "edges_out",
+                    "edges_in",
+                    "blocks",
+                    "shared_blocks",
+                    "blobs",
+                    "tags"
+                  ],
+                  "additionalProperties": {}
+                }
+              ]
+            }
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "suppressed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "already_suppressed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "not_found": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "deleted": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "edges_out": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "edges_in": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "blocks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "shared_blocks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "blobs_referenced": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "blobs_deleted": {
+                "type": "number",
+                "const": 0
+              },
+              "tag_rows": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": ["not_found"],
+            "additionalProperties": {}
+          },
+          "tx": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["mode", "dry_run", "notes", "totals"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_delete_note/v1",
+        "title": "calliope_delete_note \u2014 the answer",
+        "description": "What a delete did or, on a dry run, would do. mode says which report this is: suppress (the default) answers per-note suppress statuses and totals {suppressed, already_suppressed, not_found}; purge answers per-note deletion plans and totals {deleted, not_found, edges_out, edges_in, blocks, shared_blocks, blobs_referenced, blobs_deleted, tag_rows}. A purge with placements \"orphan\" may carry orphaned on a note: the placements outside the call left dangling (planned on a dry run). A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "dissolve_note": {
+      "name": "dissolve_note",
+      "title": "Dissolve \u2014 promote one container into the constellation",
+      "description": "F9: per-note promotion, human-chosen (the inversion that retired C6's bulk sweep). Lands the container's blocks as ONE generation on its note (identity = source_path, the F6 key), reconciles the provenance attributes and materialises inline tags as hasTag edges. Identical content is a no-op; changed content is a superseding generation \u2014 history keeps the old (last-write-wins under append-only history). Returns { node_id, created, generation }.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "source_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The container's local path \u2014 its stable identity."
+          },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "description": "The block's prose."
+                }
+              },
+              "required": ["text"],
+              "additionalProperties": false,
+              "description": "One block."
+            },
+            "description": "The container's blocks, in display order."
+          },
+          "title": {
+            "description": "The display title.",
+            "type": "string"
+          },
+          "source_kind": {
+            "description": "Capture-kind provenance (default vault-note).",
+            "type": "string"
+          },
+          "schema_type": {
+            "description": "The note_type provenance (Plan, Note, \u2026) \u2014 the attribute typed queries key on (F10).",
+            "type": "string"
+          },
+          "file_path": {
+            "description": "The source's absolute path provenance.",
+            "type": "string"
+          },
+          "mtime": {
+            "description": "Local modified time.",
+            "type": "string"
+          },
+          "ctime": {
+            "description": "Local created time.",
+            "type": "string"
+          },
+          "raw_hash": {
+            "description": "The local file's content hash (default: derived).",
+            "type": "string"
+          }
+        },
+        "required": ["source_path", "blocks"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "generation": {
+            "type": "string",
+            "enum": ["minted", "superseded", "nooped"]
+          }
+        },
+        "required": ["node_id", "created", "generation"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_dissolve_note/v1",
+        "title": "calliope_dissolve_note \u2014 the answer",
+        "description": "Where a promoted container landed: the note's id, whether this call minted it, and what the body write did (minted, superseded, nooped). A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "export_note": {
+      "name": "export_note",
+      "title": "Export a container to markdown (one-way)",
+      "description": "F14 (the A5 fork closes): project a container's blocks to clean markdown for git and grep \u2014 blocks byte-verbatim, in order, joined with the dialect's block separator. Markdown is an EXPORT here, never the interchange format or the source of truth. Handle: container_id, or source_path (the note's identity name). Returns { container_id, markdown, block_count }; a miss is a not_found refusal.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "container_id": {
+            "description": "The note's node id; this or source_path.",
+            "type": "string"
+          },
+          "source_path": {
+            "description": "The note's identity path (resolves by name).",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "x-requiredAnyOf": [["container_id"], ["source_path"]]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "container_id": {
+            "type": "string"
+          },
+          "markdown": {
+            "type": "string"
+          },
+          "block_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["container_id", "markdown", "block_count"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_export_note/v1",
+        "title": "calliope_export_note \u2014 the answer",
+        "description": "The container projected to markdown: its id, the markdown and the block count. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "file_revisions": {
+      "name": "file_revisions",
+      "title": "Read the file-revision archive",
+      "description": "FROZEN ARCHIVE (F7 scoping): the git-for-ideas record re-homed from phdb \u2014 read-only history, never a live write surface: revisions by file_path / repo / id, newest first. Blob shas are pointers into the vault's git repo. Returns { revisions: [...] }.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "id": {
+            "description": "A single revision id.",
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "file_path": {
+            "description": "Vault-relative path filter.",
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repo filter.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Row cap (default 50).",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "revisions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "schema_type": {
+                  "type": ["string", "null"]
+                },
+                "repo": {
+                  "type": ["string", "null"]
+                },
+                "commit_sha": {
+                  "type": ["string", "null"]
+                },
+                "file_path": {
+                  "type": "string"
+                },
+                "prior_file_path": {
+                  "type": ["string", "null"]
+                },
+                "change_type": {
+                  "type": ["string", "null"]
+                },
+                "authorship": {
+                  "type": ["string", "null"]
+                },
+                "summary": {
+                  "type": ["string", "null"]
+                },
+                "summary_model": {
+                  "type": ["string", "null"]
+                },
+                "summary_generated_at": {
+                  "format": "date-time",
+                  "type": ["string", "null"]
+                },
+                "git_blob_sha": {
+                  "type": ["string", "null"]
+                },
+                "parent_blob_sha": {
+                  "type": ["string", "null"]
+                },
+                "captured_at": {
+                  "format": "date-time",
+                  "type": ["string", "null"]
+                }
+              },
+              "required": [
+                "id",
+                "schema_type",
+                "repo",
+                "commit_sha",
+                "file_path",
+                "prior_file_path",
+                "change_type",
+                "authorship",
+                "summary",
+                "summary_model",
+                "summary_generated_at",
+                "git_blob_sha",
+                "parent_blob_sha",
+                "captured_at"
+              ],
+              "additionalProperties": {}
+            }
+          }
+        },
+        "required": ["revisions"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_file_revisions/v1",
+        "title": "calliope_file_revisions \u2014 the answer",
+        "description": "The frozen file-revision archive, newest first, as {revisions}; empty is an empty list. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "list_by_tag": {
+      "name": "list_by_tag",
+      "title": "Notes carrying a tag",
+      "description": "C9: the server-side tag slice \u2014 the notes-graph nodes carrying hasTag == the (lowercase-normalized) tag, over the graph's indexed point lookup, suppressed notes left out unless include_suppressed. Returns {tag, node_ids}.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The tag (with or without the leading #)."
+          },
+          "include_suppressed": {
+            "description": "Default false. true also lists suppressed notes (a tag rename must reach them).",
+            "type": "boolean"
+          }
+        },
+        "required": ["tag"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string"
+          },
+          "node_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["tag", "node_ids"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_list_by_tag/v1",
+        "title": "calliope_list_by_tag \u2014 the answer",
+        "description": "The notes carrying a tag: the normalized tag and the node ids. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "list_tags": {
+      "name": "list_tags",
+      "title": "The distinct tag set",
+      "description": "C9: every tag Calliope has written, with carrier counts \u2014 the picker's chip source. Suppressed notes are not counted. Returns {tags: [{tag, count}]}.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tag": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": ["tag", "count"],
+              "additionalProperties": {}
+            }
+          }
+        },
+        "required": ["tags"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_list_tags/v1",
+        "title": "calliope_list_tags \u2014 the answer",
+        "description": "Every tag Calliope has written with its carrier count. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "look": {
+      "name": "look",
+      "title": "Read the focus register",
+      "description": "028/F5: the attention pointer \u2014 the current focus Rob's editor last emitted (a capture-time-resolved block pointer), with an honest drift verdict against the live block: none / drifted (current_text included) / gone. No focus yet answers { focus: null }, not an error. Reading never mutates.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "focus": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "pointer": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "body"
+                      },
+                      "node": {
+                        "type": "string"
+                      },
+                      "section": {
+                        "type": "string"
+                      },
+                      "offsetFrom": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "offsetTo": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "ts": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "node",
+                      "section",
+                      "offsetFrom",
+                      "offsetTo",
+                      "text",
+                      "ts"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  "received_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "drift": {
+                    "type": "string",
+                    "enum": ["none", "drifted", "gone"]
+                  },
+                  "current_text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["pointer", "received_at", "drift"],
+                "additionalProperties": {}
+              }
+            ]
+          },
+          "pins": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "pointer": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "body"
+                    },
+                    "node": {
+                      "type": "string"
+                    },
+                    "section": {
+                      "type": "string"
+                    },
+                    "offsetFrom": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "offsetTo": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "ts": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "node",
+                    "section",
+                    "offsetFrom",
+                    "offsetTo",
+                    "text",
+                    "ts"
+                  ],
+                  "additionalProperties": {}
+                },
+                "received_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "drift": {
+                  "type": "string",
+                  "enum": ["none", "drifted", "gone"]
+                },
+                "current_text": {
+                  "type": "string"
+                },
+                "pin_id": {
+                  "type": "string"
+                }
+              },
+              "required": ["pointer", "received_at", "drift", "pin_id"],
+              "additionalProperties": {}
+            }
+          }
+        },
+        "required": ["focus", "pins"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_look/v1",
+        "title": "calliope_look \u2014 the answer",
+        "description": "The attention pointer: the current focus with its drift verdict (null when none has arrived) and every pin, each with its own verdict. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "materialize_note": {
+      "name": "materialize_note",
+      "title": "Materialize \u2014 land a remote container locally",
+      "description": "F9: the inverse of Dissolve \u2014 one read serving everything the local window needs to write the file: the blocks in order, the tags, and the provenance attributes. Handle: container_id, or source_path (the note's identity name). A miss is a not_found refusal.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "container_id": {
+            "description": "The note's node id; this or source_path.",
+            "type": "string"
+          },
+          "source_path": {
+            "description": "The note's identity path (resolves by name).",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "x-requiredAnyOf": [["container_id"], ["source_path"]]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "container_id": {
+            "type": "string"
+          },
+          "frontmatter": {
+            "type": "string"
+          },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "orderKey": {
+                  "type": "string"
+                }
+              },
+              "required": ["id", "text", "orderKey"],
+              "additionalProperties": {}
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "provenance": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["container_id", "blocks", "tags", "provenance"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_materialize_note/v1",
+        "title": "calliope_materialize_note \u2014 the answer",
+        "description": "Everything the local window needs to write the file: the blocks in order, the tags and the provenance attributes, plus the verbatim frontmatter when one was set. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "move_blocks": {
+      "name": "move_blocks",
+      "title": "Move blocks between containers (one graph transaction)",
+      "description": "Move block slots from one container to another of the SAME tenant in ONE graph transaction. The slots keep their token, blob and facts; they land contiguous, in their original relative order, at position (end by default, start, or after a slot already in `to`). Every slot must be a member of `from` now, else the whole batch refuses (not_found); a changed source, destination or position refuses conflict. container_history reaches a moved slot from both containers.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "The source container's 64-hex token."
+          },
+          "to": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "The destination container's 64-hex token."
+          },
+          "slots": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "A member slot's 64-hex token."
+            },
+            "description": "The slot tokens to move (members of from)."
+          },
+          "position": {
+            "description": "Default \"end\". \"start\", or a 64-hex slot token in `to` to land after.",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["end", "start"]
+              },
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            ],
+            "type": "string"
+          },
+          "tenant": {
+            "description": "Default: notes.",
+            "type": "string",
+            "enum": [
+              "notes",
+              "documents",
+              "comments",
+              "governance",
+              "issues",
+              "threads"
+            ]
+          }
+        },
+        "required": ["from", "to", "slots"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "tx": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "moved": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slot": {
+                  "type": "string"
+                },
+                "position": {
+                  "type": "string"
+                }
+              },
+              "required": ["slot", "position"],
+              "additionalProperties": {}
+            }
+          }
+        },
+        "required": ["moved"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_move_blocks/v1",
+        "title": "calliope_move_blocks \u2014 the answer",
+        "description": "The slots moved, in their new order with the fractional keys they now hold, and the graph transaction. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "read_container": {
+      "name": "read_container",
+      "title": "Read a container (ordered blocks, optionally as-of)",
+      "description": "042 F5 (Git for Ideas): resolve a container's tree and fetch its prose in ONE batched blob lookup \u2014 blocks in position order. as_of_tx reads the container as it stood at that transaction (members since removed included). A tree fact naming an absent blob surfaces as dangling (text null) \u2014 reported, never fabricated. A placement block (one that references another slot) carries ref {slot, container} and reads its origin's blobId and text, as of the same transaction; an orphaned placement is dangling with ref kept.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "container": {
+            "type": "string",
+            "pattern": "^(?:[0-9a-f]{64}|(?:styx:\\/\\/)?[a-z]{3,6}-[a-z]{3,6}-[a-z]{3,6})$",
+            "description": "The container node's 64-hex token, or its styx address (able-frost-casual, bare or styx://). An address that names no node refuses not_found."
+          },
+          "as_of_tx": {
+            "description": "Read the container as it stood at this transaction.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "facts": {
+            "default": false,
+            "description": "Also answer each block's slot facts, each with its form (node or literal).",
+            "type": "boolean"
+          },
+          "placements": {
+            "default": false,
+            "description": "Also answer each block's placements: the slots (and their containers) that reference it \u2014 the reverse index of ref.",
+            "type": "boolean"
+          }
+        },
+        "required": ["container"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "blocks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slot": {
+                  "type": "string"
+                },
+                "position": {
+                  "type": "string"
+                },
+                "blobId": {
+                  "type": ["string", "null"]
+                },
+                "text": {
+                  "type": ["string", "null"]
+                },
+                "dangling": {
+                  "type": "boolean"
+                },
+                "facts": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "predicate": {
+                        "type": "string"
+                      },
+                      "form": {
+                        "type": "string",
+                        "enum": ["node", "literal"]
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["predicate", "form", "value"],
+                    "additionalProperties": {}
+                  },
+                  "description": "The slot's facts (only on a facts read); form says whether each is a node token or a literal placeholder."
+                },
+                "ref": {
+                  "type": "object",
+                  "properties": {
+                    "slot": {
+                      "type": "string"
+                    },
+                    "container": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["slot"],
+                  "additionalProperties": {},
+                  "description": "Present only on a placement (a slot that places another slot): the origin slot it resolves through, and the container holding that origin. container is present on current reads only, never on an as_of_tx read. blobId and text are the origin's; an orphaned placement keeps its ref and reads dangling. Absent on every blob slot."
+                },
+                "placements": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "slot": {
+                        "type": "string"
+                      },
+                      "container": {
+                        "type": "string",
+                        "description": "Absent when no container holds the placement."
+                      }
+                    },
+                    "required": ["slot"],
+                    "additionalProperties": {}
+                  },
+                  "description": "Present only on a placements read: the slots placing this one (empty on an ordinary block)."
+                }
+              },
+              "required": ["slot", "position", "blobId", "text", "dangling"],
+              "additionalProperties": {}
+            }
+          },
+          "asOfTx": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["blocks"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_read_container/v1",
+        "title": "calliope_read_container \u2014 the answer",
+        "description": "A container's blocks in position order; a block whose prose is absent is dangling with null text. asOfTx echoes an as-of read. A placement block also carries ref {slot, container}; a placements read adds placements to each block; an orphaned placement reads dangling with ref kept. An unknown container answers an empty block list. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "read_containers": {
+      "name": "read_containers",
+      "title": "Read many containers at once (ordered blocks, batched)",
+      "description": "Batch read_container at HEAD: up to 500 containers in one tree query and ONE blob lookup \u2014 never N calls. Each container answers its revision (sha256 over the ordered slot:blobId pairs plus the frontmatter), its frontmatter (or null) and its blocks in position order, dangling surfaced exactly as read_container does. texts=false skips the blob fetch and answers text null. An id with no tree and no frontmatter is listed in missing. Fewer than 1 or more than 500 ids is refused as bad_args; a repeated id is read once.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "containers": {
+            "minItems": 1,
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{64}|(?:styx:\\/\\/)?[a-z]{3,6}-[a-z]{3,6}-[a-z]{3,6})$",
+              "description": "A container node's 64-hex token, or its styx address (bare or styx://)."
+            },
+            "description": "Container tokens or styx addresses (1 to 500). Each answer echoes the ref as sent; an address naming no node is listed in missing."
+          },
+          "texts": {
+            "default": true,
+            "description": "Fetch each block's prose; false answers text null.",
+            "type": "boolean"
+          },
+          "facts": {
+            "default": false,
+            "description": "Also answer each block's slot facts, each with its form (node or literal).",
+            "type": "boolean"
+          }
+        },
+        "required": ["containers"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "containers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "container": {
+                  "type": "string"
+                },
+                "revision": {
+                  "type": "string"
+                },
+                "frontmatter": {
+                  "type": ["string", "null"]
+                },
+                "blocks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "slot": {
+                        "type": "string"
+                      },
+                      "position": {
+                        "type": "string"
+                      },
+                      "blobId": {
+                        "type": ["string", "null"]
+                      },
+                      "text": {
+                        "type": ["string", "null"]
+                      },
+                      "dangling": {
+                        "type": "boolean"
+                      },
+                      "facts": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "predicate": {
+                              "type": "string"
+                            },
+                            "form": {
+                              "type": "string",
+                              "enum": ["node", "literal"]
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["predicate", "form", "value"],
+                          "additionalProperties": {}
+                        },
+                        "description": "The slot's facts (only on a facts read); form says whether each is a node token or a literal placeholder."
+                      },
+                      "ref": {
+                        "type": "object",
+                        "properties": {
+                          "slot": {
+                            "type": "string"
+                          },
+                          "container": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["slot"],
+                        "additionalProperties": {},
+                        "description": "Present only on a placement (a slot that places another slot): the origin slot it resolves through and the container holding that origin. blobId is the origin's; an orphaned placement keeps its ref and reads dangling. Absent on every blob slot."
+                      }
+                    },
+                    "required": [
+                      "slot",
+                      "position",
+                      "blobId",
+                      "text",
+                      "dangling"
+                    ],
+                    "additionalProperties": {}
+                  }
+                }
+              },
+              "required": ["container", "revision", "frontmatter", "blocks"],
+              "additionalProperties": {}
+            }
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["containers", "missing"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_read_containers/v1",
+        "title": "calliope_read_containers \u2014 the answer",
+        "description": "Each requested container (once) with its revision, frontmatter and ordered blocks; a block whose prose is absent, or whose text was not asked for, has null text (dangling is only a fact of the graph). missing lists ids with no tree and no frontmatter. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "restore_note": {
+      "name": "restore_note",
+      "title": "Restore suppressed notes",
+      "description": "Undo delete_note's default suppress: retract each note's suppressed=true marker and nothing else, so the note returns to every listing with its edges as they were. A note that was never suppressed answers not_suppressed. A PURGED note cannot be restored here (its facts were retracted; history keeps them, read_container(as_of_tx) still reads it) and answers not_found. Takes up to 100 ids; a non-Note or a protected note refuses the call, writing nothing.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "A Note node token."
+            },
+            "uniqueItems": true,
+            "description": "Note node tokens, each once."
+          }
+        },
+        "required": ["ids"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["restored", "not_suppressed", "not_found"]
+                }
+              },
+              "required": ["node_id", "status"],
+              "additionalProperties": {}
+            }
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "restored": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "not_suppressed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "not_found": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": ["restored", "not_suppressed", "not_found"],
+            "additionalProperties": {}
+          },
+          "tx": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["notes", "totals"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_restore_note/v1",
+        "title": "calliope_restore_note \u2014 the answer",
+        "description": "What a restore did per note and in total. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "revision_deltas": {
+      "name": "revision_deltas",
+      "title": "Read a revision's triple deltas",
+      "description": "FROZEN ARCHIVE (F7 scoping): the frontmatter/link evolution record for one revision \u2014 denormalized (subject, predicate, object) labels, in stored order. Returns { deltas: [...] }.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "revision_id": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "The revision whose deltas to read."
+          }
+        },
+        "required": ["revision_id"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "deltas": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "revision_id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "op": {
+                  "type": ["string", "null"]
+                },
+                "subject": {
+                  "type": ["string", "null"]
+                },
+                "predicate": {
+                  "type": ["string", "null"]
+                },
+                "object": {
+                  "type": ["string", "null"]
+                }
+              },
+              "required": [
+                "id",
+                "revision_id",
+                "op",
+                "subject",
+                "predicate",
+                "object"
+              ],
+              "additionalProperties": {}
+            }
+          }
+        },
+        "required": ["deltas"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_revision_deltas/v1",
+        "title": "calliope_revision_deltas \u2014 the answer",
+        "description": "The frontmatter and link evolution of one revision as {deltas}, in stored order. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "search": {
+      "name": "search",
+      "title": "Search bodies",
+      "description": "Findability F2: search(query, scope) \u2014 ranked hits with snippets over the backend's corpus, RRF-fused across the available arms (full-text, semantic, remote). Returns { hits: [{ id, snippet, score, arms }], armsQueried, armsDark } \u2014 a dark arm is NAMED, never hidden; no arms queried + arms dark means the backend has no search provider (or no index yet), distinct from zero matches.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The search phrase."
+          },
+          "scope": {
+            "description": "Root-relative subtree prefix to restrict to; absent = everything.",
+            "type": "string"
+          },
+          "k": {
+            "description": "Max hits to return (default 20).",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "hits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "snippet": {
+                  "type": "string"
+                },
+                "score": {
+                  "type": "number"
+                },
+                "arms": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": ["id", "snippet", "score", "arms"],
+              "additionalProperties": {}
+            }
+          },
+          "armsQueried": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "armsDark": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["hits", "armsQueried", "armsDark"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_search/v1",
+        "title": "calliope_search \u2014 the answer",
+        "description": "Ranked hits with snippets, fused across the arms that answered; a dark arm is named in armsDark, never hidden. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "set_properties": {
+      "name": "set_properties",
+      "title": "Set a note's properties (frontmatter as edges)",
+      "description": "Land a note's frontmatter on the graph: each named predicate's values become exactly the given set (literals, or node tokens for resolved wikilinks); unnamed predicates are untouched. tags[] ride the C9 explicit tag path; frontmatter is the source YAML, kept verbatim as one literal so export_note can reproduce it. retract:true removes exactly the named values (the revert form). Idempotent \u2014 a re-run is a read. Returns {node_id, added, removed, tags_added, tags_removed, tags_skipped, tx?}; refusals are not_a_note / bad_args / admit_refused. Works on any node of kind Note whatever its hasType (Note, Law, Governance, ...); tags[] only land for hasType=Note and are otherwise reported in tags_skipped.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "container_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "The note's node token."
+          },
+          "properties": {
+            "description": "predicate \u2192 values; a node value is a 64-hex token.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "predicate": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The predicate (frontmatter key)."
+                },
+                "values": {
+                  "type": "array",
+                  "items": {
+                    "x-requiredOneOfKeys": [["literal"], ["node"]],
+                    "description": "One value: {literal} or {node}.",
+                    "type": "object",
+                    "properties": {
+                      "literal": {
+                        "description": "A literal value; this or node.",
+                        "type": "string"
+                      },
+                      "node": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$",
+                        "description": "A node token (a resolved wikilink); this or literal."
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "description": "The predicate's whole value set."
+                }
+              },
+              "required": ["predicate", "values"],
+              "additionalProperties": false,
+              "description": "One predicate and its values."
+            }
+          },
+          "tags": {
+            "description": "Explicit tags.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "One tag."
+            }
+          },
+          "frontmatter": {
+            "description": "The source YAML (between the fences), verbatim.",
+            "type": "string"
+          },
+          "retract": {
+            "description": "Remove exactly the named values instead of setting.",
+            "type": "boolean"
+          }
+        },
+        "required": ["container_id"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "added": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tags_added": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tags_removed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tags_skipped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tx": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "node_id",
+          "added",
+          "removed",
+          "tags_added",
+          "tags_removed",
+          "tags_skipped"
+        ],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_set_properties/v1",
+        "title": "calliope_set_properties \u2014 the answer",
+        "description": "The edges and tags a frontmatter landing asserted or retracted. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "tag_seed_read": {
+      "name": "tag_seed_read",
+      "title": "aglaia's tag-style seed",
+      "description": "The tag_styles list (tag=hue:icon) a browser merges under the user's own setting, read per call from AGLAIA_TAG_SEED. No seed configured refuses not_found: render tags uncoloured.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "tag_styles": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["tag_styles"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_tag_seed_read/v1",
+        "title": "calliope_tag_seed_read \u2014 the answer",
+        "description": "aglaia's tag-style seed. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "unpin": {
+      "name": "unpin",
+      "title": "Remove one pin",
+      "description": "029/F6: clear one deliberate pin by its pin_id (as answered in look's pins[]). The conversational 'clear pin 2'. Unknown id answers a not_found refusal; live focus is untouched.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "pin_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The pin to remove."
+          }
+        },
+        "required": ["pin_id"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "removed": {
+            "type": "boolean",
+            "const": true
+          },
+          "pin_id": {
+            "type": "string"
+          }
+        },
+        "required": ["removed", "pin_id"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_unpin/v1",
+        "title": "calliope_unpin \u2014 the answer",
+        "description": "The pin that was cleared. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "write_container": {
+      "name": "write_container",
+      "title": "Write a container (one graph transaction)",
+      "description": "Save a container as ONE graph transaction. Send EITHER ops (add/update/reorder/remove; identical content nets out) OR replacements (literal, case-sensitive find/replace applied server-side in order, optionally to one slot; any expected_count miss refuses the whole batch as count_mismatch, nothing written). Returns noop, the tx and, for replacements, the counts.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "container": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "The container node's 64-hex token."
+          },
+          "ops": {
+            "description": "The op batch, in apply order; this or replacements.",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "const": "add",
+                      "description": "Add a block: send text (a new blob) OR ref (a placement of an existing block), exactly one."
+                    },
+                    "text": {
+                      "description": "The new block's prose.",
+                      "type": "string"
+                    },
+                    "ref": {
+                      "description": "Place an existing block instead of new text: the origin slot's 64-hex token. Reads resolve through it; an edit through the placement rewrites the origin, so every placement changes. The origin must hold content (not_found otherwise; a placement is refused bad_args: no chains). Cross-tenant refuses cross_tenant_placement (placement-policy.ts). No facts.",
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "position": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "Fractional order key (bytewise order; client-minted)."
+                    },
+                    "facts": {
+                      "description": "Facts written on the slot in the SAME batch. On update only contentHash (replaced), quotes, links and authored (added) are allowed.",
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "predicate": {
+                            "type": "string",
+                            "description": "Closed set (authoredBy, writtenIn, fromCheckpoint, quotes, links, writtenAt, authorKind, contentHash, signedAs, inSeat, authored, legacyId, spanFrom, spanTo, turnsDigest), checked server-side: anything else refuses bad_args. Node-valued (authoredBy, writtenIn, fromCheckpoint, quotes, links, authored) take node OR literal (quotes: a JSON-object string with session_uuid, seq, ts, sha is checked); writtenAt (instant), authorKind, signedAs, inSeat, legacyId (digits), contentHash take a literal. quotes, links and authored repeat; a read answers them sorted by value, not in write order (put an ordinal in the literal to keep one)."
+                          },
+                          "node": {
+                            "description": "An existing node's 64-hex token.",
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "literal": {
+                            "description": "A literal \u2014 the placeholder where the node does not exist yet (a persona name, session uuid, URL, ...). contentHash: optional sha256 hex of the text, checked server-side.",
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "dtype": {
+                            "description": "writtenAt only: instant (default) or wallclock; checked server-side.",
+                            "type": "string"
+                          }
+                        },
+                        "required": ["predicate"],
+                        "additionalProperties": false,
+                        "description": "One fact on the slot: node or literal, not both."
+                      }
+                    }
+                  },
+                  "required": ["op", "position"],
+                  "additionalProperties": false,
+                  "x-requiredOneOf": [["text"], ["ref"]]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "const": "update",
+                      "description": "Rewrite a block's prose. On a placement it rewrites the origin (oldBlobId is the origin's, as read)."
+                    },
+                    "slot": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$",
+                      "description": "The block slot's 64-hex token."
+                    },
+                    "oldBlobId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The blob the slot holds now (compare-before-write)."
+                    },
+                    "text": {
+                      "type": "string",
+                      "description": "The block's new prose."
+                    },
+                    "facts": {
+                      "description": "Facts written on the slot in the SAME batch. On update only contentHash (replaced), quotes, links and authored (added) are allowed.",
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "predicate": {
+                            "type": "string",
+                            "description": "Closed set (authoredBy, writtenIn, fromCheckpoint, quotes, links, writtenAt, authorKind, contentHash, signedAs, inSeat, authored, legacyId, spanFrom, spanTo, turnsDigest), checked server-side: anything else refuses bad_args. Node-valued (authoredBy, writtenIn, fromCheckpoint, quotes, links, authored) take node OR literal (quotes: a JSON-object string with session_uuid, seq, ts, sha is checked); writtenAt (instant), authorKind, signedAs, inSeat, legacyId (digits), contentHash take a literal. quotes, links and authored repeat; a read answers them sorted by value, not in write order (put an ordinal in the literal to keep one)."
+                          },
+                          "node": {
+                            "description": "An existing node's 64-hex token.",
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "literal": {
+                            "description": "A literal \u2014 the placeholder where the node does not exist yet (a persona name, session uuid, URL, ...). contentHash: optional sha256 hex of the text, checked server-side.",
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "dtype": {
+                            "description": "writtenAt only: instant (default) or wallclock; checked server-side.",
+                            "type": "string"
+                          }
+                        },
+                        "required": ["predicate"],
+                        "additionalProperties": false,
+                        "description": "One fact on the slot: node or literal, not both."
+                      }
+                    }
+                  },
+                  "required": ["op", "slot", "oldBlobId", "text"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "const": "reorder",
+                      "description": "Move a block."
+                    },
+                    "slot": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$",
+                      "description": "The block slot's 64-hex token."
+                    },
+                    "oldPosition": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The slot's position now (compare-before-write)."
+                    },
+                    "position": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The new fractional order key."
+                    }
+                  },
+                  "required": ["op", "slot", "oldPosition", "position"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "const": "remove",
+                      "description": "Remove a block. On a placement only the placement goes; an origin that still has placements refuses has_placements unless placements is \"orphan\"."
+                    },
+                    "slot": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$",
+                      "description": "The block slot's 64-hex token."
+                    },
+                    "position": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The slot's position now."
+                    },
+                    "blobId": {
+                      "type": "string",
+                      "description": "The blob the slot holds now (a placement: its origin's, as read; \"\" for a dangling placement)."
+                    },
+                    "placements": {
+                      "description": "Removing an origin with placements: leave them dangling (each keeps its ref and reads dangling).",
+                      "type": "string",
+                      "const": "orphan"
+                    }
+                  },
+                  "required": ["op", "slot", "position", "blobId"],
+                  "additionalProperties": false
+                }
+              ],
+              "type": "object",
+              "description": "One op: add, update, reorder or remove."
+            }
+          },
+          "slot": {
+            "description": "With replacements: patch this block only.",
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "replacements": {
+            "description": "Find/replace pairs, applied in order; this or ops.",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "find": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The literal text to find (case-sensitive)."
+                },
+                "replace": {
+                  "type": "string",
+                  "description": "Its replacement."
+                },
+                "expected_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "How many matches must exist, or none is written."
+                }
+              },
+              "required": ["find", "replace", "expected_count"],
+              "additionalProperties": false,
+              "description": "One find/replace."
+            }
+          },
+          "tenant": {
+            "description": "Default: notes.",
+            "type": "string",
+            "enum": [
+              "notes",
+              "documents",
+              "comments",
+              "governance",
+              "issues",
+              "threads"
+            ]
+          }
+        },
+        "required": ["container"],
+        "additionalProperties": false,
+        "x-requiredOneOf": [["ops"], ["replacements"]],
+        "dependentRequired": {
+          "slot": ["replacements"]
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "noop": {
+            "type": "boolean"
+          },
+          "tx": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "applied": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "minted": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "blobIds": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "container": {
+            "type": "string"
+          },
+          "counts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "expected": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "found": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": ["expected", "found"],
+              "additionalProperties": {}
+            }
+          },
+          "slots_changed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tags": {
+            "type": "object",
+            "properties": {
+              "added": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "removed": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["added", "removed"],
+            "additionalProperties": {}
+          },
+          "tags_error": {
+            "type": "string"
+          },
+          "routed": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "op index to the origin slot an edit through a placement rewrote. Present only when a save routed an edit."
+          },
+          "orphaned": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slot": {
+                  "type": "string"
+                },
+                "container": {
+                  "type": "string"
+                },
+                "origin": {
+                  "type": "string"
+                }
+              },
+              "required": ["slot", "origin"],
+              "additionalProperties": {}
+            },
+            "description": "Placements this call left dangling (each keeps its ref), with the origin they placed. Present only when an origin that had placements was removed or purged with placements \"orphan\"."
+          }
+        },
+        "required": ["noop"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_write_container/v1",
+        "title": "calliope_write_container \u2014 the answer",
+        "description": "One container save. noop says nothing was written. An ops save also answers applied, minted and blobIds; a replacements save answers container, counts and slots_changed; an ops save may add routed (edits sent to the origin of a placement) and orphaned (placements left dangling by removing their origin); a notes-tenant save adds the inline-tag outcome (tags, or tags_error when the reconcile failed). A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    },
+    "writing_deltas_ingest": {
+      "name": "writing_deltas_ingest",
+      "title": "Ingest a batch of writing-delta events",
+      "description": "Produces each event onto aglaia.writing.deltas.v1, all or nothing, in one broker call. bad_args (malformed, or an event breaks the topic's contract): DROP the batch, it will never be accepted. backend_unavailable (the broker did not take it): KEEP the batch and replay it.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "events": {
+            "minItems": 1,
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": [
+                  "string",
+                  "number",
+                  "integer",
+                  "boolean",
+                  "object",
+                  "array",
+                  "null"
+                ],
+                "description": "One field of the event, as theia minted it."
+              },
+              "description": "One writing-delta event (eventId, nodeId, ts, type, v required by the topic's contract)."
+            },
+            "description": "The batch, 1 to 500 events."
+          }
+        },
+        "required": ["events"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      },
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "accepted": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "topic": {
+            "type": "string"
+          }
+        },
+        "required": ["accepted", "topic"],
+        "additionalProperties": {},
+        "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_writing_deltas_ingest/v1",
+        "title": "calliope_writing_deltas_ingest \u2014 the answer",
+        "description": "The batch the broker took, one message per event. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
+      }
+    }
+  }
+}
