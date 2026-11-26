@@ -81,6 +81,7 @@ describe("the REST door", () => {
     const rest = await serveCalliope({
       kind: "fixture",
       witness,
+      telemetry: { send: () => Promise.resolve() },
       getenv: port0,
     });
     closers.push(() => rest.close());
