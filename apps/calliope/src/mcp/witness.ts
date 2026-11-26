@@ -11,8 +11,9 @@ export interface Witness {
 
 /**
  * Build this star's witness from the environment: records go to the log
- * stream, and to `<star>._ops.calls` when `KAFKA_BOOTSTRAP` names a broker.
- * No broker leaves it on the log stream, warned once. Never throws.
+ * stream, and to `<star>._ops.calls` when `KAFKA_BOOTSTRAP` names a broker,
+ * unless `STELLAR_CALLS_SINK=stdout` keeps them on the log stream with no
+ * producer. No broker leaves it on the log stream, warned once. Never throws.
  */
 export function makeWitness(
   env: NodeJS.ProcessEnv = process.env,
@@ -21,6 +22,7 @@ export function makeWitness(
   const sink: WitnessSink = build({
     star: SOURCE_STAR,
     bootstrap: env.KAFKA_BOOTSTRAP,
+    env,
   });
   return {
     log: new RequestLog(SOURCE_STAR, {
