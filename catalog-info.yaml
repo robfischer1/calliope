@@ -20,10 +20,6 @@ spec:
   lifecycle: "production"
   owner: "group:default/rob"
   system: "forge-fleet"
-  providesApis:
-    - "calliope-verbs"
-  consumesApis:
-    - "chaos-verbs"
   dependsOn:
     - "component:default/chaos"
 ---
