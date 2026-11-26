@@ -96,10 +96,33 @@ describe("makeWitness", () => {
         },
       };
     });
-    expect(seen).toEqual([{ star: "calliope", bootstrap: "broker:9092" }]);
+    expect(seen).toEqual([
+      {
+        star: "calliope",
+        bootstrap: "broker:9092",
+        env: { KAFKA_BOOTSTRAP: "broker:9092" },
+      },
+    ]);
     expect(w.log.enabled).toBe(true);
     await w.close();
     expect(closed).toBe(1);
+  });
+
+  it("STELLAR_CALLS_SINK=stdout keeps records off the topic even with a broker", async () => {
+    const spy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const w = makeWitness({
+        KAFKA_BOOTSTRAP: "127.0.0.1:1",
+        STELLAR_CALLS_SINK: "stdout",
+      });
+      const lines = spy.mock.calls.map((c) => String(c[0]));
+      expect(
+        lines.filter((l) => l.includes("STELLAR_CALLS_SINK=stdout")),
+      ).toHaveLength(1);
+      await w.close();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("with no broker, records to the log stream and says so once", async () => {
