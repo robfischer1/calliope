@@ -1,8 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import type { RestRequest } from "@forge/stellar-core-ts/rest";
 import { makeBackend } from "../src/mcp/backend.js";
-import { serverOptions } from "../src/mcp/http.js";
+import { serveCalliope, serverOptions } from "../src/mcp/http.js";
 import { mountRestFace, spanned } from "../src/mcp/rest.js";
 import { createServer } from "../src/mcp/server.js";
 import { recordingWitness } from "./rest-door.js";
@@ -73,6 +74,24 @@ describe("the REST door", () => {
     expect(got.slice(before).map((r) => r.verb)).toContain("list_tags");
 
     expect((await fetch(`${base}/mcp`, { method: "POST" })).status).toBe(404);
+  });
+
+  it("the committed openapi.json is the document the star serves", async () => {
+    const { witness } = recordingWitness();
+    const rest = await serveCalliope({
+      kind: "fixture",
+      witness,
+      getenv: port0,
+    });
+    closers.push(() => rest.close());
+    const base = `http://127.0.0.1:${String(rest.plaintextAddress()?.port)}`;
+    const served = (await (
+      await fetch(`${base}/openapi.json`)
+    ).json()) as unknown;
+    const committed = JSON.parse(
+      readFileSync(new URL("../../../openapi.json", import.meta.url), "utf8"),
+    ) as unknown;
+    expect(committed).toEqual(served);
   });
 
   it("spanned passes the request and the answer through unchanged", async () => {
