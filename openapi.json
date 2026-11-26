@@ -888,11 +888,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "graph",
-                "ok",
-                "count"
-              ],
+              "required": ["graph", "ok", "count"],
               "additionalProperties": {}
             }
           },
@@ -952,9 +948,7 @@
             "description": "The container node's 64-hex token."
           }
         },
-        "required": [
-          "container"
-        ],
+        "required": ["container"],
         "additionalProperties": false
       },
       "annotations": {
@@ -981,10 +975,7 @@
                 },
                 "at": {
                   "format": "date-time",
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "author": {
                   "type": "string"
@@ -993,12 +984,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "tx",
-                "at",
-                "author",
-                "note"
-              ],
+              "required": ["tx", "at", "author", "note"],
               "additionalProperties": {}
             }
           },
@@ -1008,10 +994,7 @@
             "maximum": 9007199254740991
           }
         },
-        "required": [
-          "transactions",
-          "count"
-        ],
+        "required": ["transactions", "count"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_container_history/v1",
         "title": "calliope_container_history \u2014 the answer",
@@ -1031,9 +1014,7 @@
             "description": "The note whose compound reference to mint."
           }
         },
-        "required": [
-          "node_id"
-        ],
+        "required": ["node_id"],
         "additionalProperties": false
       },
       "annotations": {
@@ -1062,19 +1043,10 @@
           },
           "address_form": {
             "type": "string",
-            "enum": [
-              "node",
-              "path"
-            ]
+            "enum": ["node", "path"]
           }
         },
-        "required": [
-          "compound",
-          "wikilink",
-          "id",
-          "title",
-          "address_form"
-        ],
+        "required": ["compound", "wikilink", "id", "title", "address_form"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_copy_reference/v1",
         "title": "calliope_copy_reference \u2014 the answer",
@@ -1114,9 +1086,7 @@
             "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
           }
         },
-        "required": [
-          "title"
-        ],
+        "required": ["title"],
         "additionalProperties": false
       },
       "annotations": {
@@ -1138,10 +1108,7 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "node_id",
-          "created"
-        ],
+        "required": ["node_id", "created"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_create_note/v1",
         "title": "calliope_create_note \u2014 the answer",
@@ -1182,9 +1149,7 @@
             "const": "orphan"
           }
         },
-        "required": [
-          "ids"
-        ],
+        "required": ["ids"],
         "additionalProperties": false
       },
       "annotations": {
@@ -1201,10 +1166,7 @@
         "properties": {
           "mode": {
             "type": "string",
-            "enum": [
-              "suppress",
-              "purge"
-            ]
+            "enum": ["suppress", "purge"]
           },
           "dry_run": {
             "type": "boolean"
@@ -1229,10 +1191,7 @@
                       ]
                     }
                   },
-                  "required": [
-                    "node_id",
-                    "status"
-                  ],
+                  "required": ["node_id", "status"],
                   "additionalProperties": {}
                 },
                 {
@@ -1243,11 +1202,7 @@
                     },
                     "status": {
                       "type": "string",
-                      "enum": [
-                        "would_delete",
-                        "deleted",
-                        "not_found"
-                      ]
+                      "enum": ["would_delete", "deleted", "not_found"]
                     },
                     "edges_out": {
                       "type": "object",
@@ -1309,10 +1264,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "slot",
-                          "origin"
-                        ],
+                        "required": ["slot", "origin"],
                         "additionalProperties": {}
                       },
                       "description": "Placements this call left dangling (each keeps its ref), with the origin they placed. Present only when an origin that had placements was removed or purged with placements \"orphan\"."
@@ -1399,9 +1351,7 @@
                 "maximum": 9007199254740991
               }
             },
-            "required": [
-              "not_found"
-            ],
+            "required": ["not_found"],
             "additionalProperties": {}
           },
           "tx": {
@@ -1410,12 +1360,7 @@
             "maximum": 9007199254740991
           }
         },
-        "required": [
-          "mode",
-          "dry_run",
-          "notes",
-          "totals"
-        ],
+        "required": ["mode", "dry_run", "notes", "totals"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_delete_note/v1",
         "title": "calliope_delete_note \u2014 the answer",
@@ -1445,9 +1390,7 @@
                   "description": "The block's prose."
                 }
               },
-              "required": [
-                "text"
-              ],
+              "required": ["text"],
               "additionalProperties": false,
               "description": "One block."
             },
@@ -1482,10 +1425,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "source_path",
-          "blocks"
-        ],
+        "required": ["source_path", "blocks"],
         "additionalProperties": false
       },
       "annotations": {
@@ -1508,18 +1448,10 @@
           },
           "generation": {
             "type": "string",
-            "enum": [
-              "minted",
-              "superseded",
-              "nooped"
-            ]
+            "enum": ["minted", "superseded", "nooped"]
           }
         },
-        "required": [
-          "node_id",
-          "created",
-          "generation"
-        ],
+        "required": ["node_id", "created", "generation"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_dissolve_note/v1",
         "title": "calliope_dissolve_note \u2014 the answer",
@@ -1544,14 +1476,7 @@
           }
         },
         "additionalProperties": false,
-        "x-requiredAnyOf": [
-          [
-            "container_id"
-          ],
-          [
-            "source_path"
-          ]
-        ]
+        "x-requiredAnyOf": [["container_id"], ["source_path"]]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -1577,11 +1502,7 @@
             "maximum": 9007199254740991
           }
         },
-        "required": [
-          "container_id",
-          "markdown",
-          "block_count"
-        ],
+        "required": ["container_id", "markdown", "block_count"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_export_note/v1",
         "title": "calliope_export_note \u2014 the answer",
@@ -1642,81 +1563,45 @@
                   "maximum": 9007199254740991
                 },
                 "schema_type": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "repo": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "commit_sha": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "file_path": {
                   "type": "string"
                 },
                 "prior_file_path": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "change_type": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "authorship": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "summary": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "summary_model": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "summary_generated_at": {
                   "format": "date-time",
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "git_blob_sha": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "parent_blob_sha": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "captured_at": {
                   "format": "date-time",
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 }
               },
               "required": [
@@ -1739,9 +1624,7 @@
             }
           }
         },
-        "required": [
-          "revisions"
-        ],
+        "required": ["revisions"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_file_revisions/v1",
         "title": "calliope_file_revisions \u2014 the answer",
@@ -1766,9 +1649,7 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "tag"
-        ],
+        "required": ["tag"],
         "additionalProperties": false
       },
       "annotations": {
@@ -1793,10 +1674,7 @@
             }
           }
         },
-        "required": [
-          "tag",
-          "node_ids"
-        ],
+        "required": ["tag", "node_ids"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_list_by_tag/v1",
         "title": "calliope_list_by_tag \u2014 the answer",
@@ -1839,17 +1717,12 @@
                   "maximum": 9007199254740991
                 }
               },
-              "required": [
-                "tag",
-                "count"
-              ],
+              "required": ["tag", "count"],
               "additionalProperties": {}
             }
           }
         },
-        "required": [
-          "tags"
-        ],
+        "required": ["tags"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_list_tags/v1",
         "title": "calliope_list_tags \u2014 the answer",
@@ -1934,21 +1807,13 @@
                   },
                   "drift": {
                     "type": "string",
-                    "enum": [
-                      "none",
-                      "drifted",
-                      "gone"
-                    ]
+                    "enum": ["none", "drifted", "gone"]
                   },
                   "current_text": {
                     "type": "string"
                   }
                 },
-                "required": [
-                  "pointer",
-                  "received_at",
-                  "drift"
-                ],
+                "required": ["pointer", "received_at", "drift"],
                 "additionalProperties": {}
               }
             ]
@@ -2006,11 +1871,7 @@
                 },
                 "drift": {
                   "type": "string",
-                  "enum": [
-                    "none",
-                    "drifted",
-                    "gone"
-                  ]
+                  "enum": ["none", "drifted", "gone"]
                 },
                 "current_text": {
                   "type": "string"
@@ -2019,20 +1880,12 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "pointer",
-                "received_at",
-                "drift",
-                "pin_id"
-              ],
+              "required": ["pointer", "received_at", "drift", "pin_id"],
               "additionalProperties": {}
             }
           }
         },
-        "required": [
-          "focus",
-          "pins"
-        ],
+        "required": ["focus", "pins"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_look/v1",
         "title": "calliope_look \u2014 the answer",
@@ -2057,14 +1910,7 @@
           }
         },
         "additionalProperties": false,
-        "x-requiredAnyOf": [
-          [
-            "container_id"
-          ],
-          [
-            "source_path"
-          ]
-        ]
+        "x-requiredAnyOf": [["container_id"], ["source_path"]]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -2099,11 +1945,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "id",
-                "text",
-                "orderKey"
-              ],
+              "required": ["id", "text", "orderKey"],
               "additionalProperties": {}
             }
           },
@@ -2121,12 +1963,7 @@
             }
           }
         },
-        "required": [
-          "container_id",
-          "blocks",
-          "tags",
-          "provenance"
-        ],
+        "required": ["container_id", "blocks", "tags", "provenance"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_materialize_note/v1",
         "title": "calliope_materialize_note \u2014 the answer",
@@ -2166,10 +2003,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "enum": [
-                  "end",
-                  "start"
-                ]
+                "enum": ["end", "start"]
               },
               {
                 "type": "string",
@@ -2191,11 +2025,7 @@
             ]
           }
         },
-        "required": [
-          "from",
-          "to",
-          "slots"
-        ],
+        "required": ["from", "to", "slots"],
         "additionalProperties": false
       },
       "annotations": {
@@ -2227,17 +2057,12 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "slot",
-                "position"
-              ],
+              "required": ["slot", "position"],
               "additionalProperties": {}
             }
           }
         },
-        "required": [
-          "moved"
-        ],
+        "required": ["moved"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_move_blocks/v1",
         "title": "calliope_move_blocks \u2014 the answer",
@@ -2274,9 +2099,7 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "container"
-        ],
+        "required": ["container"],
         "additionalProperties": false
       },
       "annotations": {
@@ -2303,16 +2126,10 @@
                   "type": "string"
                 },
                 "blobId": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "text": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "dangling": {
                   "type": "boolean"
@@ -2327,20 +2144,13 @@
                       },
                       "form": {
                         "type": "string",
-                        "enum": [
-                          "node",
-                          "literal"
-                        ]
+                        "enum": ["node", "literal"]
                       },
                       "value": {
                         "type": "string"
                       }
                     },
-                    "required": [
-                      "predicate",
-                      "form",
-                      "value"
-                    ],
+                    "required": ["predicate", "form", "value"],
                     "additionalProperties": {}
                   },
                   "description": "The slot's facts (only on a facts read); form says whether each is a node token or a literal placeholder."
@@ -2355,9 +2165,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "slot"
-                  ],
+                  "required": ["slot"],
                   "additionalProperties": {},
                   "description": "Present only on a placement (a slot that places another slot): the origin slot it resolves through, and the container holding that origin. container is present on current reads only, never on an as_of_tx read. blobId and text are the origin's; an orphaned placement keeps its ref and reads dangling. Absent on every blob slot."
                 },
@@ -2374,21 +2182,13 @@
                         "description": "Absent when no container holds the placement."
                       }
                     },
-                    "required": [
-                      "slot"
-                    ],
+                    "required": ["slot"],
                     "additionalProperties": {}
                   },
                   "description": "Present only on a placements read: the slots placing this one (empty on an ordinary block)."
                 }
               },
-              "required": [
-                "slot",
-                "position",
-                "blobId",
-                "text",
-                "dangling"
-              ],
+              "required": ["slot", "position", "blobId", "text", "dangling"],
               "additionalProperties": {}
             }
           },
@@ -2398,9 +2198,7 @@
             "maximum": 9007199254740991
           }
         },
-        "required": [
-          "blocks"
-        ],
+        "required": ["blocks"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_read_container/v1",
         "title": "calliope_read_container \u2014 the answer",
@@ -2437,9 +2235,7 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "containers"
-        ],
+        "required": ["containers"],
         "additionalProperties": false
       },
       "annotations": {
@@ -2466,10 +2262,7 @@
                   "type": "string"
                 },
                 "frontmatter": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "blocks": {
                   "type": "array",
@@ -2483,16 +2276,10 @@
                         "type": "string"
                       },
                       "blobId": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
+                        "type": ["string", "null"]
                       },
                       "text": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
+                        "type": ["string", "null"]
                       },
                       "dangling": {
                         "type": "boolean"
@@ -2507,20 +2294,13 @@
                             },
                             "form": {
                               "type": "string",
-                              "enum": [
-                                "node",
-                                "literal"
-                              ]
+                              "enum": ["node", "literal"]
                             },
                             "value": {
                               "type": "string"
                             }
                           },
-                          "required": [
-                            "predicate",
-                            "form",
-                            "value"
-                          ],
+                          "required": ["predicate", "form", "value"],
                           "additionalProperties": {}
                         },
                         "description": "The slot's facts (only on a facts read); form says whether each is a node token or a literal placeholder."
@@ -2535,9 +2315,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "slot"
-                        ],
+                        "required": ["slot"],
                         "additionalProperties": {},
                         "description": "Present only on a placement (a slot that places another slot): the origin slot it resolves through and the container holding that origin. blobId is the origin's; an orphaned placement keeps its ref and reads dangling. Absent on every blob slot."
                       }
@@ -2553,12 +2331,7 @@
                   }
                 }
               },
-              "required": [
-                "container",
-                "revision",
-                "frontmatter",
-                "blocks"
-              ],
+              "required": ["container", "revision", "frontmatter", "blocks"],
               "additionalProperties": {}
             }
           },
@@ -2569,10 +2342,7 @@
             }
           }
         },
-        "required": [
-          "containers",
-          "missing"
-        ],
+        "required": ["containers", "missing"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_read_containers/v1",
         "title": "calliope_read_containers \u2014 the answer",
@@ -2600,9 +2370,7 @@
             "description": "Note node tokens, each once."
           }
         },
-        "required": [
-          "ids"
-        ],
+        "required": ["ids"],
         "additionalProperties": false
       },
       "annotations": {
@@ -2627,17 +2395,10 @@
                 },
                 "status": {
                   "type": "string",
-                  "enum": [
-                    "restored",
-                    "not_suppressed",
-                    "not_found"
-                  ]
+                  "enum": ["restored", "not_suppressed", "not_found"]
                 }
               },
-              "required": [
-                "node_id",
-                "status"
-              ],
+              "required": ["node_id", "status"],
               "additionalProperties": {}
             }
           },
@@ -2660,11 +2421,7 @@
                 "maximum": 9007199254740991
               }
             },
-            "required": [
-              "restored",
-              "not_suppressed",
-              "not_found"
-            ],
+            "required": ["restored", "not_suppressed", "not_found"],
             "additionalProperties": {}
           },
           "tx": {
@@ -2673,10 +2430,7 @@
             "maximum": 9007199254740991
           }
         },
-        "required": [
-          "notes",
-          "totals"
-        ],
+        "required": ["notes", "totals"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_restore_note/v1",
         "title": "calliope_restore_note \u2014 the answer",
@@ -2698,9 +2452,7 @@
             "description": "The revision whose deltas to read."
           }
         },
-        "required": [
-          "revision_id"
-        ],
+        "required": ["revision_id"],
         "additionalProperties": false
       },
       "annotations": {
@@ -2731,28 +2483,16 @@
                   "maximum": 9007199254740991
                 },
                 "op": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "subject": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "predicate": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 },
                 "object": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
+                  "type": ["string", "null"]
                 }
               },
               "required": [
@@ -2767,9 +2507,7 @@
             }
           }
         },
-        "required": [
-          "deltas"
-        ],
+        "required": ["deltas"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_revision_deltas/v1",
         "title": "calliope_revision_deltas \u2014 the answer",
@@ -2800,9 +2538,7 @@
             "maximum": 100
           }
         },
-        "required": [
-          "query"
-        ],
+        "required": ["query"],
         "additionalProperties": false
       },
       "annotations": {
@@ -2838,12 +2574,7 @@
                   }
                 }
               },
-              "required": [
-                "id",
-                "snippet",
-                "score",
-                "arms"
-              ],
+              "required": ["id", "snippet", "score", "arms"],
               "additionalProperties": {}
             }
           },
@@ -2860,11 +2591,7 @@
             }
           }
         },
-        "required": [
-          "hits",
-          "armsQueried",
-          "armsDark"
-        ],
+        "required": ["hits", "armsQueried", "armsDark"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_search/v1",
         "title": "calliope_search \u2014 the answer",
@@ -2898,14 +2625,7 @@
                 "values": {
                   "type": "array",
                   "items": {
-                    "x-requiredOneOfKeys": [
-                      [
-                        "literal"
-                      ],
-                      [
-                        "node"
-                      ]
-                    ],
+                    "x-requiredOneOfKeys": [["literal"], ["node"]],
                     "description": "One value: {literal} or {node}.",
                     "type": "object",
                     "properties": {
@@ -2924,10 +2644,7 @@
                   "description": "The predicate's whole value set."
                 }
               },
-              "required": [
-                "predicate",
-                "values"
-              ],
+              "required": ["predicate", "values"],
               "additionalProperties": false,
               "description": "One predicate and its values."
             }
@@ -2949,9 +2666,7 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "container_id"
-        ],
+        "required": ["container_id"],
         "additionalProperties": false
       },
       "annotations": {
@@ -3046,9 +2761,7 @@
             "minLength": 1
           }
         },
-        "required": [
-          "tag_styles"
-        ],
+        "required": ["tag_styles"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_tag_seed_read/v1",
         "title": "calliope_tag_seed_read \u2014 the answer",
@@ -3069,9 +2782,7 @@
             "description": "The pin to remove."
           }
         },
-        "required": [
-          "pin_id"
-        ],
+        "required": ["pin_id"],
         "additionalProperties": false
       },
       "annotations": {
@@ -3094,10 +2805,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "removed",
-          "pin_id"
-        ],
+        "required": ["removed", "pin_id"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_unpin/v1",
         "title": "calliope_unpin \u2014 the answer",
@@ -3171,27 +2879,15 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "predicate"
-                        ],
+                        "required": ["predicate"],
                         "additionalProperties": false,
                         "description": "One fact on the slot: node or literal, not both."
                       }
                     }
                   },
-                  "required": [
-                    "op",
-                    "position"
-                  ],
+                  "required": ["op", "position"],
                   "additionalProperties": false,
-                  "x-requiredOneOf": [
-                    [
-                      "text"
-                    ],
-                    [
-                      "ref"
-                    ]
-                  ]
+                  "x-requiredOneOf": [["text"], ["ref"]]
                 },
                 {
                   "type": "object",
@@ -3241,20 +2937,13 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "predicate"
-                        ],
+                        "required": ["predicate"],
                         "additionalProperties": false,
                         "description": "One fact on the slot: node or literal, not both."
                       }
                     }
                   },
-                  "required": [
-                    "op",
-                    "slot",
-                    "oldBlobId",
-                    "text"
-                  ],
+                  "required": ["op", "slot", "oldBlobId", "text"],
                   "additionalProperties": false
                 },
                 {
@@ -3281,12 +2970,7 @@
                       "description": "The new fractional order key."
                     }
                   },
-                  "required": [
-                    "op",
-                    "slot",
-                    "oldPosition",
-                    "position"
-                  ],
+                  "required": ["op", "slot", "oldPosition", "position"],
                   "additionalProperties": false
                 },
                 {
@@ -3317,12 +3001,7 @@
                       "const": "orphan"
                     }
                   },
-                  "required": [
-                    "op",
-                    "slot",
-                    "position",
-                    "blobId"
-                  ],
+                  "required": ["op", "slot", "position", "blobId"],
                   "additionalProperties": false
                 }
               ],
@@ -3358,11 +3037,7 @@
                   "description": "How many matches must exist, or none is written."
                 }
               },
-              "required": [
-                "find",
-                "replace",
-                "expected_count"
-              ],
+              "required": ["find", "replace", "expected_count"],
               "additionalProperties": false,
               "description": "One find/replace."
             }
@@ -3380,22 +3055,11 @@
             ]
           }
         },
-        "required": [
-          "container"
-        ],
+        "required": ["container"],
         "additionalProperties": false,
-        "x-requiredOneOf": [
-          [
-            "ops"
-          ],
-          [
-            "replacements"
-          ]
-        ],
+        "x-requiredOneOf": [["ops"], ["replacements"]],
         "dependentRequired": {
-          "slot": [
-            "replacements"
-          ]
+          "slot": ["replacements"]
         }
       },
       "annotations": {
@@ -3459,10 +3123,7 @@
                   "maximum": 9007199254740991
                 }
               },
-              "required": [
-                "expected",
-                "found"
-              ],
+              "required": ["expected", "found"],
               "additionalProperties": {}
             }
           },
@@ -3488,10 +3149,7 @@
                 }
               }
             },
-            "required": [
-              "added",
-              "removed"
-            ],
+            "required": ["added", "removed"],
             "additionalProperties": {}
           },
           "tags_error": {
@@ -3520,18 +3178,13 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "slot",
-                "origin"
-              ],
+              "required": ["slot", "origin"],
               "additionalProperties": {}
             },
             "description": "Placements this call left dangling (each keeps its ref), with the origin they placed. Present only when an origin that had placements was removed or purged with placements \"orphan\"."
           }
         },
-        "required": [
-          "noop"
-        ],
+        "required": ["noop"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_write_container/v1",
         "title": "calliope_write_container \u2014 the answer",
@@ -3572,9 +3225,7 @@
             "description": "The batch, 1 to 500 events."
           }
         },
-        "required": [
-          "events"
-        ],
+        "required": ["events"],
         "additionalProperties": false
       },
       "annotations": {
@@ -3598,10 +3249,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "accepted",
-          "topic"
-        ],
+        "required": ["accepted", "topic"],
         "additionalProperties": {},
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_writing_deltas_ingest/v1",
         "title": "calliope_writing_deltas_ingest \u2014 the answer",

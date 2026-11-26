@@ -85,9 +85,8 @@ describe("the REST door", () => {
     });
     closers.push(() => rest.close());
     const base = `http://127.0.0.1:${String(rest.plaintextAddress()?.port)}`;
-    const served = (await (
-      await fetch(`${base}/openapi.json`)
-    ).json()) as unknown;
+    const res = await fetch(`${base}/openapi.json`);
+    const served = (await res.json()) as unknown;
     const committed = JSON.parse(
       readFileSync(new URL("../../../openapi.json", import.meta.url), "utf8"),
     ) as unknown;
