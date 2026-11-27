@@ -17,10 +17,6 @@ import type { ActGateOptions } from "../act-gate.js";
 /** The star's roster key: its X-Star, and its name on a staircase. */
 export const STAR = "calliope";
 
-// Rob's own note writes carry his act assertion (Charon mints it): each is an
-// attributed rob-tier act, class human. Declared here, the served and the
-// committed openapi.json publish the rows as x-mcp-tools[verb]["x-rob-tier"],
-// and the door refuses a landing that removes or loosens one without Rob.
 const attributed: readonly RobTierRow[] = [
   { tier: ROB_TIER_ATTRIBUTED, class: ROB_CLASS_HUMAN },
 ];
