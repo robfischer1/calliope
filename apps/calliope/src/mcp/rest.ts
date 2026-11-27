@@ -1,12 +1,33 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withSpan } from "@forge/stellar-core-ts";
-import { mountRest } from "@forge/stellar-core-ts/rest";
-import type { RestHandler, RestMount } from "@forge/stellar-core-ts/rest";
+import {
+  ROB_CLASS_HUMAN,
+  ROB_TIER_ATTRIBUTED,
+  declareRobTier,
+  mountRest,
+} from "@forge/stellar-core-ts/rest";
+import type {
+  RestHandler,
+  RestMount,
+  RobTierRow,
+} from "@forge/stellar-core-ts/rest";
 import { actGate } from "../act-gate.js";
 import type { ActGateOptions } from "../act-gate.js";
 
 /** The star's roster key: its X-Star, and its name on a staircase. */
 export const STAR = "calliope";
+
+const attributed: readonly RobTierRow[] = [
+  { tier: ROB_TIER_ATTRIBUTED, class: ROB_CLASS_HUMAN },
+];
+declareRobTier(STAR, {
+  create_note: attributed,
+  delete_note: attributed,
+  move_blocks: attributed,
+  restore_note: attributed,
+  set_properties: attributed,
+  write_container: attributed,
+});
 
 /** What {@link mountRestFace} needs of the process. */
 export interface RestFaceOptions {

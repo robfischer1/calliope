@@ -159,7 +159,8 @@
           }
         },
         "x-mcp-match": {},
-        "x-mcp-tool": "create_note"
+        "x-mcp-tool": "create_note",
+        "x-rob-tier": true
       }
     },
     "/v1/delete_note": {
@@ -186,7 +187,8 @@
           }
         },
         "x-mcp-match": {},
-        "x-mcp-tool": "delete_note"
+        "x-mcp-tool": "delete_note",
+        "x-rob-tier": true
       }
     },
     "/v1/delete_note/live": {
@@ -215,7 +217,8 @@
         "x-mcp-match": {
           "dry_run": false
         },
-        "x-mcp-tool": "delete_note"
+        "x-mcp-tool": "delete_note",
+        "x-rob-tier": true
       }
     },
     "/v1/dissolve_note": {
@@ -518,7 +521,8 @@
           }
         },
         "x-mcp-match": {},
-        "x-mcp-tool": "move_blocks"
+        "x-mcp-tool": "move_blocks",
+        "x-rob-tier": true
       }
     },
     "/v1/read_container": {
@@ -630,7 +634,8 @@
           }
         },
         "x-mcp-match": {},
-        "x-mcp-tool": "restore_note"
+        "x-mcp-tool": "restore_note",
+        "x-rob-tier": true
       }
     },
     "/v1/revision_deltas": {
@@ -734,7 +739,8 @@
           }
         },
         "x-mcp-match": {},
-        "x-mcp-tool": "set_properties"
+        "x-mcp-tool": "set_properties",
+        "x-rob-tier": true
       }
     },
     "/v1/tag_seed_read": {
@@ -806,7 +812,8 @@
           }
         },
         "x-mcp-match": {},
-        "x-mcp-tool": "write_container"
+        "x-mcp-tool": "write_container",
+        "x-rob-tier": true
       }
     },
     "/v1/writing_deltas_ingest": {
@@ -1113,7 +1120,13 @@
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_create_note/v1",
         "title": "calliope_create_note \u2014 the answer",
         "description": "The note's identity and whether this call minted it. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
-      }
+      },
+      "x-rob-tier": [
+        {
+          "tier": "attributed",
+          "class": "human"
+        }
+      ]
     },
     "delete_note": {
       "name": "delete_note",
@@ -1365,7 +1378,13 @@
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_delete_note/v1",
         "title": "calliope_delete_note \u2014 the answer",
         "description": "What a delete did or, on a dry run, would do. mode says which report this is: suppress (the default) answers per-note suppress statuses and totals {suppressed, already_suppressed, not_found}; purge answers per-note deletion plans and totals {deleted, not_found, edges_out, edges_in, blocks, shared_blocks, blobs_referenced, blobs_deleted, tag_rows}. A purge with placements \"orphan\" may carry orphaned on a note: the placements outside the call left dangling (planned on a dry run). A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
-      }
+      },
+      "x-rob-tier": [
+        {
+          "tier": "attributed",
+          "class": "human"
+        }
+      ]
     },
     "dissolve_note": {
       "name": "dissolve_note",
@@ -2067,7 +2086,13 @@
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_move_blocks/v1",
         "title": "calliope_move_blocks \u2014 the answer",
         "description": "The slots moved, in their new order with the fractional keys they now hold, and the graph transaction. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
-      }
+      },
+      "x-rob-tier": [
+        {
+          "tier": "attributed",
+          "class": "human"
+        }
+      ]
     },
     "read_container": {
       "name": "read_container",
@@ -2435,7 +2460,13 @@
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_restore_note/v1",
         "title": "calliope_restore_note \u2014 the answer",
         "description": "What a restore did per note and in total. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
-      }
+      },
+      "x-rob-tier": [
+        {
+          "tier": "attributed",
+          "class": "human"
+        }
+      ]
     },
     "revision_deltas": {
       "name": "revision_deltas",
@@ -2732,7 +2763,13 @@
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_set_properties/v1",
         "title": "calliope_set_properties \u2014 the answer",
         "description": "The edges and tags a frontmatter landing asserted or retracted. A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
-      }
+      },
+      "x-rob-tier": [
+        {
+          "tier": "attributed",
+          "class": "human"
+        }
+      ]
     },
     "tag_seed_read": {
       "name": "tag_seed_read",
@@ -3189,7 +3226,13 @@
         "$id": "https://foundry.notusmi.com/schema/tool-output/calliope_write_container/v1",
         "title": "calliope_write_container \u2014 the answer",
         "description": "One container save. noop says nothing was written. An ops save also answers applied, minted and blobIds; a replacements save answers container, counts and slots_changed; an ops save may add routed (edits sent to the origin of a placement) and orphaned (placements left dangling by removing their origin); a notes-tenant save adds the inline-tag outcome (tags, or tags_error when the reconcile failed). A refusal is NOT described here: it is an isError result {code, detail} (refusal.schema.json), and its code is in contracts/refusal-codes.toml."
-      }
+      },
+      "x-rob-tier": [
+        {
+          "tier": "attributed",
+          "class": "human"
+        }
+      ]
     },
     "writing_deltas_ingest": {
       "name": "writing_deltas_ingest",
